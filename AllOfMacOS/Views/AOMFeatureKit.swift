@@ -15,10 +15,11 @@ import SwiftUI
 // MARK: - Feature sizes
 
 enum AOMFeatureSize {
-    /// Filter chips: one regular control high (design-336 b.6; 22 in 3.3.5).
-    static let chip: CGFloat = 28
-    /// `AOMCardEmptyRow`: the glyph frame (design-336 b.9: 20 pt).
-    static let emptyRowGlyph: CGFloat = 20
+    /// Filter and scope chips: one small control plus its 1 pt edge, 22 pt.
+    static let chip: CGFloat = 22
+    /// `AOMCardEmptyRow`: the glyph frame, the rows' symbol column, so the
+    /// message starts on the row label line.
+    static let emptyRowGlyph: CGFloat = AOMIcon.row
     /// Pinboard and filter dots inside chips.
     static let chipDot: CGFloat = 8
     /// App icons inside chips.
@@ -230,7 +231,7 @@ struct AOMFilterChip: View {
             }
             .font(AOMFont.callout.weight(selected ? .semibold : .medium))
             .foregroundStyle(selected ? onAccentText : (hovering ? AOMColor.text : AOMColor.textSecondary))
-            .padding(.horizontal, AOMSpace.x3 - AOMSpace.x0_5)
+            .padding(.horizontal, AOMSpace.x2)
             .frame(maxWidth: expands ? .infinity : nil)
             .frame(height: AOMFeatureSize.chip)
             .background {
@@ -257,10 +258,11 @@ struct AOMFilterChip: View {
 
 // MARK: - Empty row inside a card
 
-/// An empty state inside a card (design-336 b.9): a 20 pt hierarchical glyph,
-/// one sentence in Body secondary and at most one button, leading-aligned in
-/// a 48 pt row. An optional detail line (Callout) says what makes the row
-/// fill. A page with nothing in it uses `AOMEmptyState` instead.
+/// An empty state inside a card (design-336 b.9): a hierarchical glyph in the
+/// rows' 16 pt symbol column, one sentence in Body medium secondary and at
+/// most one regular button, leading-aligned in a 40 pt row. An optional
+/// detail line (Callout, secondary) says what makes the row fill. A page with
+/// nothing in it uses `AOMEmptyState` instead.
 struct AOMCardEmptyRow<Action: View>: View {
     let message: String
     var detail: String?
@@ -276,30 +278,30 @@ struct AOMCardEmptyRow<Action: View>: View {
     }
 
     var body: some View {
-        HStack(spacing: AOMSpace.x3) {
+        HStack(spacing: AOMSpace.x2) {
             Image(systemName: systemImage)
                 .font(AOMFont.body)
-                .imageScale(.large)
                 .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(AOMColor.textSecondary)
                 .frame(width: AOMFeatureSize.emptyRowGlyph)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 1) {
                 Text(message)
-                    .font(AOMFont.body)
+                    .font(AOMFont.bodyEmphasis)
                     .foregroundStyle(AOMColor.textSecondary)
                 if let detail {
                     Text(detail)
                         .font(AOMFont.callout)
-                        .foregroundStyle(AOMColor.textTertiary)
+                        .foregroundStyle(AOMColor.textSecondary)
                 }
             }
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
             action
+                .controlSize(.regular)
         }
         .padding(.horizontal, AOMSpace.rowInset)
-        .padding(.vertical, AOMSpace.x2)
+        .padding(.vertical, AOMSpace.x1)
         .frame(minHeight: AOMSize.rowDetail)
         .accessibilityElement(children: .contain)
     }
@@ -308,8 +310,7 @@ struct AOMCardEmptyRow<Action: View>: View {
 // MARK: - Described setting row
 
 /// A setting row with a description under its title, as System Settings
-/// draws one (design-336 #74: 48 pt with a description, the control
-/// trailing). 3.3.5 squeezed the description beside the title on 26 pt rows.
+/// draws one: 40 pt with a description, the control trailing at small size.
 /// Geometry matches `AOMSettingRow` (symbol column, insets, top divider).
 struct AOMInlineSettingRow<Control: View>: View {
     let title: String
@@ -328,7 +329,7 @@ struct AOMInlineSettingRow<Control: View>: View {
         HStack(alignment: .center, spacing: AOMSpace.x2) {
             if let symbol {
                 Image(systemName: symbol)
-                    .font(AOMFont.body)
+                    .font(AOMFont.callout)
                     .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(AOMColor.textSecondary)
                     .frame(width: AOMIcon.row)
@@ -346,10 +347,11 @@ struct AOMInlineSettingRow<Control: View>: View {
             Spacer(minLength: AOMSpace.x3)
             control
                 .labelsHidden()
+                .controlSize(.small)
                 .fixedSize()
         }
         .padding(.horizontal, AOMSpace.rowInset)
-        .padding(.vertical, AOMSpace.x1 + AOMSpace.x0_5)
+        .padding(.vertical, AOMSpace.rowPadding)
         .frame(minHeight: detail.isEmpty ? AOMSize.rowStandard : AOMSize.rowDetail)
         .overlay(alignment: .top) {
             AOMRowDivider(inset: symbol == nil ? AOMSpace.rowInset : AOMSpace.rowSymbolInset)
@@ -388,7 +390,7 @@ struct AOMCardGroup<Content: View>: View {
                     .foregroundStyle(AOMColor.textSecondary)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, AOMSpace.x1)
+                    .padding(.horizontal, AOMSpace.rowInset)
             }
         }
         .accessibilityElement(children: .contain)

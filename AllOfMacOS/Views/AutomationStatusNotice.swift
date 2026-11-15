@@ -33,7 +33,8 @@ struct AutomationStatusNotice: View {
                 .padding([.horizontal, .top], AOMSpace.x3)
             }
         }
-        .task {
+        // Only while the Automation page is selected and on screen.
+        .aomVisibleTask {
             while !Task.isCancelled {
                 refresh()
                 try? await Task.sleep(for: .seconds(5))

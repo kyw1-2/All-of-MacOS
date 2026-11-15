@@ -8,8 +8,7 @@ struct MainWindow: View {
     @State private var showTutorial = !UserDefaults.hasSeenTutorial
     @AppStorage("AOMAppearance") private var appearance: String = "system"
     @Environment(\.openSettings) private var openSettings
-    /// Written on every page change, never read here: not observed, so a
-    /// history change no longer re-renders the whole window mid-switch.
+    /// Not observed: the page change itself is recorded by `AOMNavigation`.
     private let history = AOMNavigationHistory.shared
 
     /// The last page, restored at launch (HIG Launching: restore the previous
@@ -24,9 +23,11 @@ struct MainWindow: View {
                      showLog: $showLog,
                      showTouchVisualizer: $showTouchVisualizer,
                      appearance: appearance) {
-            Group {
-                switch appState.selectedMainTab {
-                case .home: AOMHomeView(showingCommandPalette: $appState.showingCommandPalette)
+            // Pages are kept once visited; the host observes the selection,
+            // so this window body does not re-render on a page change.
+            AOMPageHost { tab in
+                switch tab {
+                case .home: AOMHomeView()
                 case .gestures: ModernGesturesWorkspace()
                 case .snapping: ModernWindowSnappingView()
                 case .capture: CaptureStudioView()
@@ -65,10 +66,6 @@ struct MainWindow: View {
             setShowLog: { showLog = $0 },
             showTouchVisualizer: showTouchVisualizer,
             setShowTouchVisualizer: { showTouchVisualizer = $0 }))
-        .onChange(of: appState.selectedMainTab) { old, new in
-            history.record(from: old, to: new)
-            if Self.persistsLastPage { UserDefaults.standard.set(new.rawValue, forKey: Self.lastPageKey) }
-        }
         .onAppear {
             restoreLastPage()
             // Isolated previews can open Settings for review (`--aom-preview-settings`),

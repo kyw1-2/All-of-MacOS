@@ -27,7 +27,7 @@ struct FocusIdleAppsSection: View {
                 AOMInlineEmpty(symbol: "moon.zzz", message: "No apps yet. Add chat, mail or other apps you leave open.")
                     .overlay(alignment: .top) { AOMRowDivider() }
             } else {
-                TimelineView(.periodic(from: .now, by: 5)) { context in
+                AOMPageTimeline(every: 5) { context in
                     let rows = idle.rows(now: context.date)
                     ForEach(rows) { row in
                         FocusIdleRuleRow(row: row, now: context.date, enabled: options.idleAppsEnabled,
@@ -53,7 +53,7 @@ struct FocusIdleAppsSection: View {
             .padding(.vertical, AOMSpace.x2)
             .overlay(alignment: .top) { AOMRowDivider() }
         }
-        .task {
+        .aomVisibleTask {
             // Memory is read only while this section is on screen.
             while !Task.isCancelled {
                 idle.refreshMemory()
@@ -184,8 +184,8 @@ struct FocusMemorySection: View {
             }
             .disabled(!options.idleAppsEnabled || !options.memoryPressureEnabled)
         }
-        .onAppear { idle.refreshPressure() }
-        .task {
+        .aomPageLifecycle(minimumInterval: 5, onActivate: { idle.refreshPressure() })
+        .aomVisibleTask {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(10))
                 idle.refreshPressure()

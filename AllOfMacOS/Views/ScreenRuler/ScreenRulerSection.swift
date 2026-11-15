@@ -14,6 +14,7 @@ struct ScreenRulerSection: View {
     @AppStorage(ScreenRulerSettings.hidesCursorKey) private var hidesCursor = false
     @State private var permissionGranted: Bool
     @Environment(\.openSettings) private var openSettings
+    @Environment(\.aomPageActivity) private var pageActivity
     /// Fixed by the visual review; nil reads the real permission.
     private let permissionOverride: Bool?
 
@@ -39,14 +40,16 @@ struct ScreenRulerSection: View {
                 measuringSection
             }
         }
-        .onAppear(perform: refreshPermission)
+        // Read again each time Capture is selected, and on return to AOM.
+        .aomPageLifecycle(onActivate: refreshPermission)
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            refreshPermission()
+            if pageActivity.isActive { refreshPermission() }
         }
     }
 
     private func refreshPermission() {
-        permissionGranted = permissionOverride ?? AOMPermissionCache.screenRecordingGranted
+        let granted = permissionOverride ?? AOMPermissionCache.screenRecordingGranted
+        if granted != permissionGranted { permissionGranted = granted }
     }
 
     /// Each card's width when the two sit side by side (wider pages give them more).

@@ -62,12 +62,11 @@ struct FolderRulesPage: View {
             .onChange(of: inspectorFits) { _, fits in if fits { model.showsInlinePreview = false } }
         .aomPage("Folder Rules")
         .aomToolbarSubtitle(toolbarSubtitle)
-        .toolbar { toolbarContent }
+        .aomPageToolbar { toolbarContent }
         .aomToast(model.toast)
-        .onDeleteCommand { model.removeSelection(undoManager: undoManager) }
-        .task {
-            model.selectDefault()
-        }
+        .aomPageDeleteCommand { model.removeSelection(undoManager: undoManager) }
+        // Rules can be added or removed while the page is hidden.
+        .aomPageLifecycle(onActivate: { model.selectDefault() })
     }
 
     private var page: some View {

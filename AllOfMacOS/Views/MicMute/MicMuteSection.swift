@@ -52,10 +52,12 @@ struct MicMuteSection: View {
                 .disabled(!mic.autoMuteEnabled)
             }
         }
-        .onAppear {
+        // Read again when the Audio page is selected, unless read in the
+        // last few seconds.
+        .aomPageLifecycle(minimumInterval: 5, onActivate: {
             mic.refreshFromHardware()
             accessibilityTrusted = AXIsProcessTrusted()
-        }
+        })
     }
 
     // MARK: Rows

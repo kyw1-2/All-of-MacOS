@@ -34,24 +34,22 @@ class AppState: ObservableObject {
     @Published var showingAddAction: Bool = false
     /// The command palette over the main window (View ▸ Search…, sidebar search).
     @Published var showingCommandPalette = false
-    @Published var selectedMainTab: AOMMainTab = .home {
-        didSet {
-            if selectedMainTab == .insights && !showStatistics {
-                showStatistics = true
-            } else if selectedMainTab != .insights && showStatistics {
-                showStatistics = false
-            }
+    /// The selected page lives in `AOMNavigation`, so a page change does not
+    /// re-render every view that observes AppState.
+    var selectedMainTab: AOMMainTab {
+        get { navigation.selected }
+        set { if navigation.selected != newValue { navigation.selected = newValue } }
+    }
+    /// Whether Insights is the selected page: true selects it, false leaves
+    /// it for Automation. Nothing renders from it, so it is not published.
+    var showStatistics: Bool {
+        get { selectedMainTab == .insights }
+        set {
+            if newValue { selectedMainTab = .insights }
+            else if selectedMainTab == .insights { selectedMainTab = .gestures }
         }
     }
-    @Published var showStatistics: Bool = false {
-        didSet {
-            if showStatistics && selectedMainTab != .insights {
-                selectedMainTab = .insights
-            } else if !showStatistics && selectedMainTab == .insights {
-                selectedMainTab = .gestures
-            }
-        }
-    }
+    let navigation: AOMNavigation
     @Published var showTutorialRequested: Bool = false
     @Published var globalEnabled: Bool = AutomationGate.isOn
     @Published var accentColorChoice: AccentColorChoice = {
@@ -88,7 +86,8 @@ class AppState: ObservableObject {
     private let systemTriggerMonitor = SystemTriggerMonitor()
     private let permissionWatchdog = PermissionWatchdog()
 
-    init() {
+    init(navigation: AOMNavigation? = nil) {
+        self.navigation = navigation ?? .shared
         let preset = PresetManager.loadPreset() ?? Preset(name: "Master Preset", isMaster: true)
         self.currentPreset = preset
         self.selectedAppTarget = preset.appTargets.first ?? .allApps

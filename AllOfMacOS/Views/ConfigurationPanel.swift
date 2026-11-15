@@ -776,7 +776,7 @@ struct ActionConfigView: View {
                                 Label("Stop", systemImage: "stop.fill")
                                     .frame(minWidth: AOMSize.rowDetail * 2)
                             }
-                            .keyboardShortcut(.escape, modifiers: [])
+                            .aomShortcut(.escape, modifiers: [])
                             .buttonStyle(.borderedProminent)
                             .tint(AOMColor.recording)
                         } else {

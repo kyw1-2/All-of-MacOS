@@ -4,7 +4,10 @@ import SwiftUI
 /// Insights: live gesture statistics plus an overview of what is configured,
 /// so the page is informative from the first launch, not a blank chart.
 struct StatisticsView: View {
-    @ObservedObject var stats = GestureStatistics.shared
+    /// Observed through `observation`: GestureStatistics publishes on every
+    /// detection, which a hidden Insights page must not render.
+    let stats = GestureStatistics.shared
+    @StateObject private var observation = AOMPageObservation([GestureStatistics.shared.aomChanges])
     @EnvironmentObject var appState: AppState
     @State private var confirmingReset = false
     @AppStorage("AOMInsightsPeriod") private var period: Period = .week
@@ -123,7 +126,8 @@ struct StatisticsView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .aomPage("Insights")
-        .toolbar {
+        .aomObserving(observation)
+        .aomPageToolbar {
             ToolbarItemGroup(placement: .automatic) {
                 Picker("Period", selection: $period) {
                     ForEach(Period.allCases) { Text($0.rawValue).tag($0) }

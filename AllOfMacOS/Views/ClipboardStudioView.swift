@@ -102,12 +102,15 @@ struct ClipboardStudioView: View {
     /// Characters, words and lines (or pixels) for the detail, read off the
     /// main thread by the preview cache.
     @State private var detailSummary: [UUID: String] = [:]
+    /// The history revision `boardCounts` was counted from.
+    @State private var boardCountsRevision: Int?
 
     private let boardColors = ["blue", "purple", "pink", "red", "orange", "yellow", "green", "gray"]
 
     private var filteredEntries: [ClipboardEntry] {
         search.displayedResults(in: store)
     }
+
 
     private var subtitle: String {
         let count = store.entries.count
@@ -179,10 +182,15 @@ struct ClipboardStudioView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .aomPane()
-        .navigationTitle("Clipboard")
-        .searchable(text: $search.query, placement: .toolbar, prompt: "Search text, links and files")
-        .toolbar { toolbarContent }
-        .task(id: store.revision) {
+        .aomPageToolbar {
+            toolbarContent
+            AOMToolbarSearchItem(text: $search.query, prompt: "Search text, links and files")
+        }
+        // Pinboard counts follow the history while the page is selected and on
+        // screen, and catch up on return if the history changed meanwhile.
+        .aomVisibleTask(id: store.revision) {
+            let revision = store.revision
+            guard revision != boardCountsRevision else { return }
             let entries = store.entries
             let counts = await Task.detached(priority: .userInitiated) {
                 var counts: [UUID: Int] = [:]
@@ -191,6 +199,7 @@ struct ClipboardStudioView: View {
             }.value
             guard !Task.isCancelled else { return }
             boardCounts = counts
+            boardCountsRevision = revision
         }
         .sheet(isPresented: $showingSettings) {
             ModuleSettingsSheet("Clipboard Settings", done: { showingSettings = false }) {
@@ -286,7 +295,7 @@ struct ClipboardStudioView: View {
                             copy(entry)
                             return .handled
                         }
-                        .onDeleteCommand {
+                        .aomPageDeleteCommand {
                             if let entry = entries.first(where: { $0.id == selectedEntryID }) { delete(entry, in: entries) }
                         }
                         .accessibilityLabel("Clipboard items")
@@ -511,7 +520,7 @@ struct ClipboardStudioView: View {
             // The section's one prominent action (design-336 b.6).
             Button { copy(entry) } label: { Label("Copy", systemImage: "doc.on.doc") }
                 .buttonStyle(.borderedProminent)
-                .keyboardShortcut("c", modifiers: [.command, .shift])
+                .aomShortcut("c", modifiers: [.command, .shift])
                 .help("Copy (⇧⌘C, or press Return in the list)")
             Menu {
                 entryMenu(entry)

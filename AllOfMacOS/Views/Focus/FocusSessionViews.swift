@@ -5,13 +5,26 @@ import SwiftUI
 
 /// The big session control (Clock's timers, Flighty's live status): the
 /// ring with the time left, the phase, and Start / Pause / Resume / Skip /
-/// Stop. Only this view observes the 1 Hz ticker.
+/// Stop. Only this view observes the 1 Hz ticker, and only while the Focus
+/// page is selected.
 struct FocusSessionHeader: View {
     @ObservedObject var session: FocusSessionController
-    @ObservedObject var ticker: FocusTicker
+    let ticker: FocusTicker
     @ObservedObject var settings: FocusSettingsStore
+    @StateObject private var tick: AOMPageObservation
+
+    init(session: FocusSessionController, ticker: FocusTicker, settings: FocusSettingsStore) {
+        self.session = session
+        self.ticker = ticker
+        self.settings = settings
+        _tick = StateObject(wrappedValue: AOMPageObservation([ticker.aomChanges]))
+    }
 
     var body: some View {
+        content.aomObserving(tick)
+    }
+
+    @ViewBuilder private var content: some View {
         let now = ticker.now
         let timer = session.timer
         let plan = settings.settings.plan
@@ -43,7 +56,7 @@ struct FocusSessionHeader: View {
                             detail: Self.idleDetail(timer: timer, plan: plan, now: now)) {
                 Button { session.start() } label: { Label("Start Focus", systemImage: "play.fill") }
                     .aomPrimaryButton()
-                    .keyboardShortcut(.return, modifiers: [.command])
+                    .aomShortcut(.return, modifiers: [.command])
                     .help("Starts a \(plan.focusMinutes) min focus (⌘↩)")
             }
         }

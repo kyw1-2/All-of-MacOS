@@ -107,7 +107,11 @@ struct ClickHintsDetail: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: PermissionWatchdog.accessibilityLost)) { _ in trusted = false }
         .onReceive(NotificationCenter.default.publisher(for: PermissionWatchdog.accessibilityRecovered)) { _ in trusted = true }
-        .onAppear { trusted = AXIsProcessTrusted() }
+        // Read again each time the page is selected.
+        .aomPageLifecycle(onActivate: {
+            let now = AXIsProcessTrusted()
+            if now != trusted { trusted = now }
+        })
     }
 
     // MARK: Parts

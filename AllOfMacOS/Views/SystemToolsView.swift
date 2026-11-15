@@ -15,6 +15,8 @@ struct SystemToolsView: View {
     @ObservedObject private var homebrew = HomebrewModel.shared
     @ObservedObject private var vpn = VPNModel.shared
     @State private var query = ""
+    /// Read in actions, not observed: a page change never re-renders this view.
+    @Environment(\.aomPageActivity) private var pageActivity
 
     private static let tileMinimumWidth: CGFloat = 228
     private static let toggleMinimumWidth: CGFloat = 188
@@ -74,7 +76,9 @@ struct SystemToolsView: View {
             if showsStrip { HardwareCareCard() }
         }
         .aomPage("System Tools")
-        .searchable(text: $query, placement: .toolbar, prompt: "Search Tools")
+        .aomPageToolbar {
+            AOMToolbarSearchItem(text: $query, prompt: "Search Tools")
+        }
         .sheet(isPresented: $model.showFreeUpSpace) {
             FreeUpSpaceSheet(model: model)
         }
@@ -99,14 +103,16 @@ struct SystemToolsView: View {
         }
         .aomToast(model.toasts)
         // Keep Awake and the keyboard lock also change from menus and timers.
-        .onChange(of: keepAwake.current) { _, _ in model.refreshStates() }
-        .onChange(of: keyboardLock.endsAt) { _, _ in model.refreshStates() }
-        .onChange(of: sleepTimer.firesAt) { _, _ in model.refreshStates() }
-        .onChange(of: appAwake.appName) { _, _ in model.refreshStates() }
-        .onChange(of: homebrew.outdated) { _, _ in model.refreshStates() }
-        .onChange(of: vpn.lastServices) { _, _ in model.refreshStates() }
+        // A hidden page catches up when it is selected (`model.appear()`).
+        .onChange(of: keepAwake.current) { _, _ in refreshIfActive() }
+        .onChange(of: keyboardLock.endsAt) { _, _ in refreshIfActive() }
+        .onChange(of: sleepTimer.firesAt) { _, _ in refreshIfActive() }
+        .onChange(of: appAwake.appName) { _, _ in refreshIfActive() }
+        .onChange(of: homebrew.outdated) { _, _ in refreshIfActive() }
+        .onChange(of: vpn.lastServices) { _, _ in refreshIfActive() }
+        // Which tools exist is checked again at most every 30 s of selections.
+        .aomPageLifecycle(minimumInterval: 30, onActivate: { SystemToolAvailability.shared.invalidate() })
         .onAppear {
-            SystemToolAvailability.shared.invalidate()
             if PresetManager.isUIPreview {
                 if ProcessInfo.processInfo.arguments.contains("--aom-preview-homebrew") {
                     homebrew.loadPreviewSample()
@@ -118,10 +124,15 @@ struct SystemToolsView: View {
                 }
             }
         }
-        .aomOnWindowVisibilityChange { visible in
+        // Refreshed and polled while the page is selected and on screen.
+        .aomOnPageVisibilityChange { visible in
             if visible { model.appear(); status.start() }
             else { model.disappear(); status.stop() }
         }
+    }
+
+    private func refreshIfActive() {
+        if pageActivity.isActive { model.refreshStates() }
     }
 
     // MARK: - Favorites

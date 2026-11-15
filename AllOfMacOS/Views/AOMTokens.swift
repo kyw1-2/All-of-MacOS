@@ -1,8 +1,9 @@
 import AppKit
 import SwiftUI
 
-// AOM design tokens: the macOS text styles (13 pt body) and regular controls,
-// on an 8 pt page rhythm.
+// AOM design tokens: one content size (13 pt Body) with weight and brightness
+// for hierarchy, small controls in 30 / 40 pt rows, and pages as a centred
+// column of at most 860 pt, all on a 4 pt grid.
 //
 // This is the one file allowed raw numbers and colours. Views use the roles
 // below (`AOMSpace.pageMargin`, `AOMFont.section`, `AOMColor.surface`,
@@ -31,34 +32,38 @@ enum AOMSpace {
     static let x0_5: CGFloat = 2
     /// Icon ↔ label in chips and keycaps.
     static let x1: CGFloat = 4
-    /// Label ↔ control; section title ↔ its card; tile gap; compact stack gap.
+    /// Label ↔ control; symbol ↔ label; tile gap; compact stack gap.
     static let x2: CGFloat = 8
-    /// Row horizontal inset, card padding, gap between bezeled controls.
+    /// Card padding, the top of a page, gap between bezeled controls.
     static let x3: CGFloat = 12
-    /// Page margin; hero horizontal padding.
+    /// Hero horizontal padding.
     static let x4: CGFloat = 16
-    /// Gap between page sections.
+    /// Page margin.
     static let x5: CGFloat = 20
-    /// Gap between bezel-less icon buttons.
+    /// Gap between bezel-less icon buttons; one regular control high.
     static let x6: CGFloat = 24
     /// Top of an empty state or first-run block.
     static let x8: CGFloat = 32
     static let x10: CGFloat = 40
     static let x12: CGFloat = 48
 
-    // 24 pt margins and section gaps, 16 pt inside cards, 12 pt between tiles
-    // (HIG: ~12 pt around bezeled elements).
-    static let pageMargin = x6
-    /// From the toolbar to the top of a page's header (its title, or the
-    /// Workspace's glass header panel), on every page, so switching pages
-    /// never moves the header up or down.
-    static let pageTop = x5
-    static let sectionGap = x6
-    static let titleGap = x2
-    static let cardPadding = x4
-    static let tileGap = x3
-    static let rowInset = x3
-    /// Divider inset for rows with a leading 20 pt symbol: 12 + 20 + 8.
+    // 20 pt page margins, 18 pt between sections, 12 pt inside cards, 8 pt
+    // between tiles, rows inset 10 pt (the macOS 26 list row padding).
+    static let pageMargin = x5
+    /// From the toolbar to the top of a page's first content, on every page,
+    /// so switching pages never moves the first line up or down.
+    static let pageTop = x3
+    static let sectionGap: CGFloat = 18
+    /// Section title ↔ its card.
+    static let titleGap: CGFloat = 6
+    static let cardPadding = x3
+    static let tileGap = x2
+    /// Leading and trailing inset of a row's content; section titles and
+    /// footers use it too, so they share the rows' leading line.
+    static let rowInset: CGFloat = 10
+    /// Above and below a row's text, inside its minimum height.
+    static let rowPadding: CGFloat = 3
+    /// Divider inset for rows with a leading 16 pt symbol: 10 + 16 + 8.
     static let rowSymbolInset = rowInset + AOMIcon.row + x2
 
     static let xs = x2
@@ -70,43 +75,45 @@ enum AOMSpace {
 // MARK: - Layout sizes
 
 enum AOMSize {
-    /// Global sidebar, sized for the system's medium sidebar rows.
-    static let sidebarMin: CGFloat = 200
-    static let sidebarIdeal: CGFloat = 220
-    static let sidebarMax: CGFloat = 280
-    static let rowStandard: CGFloat = 36
-    static let rowDetail: CGFloat = 48
-    /// Legacy one- and two-line list rows (AOMListRow).
-    static let rowSingle: CGFloat = 28
-    static let rowDouble: CGFloat = 44
+    /// Global sidebar, sized for the system's 28 pt sidebar rows.
+    static let sidebarMin: CGFloat = 190
+    static let sidebarIdeal: CGFloat = 208
+    static let sidebarMax: CGFloat = 260
+    /// A settings row: one line, and one line with a description under it.
+    static let rowStandard: CGFloat = 30
+    static let rowDetail: CGFloat = 40
+    /// One- and two-line list rows (AOMListRow).
+    static let rowSingle: CGFloat = 26
+    static let rowDouble: CGFloat = 38
     /// A two-line row inside a `List`, including the list's own insets
     /// (`rowDouble` + 4). Used as the list's minimum row height so rows
     /// inserted at the top (a new copy, a new automation) are never measured short.
-    static let listRowDouble: CGFloat = 48
+    static let listRowDouble: CGFloat = 42
     /// The Automation list column; the editor takes the rest.
     static let listColumnRange: ClosedRange<Double> = 270...380
     static let listColumnIdeal: Double = 312
     /// Below this the editor can't show an action row without truncating.
     static let editorMinimum: CGFloat = 440
     /// Readable line length for editors and forms.
-    static let readableWidth: CGFloat = 760
+    static let readableWidth: CGFloat = 720
     /// The content column of the Settings window and its sheets: the
     /// readable width less the page margins on both sides, so a pane and a
     /// sheet at their minimum width (`readableWidth`) show the same column.
     static let settingsColumn: CGFloat = readableWidth - AOMSpace.pageMargin * 2
     /// Readable text (paragraphs, help popovers stay well under this).
     static let readableText: CGFloat = 640
-    /// Dashboards and grids fill the detail column up to this, centred beyond.
-    static let contentMaxWidth: CGFloat = 1200
-    /// Workspace module tiles: three columns from 3 × 240 + 2 × 12 pt.
+    /// The page column: content fills the detail column up to this and is
+    /// centred beyond it. List + detail pages keep their full-width split.
+    static let contentMaxWidth: CGFloat = 860
+    /// Workspace module tiles: three columns from 3 × 240 + 2 × 8 pt.
     static let tileMin: CGFloat = 240
     static let tileMax: CGFloat = 420
     /// A Workspace module row: name over status beside the figure and switch.
-    static let moduleRowHeight: CGFloat = 52
+    static let moduleRowHeight: CGFloat = 38
     /// The control slot at a module row's trailing edge: wide enough for a
     /// small bordered "Create…" or "Set Up…", so switches, buttons and
     /// chevrons end on one vertical line down every column of rows.
-    static let moduleControlSlot: CGFloat = 72
+    static let moduleControlSlot: CGFloat = 64
     /// A text or link preview in the clipboard detail pane.
     static let textPreviewMinHeight: CGFloat = 116
     /// The ⌘K palette.
@@ -124,16 +131,16 @@ enum AOMSize {
     static let drawerSideBySideMinimum: CGFloat =
         CGFloat(listColumnRange.lowerBound) + editorMinimum + drawerWidth.upperBound + 1
 
-    // New names only; the values above stay.
     /// The ⌘K palette's empty-state column.
     static let quickActionMin: CGFloat = 132
-    /// Workspace quick actions: a round glass button over its name.
-    static let quickActionButton: CGFloat = 48
-    static let quickActionCell: CGFloat = 92
-    /// A capture mode button's round glass face.
-    static let modeButton: CGFloat = 40
-    /// A section title row: a 20 pt ⓘ or link with 1 pt above and below.
-    static let sectionTitleHeight: CGFloat = AOMIcon.row + 2
+    /// Workspace quick actions: a 32 pt round button over its name.
+    static let quickActionButton: CGFloat = 32
+    static let quickActionCell: CGFloat = 76
+    /// A capture mode button's round face.
+    static let modeButton: CGFloat = 30
+    /// A section title row: a 16 pt ⓘ or an 18 pt link, so a title with or
+    /// without an accessory is one height.
+    static let sectionTitleHeight: CGFloat = 18
     /// List + detail pages (Folder Rules, Text Actions, Files): the list
     /// column, the detail minimum and the optional trailing inspector.
     static let moduleListRange: ClosedRange<Double> = 240...360
@@ -142,10 +149,10 @@ enum AOMSize {
     static let inspectorWidth: ClosedRange<CGFloat> = 260...360
     static let inspectorIdeal: CGFloat = 300
     /// A token (pill) in a token field, and the field's minimum height.
-    static let tokenHeight: CGFloat = 22
+    static let tokenHeight: CGFloat = 20
     static let tokenFieldMinHeight: CGFloat = 28
     /// A live log row: one line of Body with its time stamp.
-    static let logRow: CGFloat = 28
+    static let logRow: CGFloat = 24
     /// Floating confirmations (toasts) never grow wider than this.
     static let toastMaxWidth: CGFloat = 520
 }
@@ -153,28 +160,31 @@ enum AOMSize {
 // MARK: - Type ramp (macOS text styles)
 
 /// The macOS built-in text styles (HIG Typography): Body 13, Callout 12,
-/// Subheadline 11, Headline 13 bold, Title 3 15, Title 2 17, Title 22. Styles,
-/// not fixed sizes, so optical sizing, tracking and the system text-size
-/// settings apply. Nothing in a sentence is below 11 pt.
+/// Subheadline 11, Title 3 15, Title 2 17, Title 22. Styles, not fixed sizes,
+/// so optical sizing, tracking and the system text-size settings apply.
+/// Content is 13 pt and metadata 11–12 pt; hierarchy comes from weight and
+/// brightness, emphasis is medium or semibold, never bold. Nothing in a
+/// sentence is below 11 pt.
 enum AOMFont {
-    /// 26 pt bold: large glyphs only (empty-state and thumbnail placeholders).
-    static let hero = Font.largeTitle.weight(.bold)
-    /// Title 2 (17) semibold: the Workspace status sentence, once per window.
-    static let heroSentence = Font.title2.weight(.semibold)
-    /// Title 3 (15) semibold: onboarding steps, editor and sheet titles.
-    static let title = Font.title3.weight(.semibold)
-    /// Title (22) bold: the page header's status sentence and the Workspace
-    /// header — the one large line on a page.
-    static let pageTitle = Font.title.weight(.bold)
-    /// Title 3 (15) semibold: the module page header sentence.
-    static let pageStatus = Font.title3.weight(.semibold)
-    /// Headline (13 bold): section titles ("Needs attention", "Rules").
-    static let section = Font.headline
-    /// Headline (13 bold): card and tile titles, emphasised row titles.
-    static let headline = Font.headline
+    /// Title (22) semibold: large glyphs only (empty-state and thumbnail placeholders).
+    static let hero = Font.title.weight(.semibold)
+    /// Body (13) semibold: the page header's status sentence.
+    static let heroSentence = Font.body.weight(.semibold)
+    /// Title 3 (15) medium: onboarding steps, editor and sheet titles.
+    static let title = Font.title3.weight(.medium)
+    /// Title 3 (15) semibold: the largest line of text on a page.
+    static let pageTitle = Font.title3.weight(.semibold)
+    /// Body (13) semibold: a module page's status sentence.
+    static let pageStatus = Font.body.weight(.semibold)
+    /// Callout (12) semibold, shown in secondary colour: section titles
+    /// ("Needs attention", "Rules") that sit above their group and recede.
+    static let section = Font.callout.weight(.semibold)
+    /// Body (13) medium: card and tile titles, emphasised row titles.
+    static let headline = Font.body.weight(.medium)
     /// Body (13): rows, sentences, buttons.
     static let body = Font.body
-    static let bodyEmphasis = Font.body.weight(.semibold)
+    /// Body (13) medium.
+    static let bodyEmphasis = Font.body.weight(.medium)
     /// Callout (12): one-line descriptions, tile status lines.
     static let callout = Font.callout
     /// Subheadline (11): metadata (time, counts), section footers.
@@ -183,14 +193,15 @@ enum AOMFont {
     static let badge = Font.caption.weight(.medium)
     /// Key codes, paths, logs, JSON.
     static let mono = Font.callout.monospaced()
-    /// Live values in rows; any changing number also gets `.monospacedDigit()`.
-    static let metric = Font.body.weight(.semibold).monospacedDigit()
-    /// Title (22) semibold: tile counts and summary figures (Workspace, Insights).
-    static let metricLarge = Font.title.weight(.semibold).monospacedDigit()
+    /// Body (13) medium: live values in rows; any changing number also gets
+    /// `.monospacedDigit()`.
+    static let metric = Font.body.weight(.medium).monospacedDigit()
+    /// Title 2 (17) medium: tile counts and summary figures (Workspace, Insights).
+    static let metricLarge = Font.title2.weight(.medium).monospacedDigit()
 
-    /// Large Title (26) semibold, monospaced digits: the one big figure of a
-    /// status header (a Focus timer, files tidied today). Never a sentence.
-    static let display = Font.largeTitle.weight(.semibold).monospacedDigit()
+    /// Title (22) medium, monospaced digits: the one live figure of a page
+    /// (a Focus timer, files tidied today). Never a sentence.
+    static let display = Font.title.weight(.medium).monospacedDigit()
     /// Time stamps in live logs and history rows.
     static let timestamp = Font.subheadline.monospacedDigit()
     /// Token (pill) labels in token fields and condition values.
@@ -201,21 +212,21 @@ enum AOMFont {
 
 enum AOMRadius {
     /// Keycaps, tiny chips.
-    static let keycap: CGFloat = 5
+    static let keycap: CGFloat = 4
     /// Thumbnails and wells inside cards; minimum concentric radius.
-    static let control: CGFloat = 6
+    static let control: CGFloat = 5
     /// Layout diagrams and previews inside panes, row hover and selection fills.
-    static let well: CGFloat = 8
-    /// Panes (groups of rows), section groups.
-    static let card: CGFloat = 12
-    /// ⌘K palette, the Workspace glass header, large HUDs, floating panels.
-    static let panel: CGFloat = 18
+    static let well: CGFloat = 6
+    /// Panes (groups of rows), section groups: the macOS 26 card corner.
+    static let card: CGFloat = 10
+    /// ⌘K palette, the Workspace header, large HUDs, floating panels.
+    static let panel: CGFloat = 14
 
-    /// HUDs, toasts and the recording bar (was 16).
+    /// HUDs, toasts and the recording bar.
     static let hud = panel
-    /// Control strips floating over the screen (was 14).
+    /// Control strips floating over the screen.
     static let bar = card
-    /// Tiles and thumbnails inside a card (was 9).
+    /// Tiles and thumbnails inside a card.
     static let tile = well
 
     /// Module and status squircles: the app-icon proportion (22.5% of the side).
@@ -543,30 +554,30 @@ extension View {
 // MARK: - Icons
 
 enum AOMIcon {
-    /// Row icon frame at Body (13 pt text); the glyph takes the row's text style.
-    static let row: CGFloat = 20
-    /// Workspace tile and quick-action squircle, glyph 16 pt semibold.
-    static let tileBadge: CGFloat = 32
-    static let tileGlyph: CGFloat = 16
-    /// Page-header squircle, glyph 20 pt.
-    static let headerBadge: CGFloat = 40
+    /// Row symbol frame; the glyph is drawn at Callout, in secondary colour.
+    static let row: CGFloat = 16
+    /// Workspace tile and quick-action squircle, glyph 13 pt medium.
+    static let tileBadge: CGFloat = 24
+    static let tileGlyph: CGFloat = 13
+    /// Page-header squircle.
+    static let headerBadge: CGFloat = 28
     /// Empty-state glyph.
-    static let empty: CGFloat = 40
-    /// The symbol frame inside a text button (a capsule link): one Body
+    static let empty: CGFloat = 28
+    /// The symbol frame inside a text button (a capsule link): one Callout
     /// line tall, so a tall glyph (`rectangle.stack`) cannot make its button
     /// taller than its neighbours.
-    static let inlineGlyph: CGFloat = 16
-    /// Minimum hit area for icon buttons (the default macOS control, HIG).
-    static let hitArea: CGFloat = 28
+    static let inlineGlyph: CGFloat = 14
+    /// Hit area for icon buttons: one regular control high.
+    static let hitArea: CGFloat = 24
     /// Status dot inside pills and badges.
     static let dot: CGFloat = 6
 
     /// Large status header (Focus timer, Folder Rules today): the squircle
     /// and the progress ring around it.
-    static let statusBadge: CGFloat = 48
-    static let statusRing: CGFloat = 64
+    static let statusBadge: CGFloat = 36
+    static let statusRing: CGFloat = 48
     /// Rows in a module's item list that carry a small squircle.
-    static let listBadge: CGFloat = 24
+    static let listBadge: CGFloat = 20
     /// The glyph frame of a floating HUD (mic mute, focus start).
     static let hudGlyph: CGFloat = 40
 }

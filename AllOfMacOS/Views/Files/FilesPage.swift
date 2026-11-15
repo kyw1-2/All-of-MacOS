@@ -16,6 +16,13 @@ struct FilesPage: View {
     @State private var finderPermission: FilesFinder.Permission?
     @State private var quickLookURL: URL?
     @State private var quickLookItems: [URL] = []
+    /// Favorite folders' names and existence, read off the row bodies.
+    @State private var favoriteInfo: [String: FilesPathInfo] = [:]
+    @State private var favoriteInfoClock = AOMRefreshClock()
+    /// Selecting the page again within this keeps the names already read.
+    private static let favoriteInfoInterval: TimeInterval = 30
+    /// Read in actions, not observed: a page change never re-renders this view.
+    @Environment(\.aomPageActivity) private var pageActivity
     @Environment(\.undoManager) private var undoManager
     @Environment(\.openSettings) private var openSettings
 
@@ -56,22 +63,48 @@ struct FilesPage: View {
         .aomPage("Files")
         .aomToast(toast)
         .quickLookPreview($quickLookURL, in: quickLookItems)
-        .task {
+        // When the page is selected (at most every 30 s; returning to AOM
+        // also refreshes): the status, the Finder permission and the
+        // favorites, which may have been renamed or removed since.
+        .aomPageLifecycle(minimumInterval: Self.favoriteInfoInterval, onActivate: {
             FilesModule.publishStatus()
-            await refreshFinderPermission()
+            refreshFavoriteInfo(ifStale: true)
+            Task { await refreshFinderPermission() }
+        })
+        .onChange(of: settings.favorites) { _, _ in refreshFavoriteInfo() }
+        // The recent lists watch their folders while the page is selected and on screen.
+        .aomOnPageVisibilityChange { visible in
+            if visible { recent.beginWatching() } else { recent.endWatching() }
         }
-        .onAppear { recent.beginWatching() }
-        .onDisappear { recent.endWatching() }
         .onReceive(NotificationCenter.default.publisher(for: PermissionWatchdog.accessibilityRecovered)) { _ in
-            accessibilityTrusted = AXIsProcessTrusted()
+            refreshAccessibility()
         }
         .onReceive(NotificationCenter.default.publisher(for: PermissionWatchdog.accessibilityLost)) { _ in
-            accessibilityTrusted = AXIsProcessTrusted()
+            refreshAccessibility()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            accessibilityTrusted = AXIsProcessTrusted()
+            refreshAccessibility()
+            guard pageActivity.isActive else { return }
+            refreshFavoriteInfo(ifStale: true)
             Task { await refreshFinderPermission() }
         }
+    }
+
+    /// Written only on a change, so a hidden page is not re-rendered.
+    private func refreshAccessibility() {
+        let trusted = AXIsProcessTrusted()
+        if trusted != accessibilityTrusted { accessibilityTrusted = trusted }
+    }
+
+    /// `ifStale`: skipped while the favorites are the ones last read and the
+    /// read is less than 30 s old.
+    private func refreshFavoriteInfo(ifStale: Bool = false) {
+        if ifStale, Set(favoriteInfo.keys) == Set(settings.favorites),
+           favoriteInfoClock.remaining(of: Self.favoriteInfoInterval) > 0 { return }
+        favoriteInfoClock.mark()
+        var info: [String: FilesPathInfo] = [:]
+        for path in settings.favorites { info[path] = FilesPathInfo(path) }
+        if info != favoriteInfo { favoriteInfo = info }
     }
 
     private var shortcutHelp: String {
@@ -96,10 +129,12 @@ struct FilesPage: View {
 
     private func refreshFinderPermission() async {
         guard settings.dialogHelper, settings.showsFinderWindows, !PresetManager.isUIPreview else {
-            finderPermission = PresetManager.isUIPreview ? .granted : nil
+            let fixed: FilesFinder.Permission? = PresetManager.isUIPreview ? .granted : nil
+            if fixed != finderPermission { finderPermission = fixed }
             return
         }
-        finderPermission = await Task.detached(priority: .utility) { FilesFinder.permission(ask: false) }.value
+        let permission = await Task.detached(priority: .utility) { FilesFinder.permission(ask: false) }.value
+        if permission != finderPermission { finderPermission = permission }
     }
 
     // MARK: Disk images
@@ -184,7 +219,9 @@ struct FilesPage: View {
                 AOMInlineEmpty(symbol: "star", message: "No favorites yet. Drag a folder here.", actionTitle: "Add Folder…") { addFavorite() }
             }
             ForEach(Array(settings.favorites.enumerated()), id: \.element) { index, path in
-                FilesFavoriteRow(path: path, index: index, count: settings.favorites.count,
+                // A path added since the last refresh is read once here.
+                FilesFavoriteRow(path: path, info: favoriteInfo[path] ?? FilesPathInfo(path),
+                                 index: index, count: settings.favorites.count,
                                  shortcut: settings.favoriteShortcuts && index < 9 ? "⌘⌥\(index + 1)" : nil,
                                  move: { settings.moveFavorite(from: index, to: $0) },
                                  insert: { folders in insertFavorites(folders, at: index) },

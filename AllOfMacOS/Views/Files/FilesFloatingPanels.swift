@@ -123,19 +123,36 @@ struct FilesAdaptiveColumns: Layout {
         (width - spacing * CGFloat(count - 1)) / CGFloat(count)
     }
 
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    /// Each subview's height at a width, measured once per width until the
+    /// subviews change (SwiftUI then rebuilds the cache).
+    struct Cache {
+        var heights: [CGFloat: [CGFloat]] = [:]
+    }
+
+    func makeCache(subviews: Subviews) -> Cache { Cache() }
+
+    private func heights(at width: CGFloat, subviews: Subviews, cache: inout Cache) -> [CGFloat] {
+        if let known = cache.heights[width] { return known }
+        let measured = subviews.map { $0.sizeThatFits(ProposedViewSize(width: width, height: nil)).height }
+        // A live resize offers a new width every frame; keep the latest few.
+        if cache.heights.count >= 4 { cache.heights.removeAll() }
+        cache.heights[width] = measured
+        return measured
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) -> CGSize {
         let width = proposal.width ?? minimumColumnWidth * 2 + spacing
         guard !subviews.isEmpty else { return CGSize(width: width, height: 0) }
         if sideBySide(width, count: subviews.count) {
             let column = columnWidth(width, count: subviews.count)
-            let height = subviews.map { $0.sizeThatFits(ProposedViewSize(width: column, height: nil)).height }.max() ?? 0
+            let height = heights(at: column, subviews: subviews, cache: &cache).max() ?? 0
             return CGSize(width: width, height: height)
         }
-        let heights = subviews.map { $0.sizeThatFits(ProposedViewSize(width: width, height: nil)).height }
+        let heights = heights(at: width, subviews: subviews, cache: &cache)
         return CGSize(width: width, height: heights.reduce(0, +) + spacing * CGFloat(subviews.count - 1))
     }
 
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) {
         if sideBySide(bounds.width, count: subviews.count) {
             let column = columnWidth(bounds.width, count: subviews.count)
             for (index, subview) in subviews.enumerated() {
@@ -146,12 +163,28 @@ struct FilesAdaptiveColumns: Layout {
             return
         }
         var y = bounds.minY
-        for subview in subviews {
-            let height = subview.sizeThatFits(ProposedViewSize(width: bounds.width, height: nil)).height
+        let heights = heights(at: bounds.width, subviews: subviews, cache: &cache)
+        for (subview, height) in zip(subviews, heights) {
             subview.place(at: CGPoint(x: bounds.minX, y: y), anchor: .topLeading,
                           proposal: ProposedViewSize(width: bounds.width, height: height))
             y += height + spacing
         }
+    }
+}
+
+/// What a favorite row shows about its folder, read from the file system
+/// once per path and refreshed by the Files page (`FilesPage`), not on every
+/// render of the row.
+struct FilesPathInfo: Equatable {
+    let name: String
+    let abbreviated: String
+    let exists: Bool
+
+    @MainActor
+    init(_ path: String) {
+        name = FilesPath.displayName(path)
+        abbreviated = FilesPath.abbreviated(path)
+        exists = FileManager.default.fileExists(atPath: path)
     }
 }
 

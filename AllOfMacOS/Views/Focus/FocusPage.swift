@@ -17,11 +17,12 @@ struct FocusPage: View {
     init() {}
 
     var body: some View {
-        page.task {
+        // When the page is selected, unless it was in the last few seconds.
+        page.aomPageLifecycle(minimumInterval: 5, onActivate: {
             session.tick()
             session.refreshStats()
             idle.refreshPressure()
-        }
+        })
     }
 
     private var page: some View {

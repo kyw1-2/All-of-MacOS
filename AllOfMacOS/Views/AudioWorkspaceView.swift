@@ -14,6 +14,9 @@ struct AudioWorkspaceView: View {
     @State private var expandedOutput = true
     /// Confirmations for the page and its rows (design-3.4.0 b.5).
     @StateObject private var toast = AOMToastModel()
+    /// When the apps were last re-read on selecting the page.
+    @State private var refreshClock = AOMRefreshClock()
+    private static let refreshInterval: TimeInterval = 5
 
     var body: some View {
         AOMPage {
@@ -30,12 +33,22 @@ struct AudioWorkspaceView: View {
             applicationsCard
         }
         .aomPage("Audio")
-        .searchable(text: $searchText, placement: .toolbar, prompt: "Filter Apps")
-        .toolbar { toolbarContent }
+        .aomPageToolbar {
+            toolbarContent
+            AOMToolbarSearchItem(text: $searchText, prompt: "Filter Apps")
+        }
         .environmentObject(toast)
         .aomToast(toast)
-        .onAppear { service.beginMetering(); service.refresh() }
-        .onDisappear { service.endMetering() }
+        // Levels are metered while Audio is the selected page and on screen.
+        // The apps are re-read too, unless that happened in the last few seconds.
+        .aomOnPageVisibilityChange { visible in
+            guard visible else { service.endMetering(); return }
+            service.beginMetering()
+            if refreshClock.remaining(of: Self.refreshInterval) == 0 {
+                refreshClock.mark()
+                service.refresh()
+            }
+        }
     }
 
     // MARK: Header (d.9)
@@ -399,7 +412,7 @@ private struct OutputDeviceRow: View {
             Divider()
             Button("Sound Settings…") { AudioSystemSettings.openSound() }
         }
-        .task(id: scenePhase) {
+        .aomVisibleTask(id: scenePhase) {
             guard scenePhase == .active else { return }
             refresh()
             do {
@@ -567,7 +580,7 @@ private struct InputDeviceRow: View {
             }
             Button("Sound Settings…") { AudioSystemSettings.openSound() }
         }
-        .task(id: scenePhase) {
+        .aomVisibleTask(id: scenePhase) {
             guard scenePhase == .active else { return }
             refresh()
             do {

@@ -3,6 +3,7 @@ import SwiftUI
 struct HardwareCareCard: View {
     @ObservedObject private var model = HardwareCareModel.shared
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.aomPageActivity) private var pageActivity
 
     var body: some View {
         AOMSectionCard("Battery & Hardware", symbol: "cpu") {
@@ -66,9 +67,10 @@ struct HardwareCareCard: View {
                 if model.busy { ProgressView().controlSize(.small) }
             }
         }
-        .aomOnWindowVisibilityChange { visible in
+        // Sampled while System Tools is the selected page and on screen.
+        .aomOnPageVisibilityChange { visible in
             if visible { model.appear() } else { model.disappear() }
         }
-        .onChange(of: scenePhase) { _, phase in if phase == .active { model.refreshHelper() } }
+        .onChange(of: scenePhase) { _, phase in if phase == .active && pageActivity.isActive { model.refreshHelper() } }
     }
 }

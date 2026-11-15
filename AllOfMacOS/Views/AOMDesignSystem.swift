@@ -56,7 +56,8 @@ private struct AOMToastModelPresenter: ViewModifier {
                             Button(title) { model.performAction() }
                                 .aomGlassButton()
                                 .controlSize(.small)
-                                .keyboardShortcut("z", modifiers: .command)
+                                // A hidden page's toast must not take ⌘Z.
+                                .aomShortcut("z")
                         }
                     }
                     .font(AOMFont.body.weight(.medium))
@@ -95,8 +96,9 @@ struct AOMStatItem: Identifiable {
 }
 
 /// Summary figures as one integrated band: equal columns divided by
-/// hairlines instead of a row of separate cards. Columns with an action are
-/// buttons.
+/// hairlines instead of a row of separate cards. Each cell is its label
+/// (Caption, secondary) over the figure (Title 2 medium) and its unit
+/// (Caption). Columns with an action are buttons.
 struct AOMStatStrip: View {
     let items: [AOMStatItem]
     /// Figures per row; `nil` keeps them all on one row.
@@ -152,7 +154,7 @@ private struct AOMStatCell: View {
                     .foregroundStyle(AOMColor.textSecondary)
                     .accessibilityHidden(true)
                 Text(item.title)
-                    .font(AOMFont.caption.weight(.medium))
+                    .font(AOMFont.caption)
                     .foregroundStyle(AOMTheme.textSecondary)
                     .lineLimit(1)
                 if navigates {
@@ -172,7 +174,7 @@ private struct AOMStatCell: View {
                         .minimumScaleFactor(0.6)
                     if let unit = item.unit {
                         Text(unit)
-                            .font(AOMFont.callout.weight(.medium))
+                            .font(AOMFont.caption)
                             .foregroundStyle(AOMTheme.textSecondary)
                             .lineLimit(1)
                     }
@@ -185,7 +187,8 @@ private struct AOMStatCell: View {
                 }
             }
         }
-        .padding(AOMSpace.cardPadding)
+        .padding(.horizontal, AOMSpace.cardPadding)
+        .padding(.vertical, AOMSpace.x2 + AOMSpace.x0_5)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
@@ -196,9 +199,10 @@ private struct AOMStatCell: View {
 
 // MARK: - Empty state
 
-/// Native `ContentUnavailableView` that fills the space it is given (e.5):
-/// the system's 40 pt hierarchical symbol, a title, one sentence and at most
-/// one primary action.
+/// An empty state centred in the space it is given (e.5), laid out like
+/// `ContentUnavailableView` at the page's scale: a 28 pt hierarchical symbol,
+/// the title in Body medium, one sentence in Callout secondary and at most
+/// one action at regular size, about 130 pt tall in all.
 struct AOMEmptyState<Actions: View>: View {
     let title: String
     let systemImage: String
@@ -213,12 +217,25 @@ struct AOMEmptyState<Actions: View>: View {
     }
 
     var body: some View {
-        ContentUnavailableView {
-            Label(title, systemImage: systemImage)
+        VStack(spacing: AOMSpace.x2) {
+            Image(systemName: systemImage)
+                .font(.system(size: AOMIcon.empty, weight: .regular))
                 .symbolRenderingMode(.hierarchical)
-        } description: {
-            Text(message)
-        } actions: {
+                .foregroundStyle(AOMColor.textSecondary)
+                .frame(height: AOMIcon.empty)
+                .accessibilityHidden(true)
+            VStack(spacing: AOMSpace.x1) {
+                Text(title)
+                    .font(AOMFont.bodyEmphasis)
+                    .foregroundStyle(AOMColor.text)
+                    .accessibilityAddTraits(.isHeader)
+                Text(message)
+                    .font(AOMFont.callout)
+                    .foregroundStyle(AOMColor.textSecondary)
+            }
+            .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: AOMSize.readableText)
             // Narrow columns (the Automation list) must stack the actions
             // instead of clipping them: try one row first, fall back to a
             // leading-aligned column.
@@ -226,8 +243,13 @@ struct AOMEmptyState<Actions: View>: View {
                 HStack(spacing: AOMSpace.x2) { actions }
                 VStack(alignment: .leading, spacing: AOMSpace.x2) { actions }
             }
+            .controlSize(.regular)
+            .padding(.top, AOMSpace.x1)
         }
+        .padding(.horizontal, AOMSpace.pageMargin)
+        .padding(.vertical, AOMSpace.x4)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .contain)
     }
 }
 

@@ -141,11 +141,21 @@ final class SystemToolsModel: ObservableObject {
 
     // MARK: - Lifecycle
 
+    /// When `refreshStates` last ran (system uptime).
+    private var lastStatesRefresh: TimeInterval?
+    /// Selecting the page again this soon after a refresh keeps its states.
+    static let appearRefreshInterval: TimeInterval = 2
+
     func appear() {
         guard refreshTimer == nil else { return }
         isVisible = true
-        refreshStates()
-        refreshSlowStates(force: true)
+        let now = ProcessInfo.processInfo.systemUptime
+        if let last = lastStatesRefresh, now - last < Self.appearRefreshInterval {
+            refreshSlowStates()
+        } else {
+            refreshStates()
+            refreshSlowStates(force: true)
+        }
         stateObserver.start { [weak self] _ in self?.scheduleEventRefresh() }
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
@@ -210,6 +220,7 @@ final class SystemToolsModel: ObservableObject {
 
     func refreshStates() {
         guard isVisible else { return }
+        lastStatesRefresh = ProcessInfo.processInfo.systemUptime
         let interval = AOMPerformance.begin("SystemTools.refresh")
         defer { AOMPerformance.end("SystemTools.refresh", interval) }
         var next: [SystemToolID: SystemToolState] = [:]

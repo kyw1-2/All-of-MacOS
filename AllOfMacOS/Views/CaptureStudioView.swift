@@ -7,9 +7,14 @@ import SwiftUI
 /// keyboard target: arrows move the selection, Return edits, Space previews,
 /// ⌘C copies and Delete removes from history (b.4).
 struct CaptureStudioView: View {
-    @ObservedObject private var history = CaptureHistory.shared
-    @ObservedObject private var recordingService = ScreenRecordingService.shared
-    @ObservedObject private var textCapture = TextCaptureSettings.shared
+    /// Observed through `observation`, so a hidden Capture page does not
+    /// re-render every second of a recording.
+    private let history = CaptureHistory.shared
+    private let recordingService = ScreenRecordingService.shared
+    private let textCapture = TextCaptureSettings.shared
+    @StateObject private var observation = AOMPageObservation([
+        CaptureHistory.shared.aomChanges, ScreenRecordingService.shared.aomChanges, TextCaptureSettings.shared.aomChanges,
+    ])
     @State private var selectedFilter: CaptureFilter = .all
     @State private var hoveredEntryID: UUID?
     @State private var selectedEntryID: UUID?
@@ -98,8 +103,11 @@ struct CaptureStudioView: View {
             ScreenRulerSection()
         }
         .aomPage("Capture")
-        .toolbar { toolbarContent }
-        .searchable(text: $query, placement: .toolbar, prompt: "Search captures")
+        .aomObserving(observation)
+        .aomPageToolbar {
+            toolbarContent
+            AOMToolbarSearchItem(text: $query, prompt: "Search captures")
+        }
         .sheet(isPresented: $showingSettingsSheet) {
             ModuleSettingsSheet("Capture Settings", done: { showingSettingsSheet = false }) {
                 CaptureSettingsView()

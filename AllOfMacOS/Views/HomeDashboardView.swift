@@ -26,11 +26,12 @@ import SwiftUI
 /// module services); every control calls the same code as its page.
 struct AOMHomeView: View {
     @EnvironmentObject var appState: AppState
-    @Binding var showingCommandPalette: Bool
     private let stats = GestureStatistics.shared
     @StateObject private var activity = WorkspaceValueProjection(statistics: GestureStatistics.shared)
     @State private var hasFired = GestureStatistics.shared.totalFired > 0
-    @State private var windowVisible = false
+    /// When the status was last polled: selecting Workspace again within a
+    /// poll interval waits for the rest of it instead of polling at once.
+    @State private var statusClock = AOMRefreshClock()
     @State private var weekCache = WorkspaceWeekCache()
     @ObservedObject private var clipboard = ClipboardStore.shared
     @ObservedObject private var history = CaptureHistory.shared
@@ -47,7 +48,7 @@ struct AOMHomeView: View {
     @State private var outputDevice: String?
     @State private var runStates: [UUID: AOMRunState] = [:]
     /// "Skip for Now" on the setup checklist lives in scene storage, not
-    /// @State: the page is rebuilt on every tab switch, and a skipped setup
+    /// @State: the page is rebuilt when the window is, and a skipped setup
     /// must not come back when you return to Workspace. Dismissed suggestions
     /// stay session-only.
     @SceneStorage("workspace.setupSkipped") private var setupSkipped = false
@@ -65,8 +66,11 @@ struct AOMHomeView: View {
     /// The Productivity modules' `attention` lines, polled with the rest of
     /// the status so a module's countdown never redraws the whole page.
     @State private var moduleAttention: [AOMModule: String] = [:]
+    /// Read in actions, not observed: the page body never depends on it.
+    @Environment(\.aomPageActivity) private var pageActivity
 
     static let maximumContentWidth: CGFloat = AOMSize.contentMaxWidth
+    static let statusInterval: TimeInterval = 4
     static let attentionLimit = 3
     static let recentLimit = 5
 
@@ -132,8 +136,7 @@ struct AOMHomeView: View {
         .defaultScrollAnchor(AOMPreviewHooks.scrollAnchor)
         .aomScrollEdge()
         .background(AOMColor.pageBackground)
-        .navigationTitle("Workspace")
-        .toolbar {
+        .aomPageToolbar {
             // View options, then the page's one primary action (b.3).
             ToolbarItem(placement: .primaryAction) {
                 Button { showsCustomize = true } label: {
@@ -151,21 +154,23 @@ struct AOMHomeView: View {
         .sheet(isPresented: $showsCustomize) {
             WorkspaceCustomizeSheet(layout: layout)
         }
-        .onAppear(perform: openRequestedCustomize)
+        .aomPageLifecycle(onActivate: openRequestedCustomize)
         .onChange(of: layout.customizeRequested) { _, _ in openRequestedCustomize() }
         // ⌘N and ⌘F work from the Workspace too: they open the Automation page.
-        .focusedSceneValue(\.triggerEditorCommands, TriggerEditorCommandActions(
+        .aomPageFocusedSceneValue(\.triggerEditorCommands, TriggerEditorCommandActions(
             search: { appState.selectedMainTab = .gestures },
             newTrigger: newAutomation))
         .onReceive(stats.$totalFired.map { $0 > 0 }.removeDuplicates()) { hasFired = $0 }
-        .aomOnWindowVisibilityChange { windowVisible = $0 }
-        .task(id: windowVisible) {
-            guard windowVisible else { return }
+        // Polls while Workspace is the selected page and on screen.
+        .aomVisibleTask {
             // Isolated previews only (`--aom-preview-panel-appearance`).
             AOMFeaturePreview.applyPanelAppearance()
             while !Task.isCancelled {
+                let wait = statusClock.remaining(of: Self.statusInterval)
+                if wait > 0 { do { try await Task.sleep(for: .seconds(wait)) } catch { break } }
+                statusClock.mark()
                 await refreshStatus()
-                do { try await Task.sleep(for: .seconds(4)) } catch { break }
+                do { try await Task.sleep(for: .seconds(Self.statusInterval)) } catch { break }
             }
         }
         .aomToast(toast)
@@ -212,8 +217,10 @@ struct AOMHomeView: View {
         })
     }
 
+    /// View ▸ Customize Workspace… asks while selecting Workspace; a hidden
+    /// page answers when it is selected.
     private func openRequestedCustomize() {
-        guard layout.customizeRequested else { return }
+        guard pageActivity.isActive, layout.customizeRequested else { return }
         layout.customizeRequested = false
         showsCustomize = true
     }
@@ -1171,7 +1178,7 @@ private struct WorkspaceHero<Action: View, Strip: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: AOMSpace.x3) {
             HStack(alignment: .center, spacing: AOMSpace.x3) {
-                TimelineView(.periodic(from: .now, by: 30)) { context in
+                AOMPageTimeline(every: 30) { context in
                     VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
                         HStack(alignment: .center, spacing: Self.dotGap) {
                             statusDot
@@ -1702,7 +1709,7 @@ private struct WorkspaceActivityRow: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer(minLength: AOMSpace.x2)
-                TimelineView(.periodic(from: .now, by: 30)) { context in
+                AOMPageTimeline(every: 30) { context in
                     Text(AOMRelativeTime.string(event.date, now: context.date))
                         .font(AOMFont.caption.monospacedDigit())
                         .foregroundStyle(AOMColor.textSecondary)
@@ -1929,7 +1936,7 @@ private struct WorkspaceSystemCard: View {
             .padding(.vertical, AOMSpace.x1)
         }
         .accessibilityLabel("This Mac")
-        .aomOnWindowVisibilityChange { visible in
+        .aomOnPageVisibilityChange { visible in
             if visible { system.start() } else { system.stop() }
         }
         .onDisappear { system.stop() }

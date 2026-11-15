@@ -1,10 +1,10 @@
 import AppKit
 import SwiftUI
 
-// AOM 3.3.3 components: one implementation per job (ux-refs-3.3.3 §b.5, e.1–e.7).
+// AOM components: one implementation per job (ux-refs-3.3.3 §b.5, e.1–e.7).
 //
-//   AOMPage            standard page scroll: canvas, 24 pt margins, 1200 pt max, 24 pt between sections
-//   AOMPageHeader      status sentence · context line · status pill · trailing controls
+//   AOMPage            standard page scroll: canvas, 20 pt margins, 860 pt centred column, 18 pt between sections
+//   AOMPageHeader      one line: status sentence · context · status pill · trailing controls
 //   AOMSection         section title above an opaque card, optional ⓘ and footer under the card
 //   AOMSettingRow      label · optional secondary line · trailing control · optional ⓘ popover
 //   AOMToggleRow       AOMSettingRow with a switch
@@ -31,8 +31,10 @@ enum AOMPreviewHooks {
 }
 
 /// The standard page (e.1): one vertical scroll view on the canvas, content
-/// at most 1200 pt wide (centred beyond) with 24 pt margins and 24 pt between sections.
-/// The page name lives in the toolbar (`navigationTitle`), never repeated here.
+/// in a column at most 860 pt wide (centred beyond) with 20 pt margins and
+/// 18 pt between sections. Controls in the page are small; a page's one
+/// primary action asks for `.regular` itself. The page name lives in the
+/// toolbar (`navigationTitle`), never repeated here.
 struct AOMPage<Content: View>: View {
     var maxWidth: CGFloat = AOMSize.contentMaxWidth
     var spacing: CGFloat = AOMSpace.sectionGap
@@ -50,10 +52,11 @@ struct AOMPage<Content: View>: View {
             // Lazy: a page builds only the sections on screen, so opening it
             // no longer creates every switch, pop-up and chart below the fold.
             LazyVStack(alignment: .leading, spacing: spacing) { content }
+                .controlSize(.small)
                 .frame(maxWidth: maxWidth, alignment: .leading)
                 .padding(.horizontal, AOMSpace.pageMargin)
                 .padding(.top, AOMSpace.pageTop)
-                .padding(.bottom, AOMSpace.x6)
+                .padding(.bottom, AOMSpace.pageMargin)
                 .frame(maxWidth: .infinity)
         }
         // Created without scrollers, so AOMScrollChromePolicy has nothing
@@ -74,7 +77,7 @@ extension View {
         frame(maxWidth: AOMSize.settingsColumn, alignment: .leading)
             .padding(.horizontal, AOMSpace.pageMargin)
             .padding(.top, AOMSpace.x3)
-            .padding(.bottom, AOMSpace.x6)
+            .padding(.bottom, AOMSpace.pageMargin)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
@@ -94,10 +97,11 @@ struct AOMStatus: Equatable {
     }
 }
 
-/// The one header for every module page. It sits on the glass, not in a
-/// pane: the status sentence, one line of context, an optional status pill,
-/// then the trailing controls (master switch, actions). `help` becomes the
-/// title's tooltip.
+/// The one header for every module page: a single 24 pt line on the canvas,
+/// not in a pane. The status sentence, its context after it on the same
+/// baseline, an optional status pill, then the trailing controls (master
+/// switch, actions) at small size. The context truncates before the sentence
+/// does. `help` becomes the title's tooltip.
 struct AOMPageHeader<Trailing: View>: View {
     let title: String
     var subtitle: String?
@@ -121,22 +125,19 @@ struct AOMPageHeader<Trailing: View>: View {
     }
 
     var body: some View {
-        // A title, not a badge: the status sentence in bold large type with
-        // its context underneath, like the headers of Apple's own apps.
+        // A status line, not a headline: the toolbar already names the page,
+        // so the sentence is Body semibold and its context follows on the
+        // same baseline in secondary Callout.
         HStack(alignment: .center, spacing: AOMSpace.x3) {
-            VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
-                HStack(alignment: .center, spacing: AOMSpace.x2) {
-                    Text(title)
-                        .font(AOMFont.pageTitle)
-                        .foregroundStyle(AOMColor.text)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .accessibilityAddTraits(.isHeader)
-                        .help(help ?? "")
-                    if let status {
-                        AOMStatusPill(status.text, tone: status.tone, symbol: status.symbol)
-                    }
-                }
+            HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x2) {
+                Text(title)
+                    .font(AOMFont.heroSentence)
+                    .foregroundStyle(AOMColor.text)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .accessibilityAddTraits(.isHeader)
+                    .help(help ?? "")
+                    .layoutPriority(1)
                 if let subtitle, !subtitle.isEmpty {
                     Text(subtitle)
                         .font(AOMFont.callout)
@@ -144,14 +145,18 @@ struct AOMPageHeader<Trailing: View>: View {
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }
+                if let status {
+                    AOMStatusPill(status.text, tone: status.tone, symbol: status.symbol)
+                }
             }
             .layoutPriority(1)
             Spacer(minLength: AOMSpace.x3)
             HStack(spacing: AOMSpace.x2) { trailing }
+                .controlSize(.small)
                 .fixedSize()
         }
+        .frame(minHeight: AOMSpace.x6)
         .padding(.horizontal, AOMSpace.x0_5)
-        .padding(.bottom, AOMSpace.x1)
         .foregroundStyle(active ? AOMColor.text : AOMColor.textSecondary)
         .accessibilityElement(children: .contain)
     }
@@ -159,9 +164,11 @@ struct AOMPageHeader<Trailing: View>: View {
 
 // MARK: - Section
 
-/// A section title in sentence case with an optional count or detail in
-/// secondary text and a trailing accessory such as `AOMCardLink("View All")`.
-/// `help` becomes the title's tooltip.
+/// A section title in sentence case (Callout semibold, secondary, so it
+/// recedes behind its rows) with an optional count or detail in Caption and a
+/// trailing accessory such as `AOMCardLink("View All")`. It is inset by
+/// `AOMSpace.rowInset`, so the title starts on the rows' label line and the
+/// accessory ends on their control line. `help` becomes the title's tooltip.
 struct AOMSectionTitle<Accessory: View>: View {
     let title: String
     var detail: String?
@@ -180,13 +187,13 @@ struct AOMSectionTitle<Accessory: View>: View {
         HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x2) {
             Text(title)
                 .font(AOMFont.section)
-                .foregroundStyle(AOMColor.text)
+                .foregroundStyle(AOMColor.textSecondary)
                 .lineLimit(1)
                 .accessibilityAddTraits(.isHeader)
                 .help(help ?? "")
             if let detail, !detail.isEmpty {
                 Text(detail)
-                    .font(AOMFont.callout)
+                    .font(AOMFont.caption)
                     .foregroundStyle(AOMColor.textSecondary)
                     .monospacedDigit()
                     .lineLimit(1)
@@ -194,13 +201,14 @@ struct AOMSectionTitle<Accessory: View>: View {
             Spacer(minLength: AOMSpace.x2)
             accessory
         }
-        .padding(.horizontal, AOMSpace.x0_5)
+        .padding(.horizontal, AOMSpace.rowInset)
         .frame(minHeight: AOMSize.sectionTitleHeight)
     }
 }
 
-/// One section (e.2): the title sits above an opaque card (radius 12, surface
-/// fill, hairline), 8 pt apart; the footer (at most 2 lines of Caption) sits
+/// One section (e.2): the title sits above an opaque card (radius 10, surface
+/// fill, no outline unless Increase Contrast or Show Borders is on), 6 pt
+/// apart; the footer (at most 2 lines of Caption, inset like the title) sits
 /// under the card. Use `padding: 0` (the default) when the card holds rows,
 /// `AOMSpace.cardPadding` for free content. A card holds one topic and at most
 /// 8 rows; never nest a card inside a card.
@@ -240,11 +248,11 @@ struct AOMSection<Content: View, Accessory: View>: View {
                 .aomCard(padding: padding)
             if let footer, !footer.isEmpty {
                 Text(footer)
-                    .font(AOMFont.callout)
+                    .font(AOMFont.caption)
                     .foregroundStyle(AOMColor.textSecondary)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, AOMSpace.x0_5)
+                    .padding(.horizontal, AOMSpace.rowInset)
             }
         }
         .accessibilityElement(children: .contain)
@@ -266,12 +274,12 @@ struct AOMRowDivider: View {
 
 // MARK: - Setting row
 
-/// One settings row (e.3): optional 20 pt symbol, a title (Body, sentence
-/// case, no colon), an optional one-line description (Caption), an optional ⓘ
-/// with the longer explanation, and the control at the trailing edge. 32 pt
-/// tall, 44 pt with a description (4 pt above and below, so a title with an ⓘ
-/// over its caption still fits). Dependent options pass `indent: true` and
-/// are disabled, not hidden, while their parent switch is off.
+/// One settings row (e.3): optional 16 pt symbol (Callout, secondary), a
+/// title (Body, sentence case, no colon), an optional one-line description
+/// (Caption), an optional ⓘ with the longer explanation, and the control at
+/// the trailing edge at small size (switches mini). 30 pt tall, 40 pt with a
+/// description (3 pt above and below). Dependent options pass `indent: true`
+/// and are disabled, not hidden, while their parent switch is off.
 ///
 ///     AOMSection("Title-bar snap", help: "…") {
 ///         AOMToggleRow("Title-bar snap", isOn: $enabled)
@@ -311,6 +319,7 @@ struct AOMSettingRow<Control: View>: View {
         HStack(alignment: .center, spacing: AOMSpace.x2) {
             if let symbol {
                 Image(systemName: symbol)
+                    .font(AOMFont.callout)
                     .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(AOMColor.textSecondary)
                     .frame(width: AOMIcon.row)
@@ -327,7 +336,7 @@ struct AOMSettingRow<Control: View>: View {
                 }
                 if let detail, hasDetail {
                     Text(detail)
-                        .font(AOMFont.callout)
+                        .font(AOMFont.caption)
                         .foregroundStyle(AOMColor.textSecondary)
                         .lineLimit(1)
                         .truncationMode(.tail)
@@ -338,11 +347,12 @@ struct AOMSettingRow<Control: View>: View {
             control
                 .labelsHidden()
                 .toggleStyle(AOMRowSwitchStyle())
+                .controlSize(.small)
                 .fixedSize()
         }
         .padding(.leading, AOMSpace.rowInset + (indent ? AOMSpace.x5 : 0))
         .padding(.trailing, AOMSpace.rowInset)
-        .padding(.vertical, AOMSpace.x1)
+        .padding(.vertical, AOMSpace.rowPadding)
         .frame(minHeight: hasDetail ? AOMSize.rowDetail : AOMSize.rowStandard)
         .overlay(alignment: .top) {
             if showsDivider { AOMRowDivider(inset: leadingInset) }
@@ -412,7 +422,7 @@ struct AOMDisclosureRows<Content: View>: View {
                 HStack(spacing: AOMSpace.x2) {
                     Text(title).font(AOMFont.body).foregroundStyle(AOMColor.text)
                     if let detail {
-                        Text(detail).font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary).lineLimit(1)
+                        Text(detail).font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary).lineLimit(1)
                     }
                     Spacer(minLength: AOMSpace.x2)
                     Image(systemName: "chevron.right")
@@ -421,6 +431,7 @@ struct AOMDisclosureRows<Content: View>: View {
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
                 }
                 .padding(.horizontal, AOMSpace.rowInset)
+                .padding(.vertical, AOMSpace.rowPadding)
                 .frame(minHeight: AOMSize.rowStandard)
                 .contentShape(Rectangle())
             }
@@ -532,10 +543,11 @@ struct AOMStatusPill: View {
             }
             Text(text).lineLimit(1)
         }
-        .font(AOMFont.caption.weight(.semibold))
+        .font(AOMFont.caption.weight(.medium))
         .foregroundStyle(filled ? Color.white : label)
         .padding(.horizontal, AOMSpace.x2 - AOMSpace.x0_5)
-        .frame(minHeight: AOMIcon.row)
+        // 18 pt: one Caption line with 2 pt above and below its glyph.
+        .frame(minHeight: AOMIcon.row + AOMSpace.x0_5)
         .background(filled ? AnyShapeStyle(fill) : AnyShapeStyle(fill.opacity(wash)), in: Capsule())
         .overlay {
             if increased { Capsule().strokeBorder(fill.opacity(0.9), lineWidth: 1) }
@@ -572,8 +584,9 @@ struct AOMModuleBadge: View {
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: AOMRadius.squircle(size), style: .continuous)
+        // The glyph keeps the tile proportion (13 pt in a 24 pt squircle) at every size.
         Image(systemName: symbol)
-            .font(.system(size: (size * 0.46).rounded(), weight: .medium))
+            .font(.system(size: (size * AOMIcon.tileGlyph / AOMIcon.tileBadge).rounded(), weight: .medium))
             .symbolRenderingMode(.monochrome)
             .foregroundStyle(active ? AOMColor.text : AOMColor.textTertiary)
             .frame(width: size, height: size)
@@ -635,12 +648,12 @@ struct AOMModuleTile<Control: View, MenuItems: View>: View {
             .accessibilityHint("Opens \(module.title)")
             .help("\(module.title): \(status)")
 
-            HStack(spacing: AOMSpace.x3) {
+            HStack(spacing: AOMSpace.x2) {
                 Image(systemName: module.symbol)
-                    .font(.system(size: 17, weight: .regular))
+                    .font(AOMFont.callout)
                     .foregroundStyle(active ? AOMColor.text : AOMColor.textTertiary)
                     .symbolEffect(.pulse, options: .repeating, isActive: running && !reduceMotion)
-                    .frame(width: 26)
+                    .frame(width: AOMIcon.row)
                     .allowsHitTesting(false)
                 lines
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -667,12 +680,12 @@ struct AOMModuleTile<Control: View, MenuItems: View>: View {
                 }
                 control
                     .labelsHidden()
-                    .toggleStyle(.switch)
+                    .toggleStyle(AOMRowSwitchStyle())
                     .controlSize(.small)
                     .fixedSize()
                     .frame(width: AOMSize.moduleControlSlot, alignment: .trailing)
             }
-            .padding(.horizontal, AOMSpace.x3)
+            .padding(.horizontal, AOMSpace.rowInset)
         }
         .frame(height: AOMSize.moduleRowHeight)
         .contextMenu {
@@ -697,7 +710,7 @@ struct AOMModuleTile<Control: View, MenuItems: View>: View {
                 } else if active {
                     Circle()
                         .fill(AOMColor.success)
-                        .frame(width: 6, height: 6)
+                        .frame(width: AOMIcon.dot, height: AOMIcon.dot)
                         .accessibilityHidden(true)
                 }
                 Text(status)
@@ -764,6 +777,7 @@ struct AOMListRow<Leading: View, Trailing: View>: View {
         // them to white on the accent fill, so selected rows stay readable.
         HStack(spacing: AOMSpace.x2) {
             leading
+                .font(AOMFont.callout)
                 .frame(width: AOMIcon.row)
                 .foregroundStyle(dimmed ? .tertiary : .secondary)
             VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
@@ -782,9 +796,11 @@ struct AOMListRow<Leading: View, Trailing: View>: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             trailing
+                .controlSize(.small)
         }
-        .frame(minHeight: hasDetail ? AOMSize.rowDouble - AOMSpace.x2 : AOMSize.rowSingle - AOMSpace.x2)
-        .padding(.vertical, AOMSpace.x1)
+        // With the padding the row is `rowSingle` / `rowDouble` tall.
+        .frame(minHeight: (hasDetail ? AOMSize.rowDouble : AOMSize.rowSingle) - AOMSpace.rowPadding * 2)
+        .padding(.vertical, AOMSpace.rowPadding)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
     }
@@ -823,7 +839,7 @@ struct AOMNotice<Actions: View>: View {
         let shape = RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous)
         HStack(alignment: .center, spacing: AOMSpace.x2) {
             Image(systemName: semantic.symbol)
-                .font(AOMFont.bodyEmphasis)
+                .font(AOMFont.callout)
                 .symbolRenderingMode(.monochrome)
                 .foregroundStyle(semantic.color)
                 .frame(width: AOMIcon.row)
@@ -839,11 +855,12 @@ struct AOMNotice<Actions: View>: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             HStack(spacing: AOMSpace.x2) { actions }
                 .buttonStyle(.bordered)
+                .controlSize(.small)
                 .fixedSize()
         }
-        // 10 pt above and below a regular button, the row inset at the sides.
+        // 8 pt above and below a small button, the row inset at the sides.
         .padding(.horizontal, AOMSpace.rowInset)
-        .padding(.vertical, AOMSpace.x2 + AOMSpace.x0_5)
+        .padding(.vertical, AOMSpace.x2)
         .background(semantic.wash(increasedContrast: contrast == .increased), in: shape)
         .overlay {
             if contrast == .increased { shape.strokeBorder(semantic.color.opacity(0.85), lineWidth: 1) }
@@ -866,7 +883,7 @@ struct AOMRunStatusView: View {
     let state: AOMRunState
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 30)) { context in
+        AOMPageTimeline(every: 30) { context in
             switch state {
             case .idle:
                 EmptyView()
@@ -902,7 +919,7 @@ struct AOMShortcutKeys: View {
 
     var body: some View {
         let display = shortcut.displayString
-        HStack(spacing: AOMSpace.x0_5 + 1) {
+        HStack(spacing: AOMSpace.x0_5) {
             ForEach(Array(Self.parts(display).enumerated()), id: \.offset) { _, part in
                 AOMKeycap(text: part, onSelection: onSelection)
             }

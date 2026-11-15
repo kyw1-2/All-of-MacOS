@@ -60,6 +60,8 @@ struct ModernWindowSnappingView: View {
     /// and when AOM comes back to the front, e.g. from System Settings.
     @State private var systemTiling: NativeTiling.SystemOptions?
     @State private var readiness: [TrackpadReadiness.Item] = []
+    /// Read in actions, not observed: a page change never re-renders this view.
+    @Environment(\.aomPageActivity) private var pageActivity
 
     /// Layouts grouped the way the Window menu groups them, with short labels
     /// (the full name stays in help and VoiceOver).
@@ -156,8 +158,7 @@ struct ModernWindowSnappingView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(AOMColor.pageBackground)
-        .navigationTitle("Window Tiling")
-        .toolbar {
+        .aomPageToolbar {
             ToolbarItemGroup(placement: .automatic) {
                 Button {
                     showingSnapZones = true
@@ -194,7 +195,9 @@ struct ModernWindowSnappingView: View {
         }
         .sheet(isPresented: $showingProfiles) { SnapProfilesEditor().environmentObject(appState) }
         .sheet(isPresented: $showingWindowLayouts) { WindowLayoutsEditor() }
-        .onAppear(perform: refreshReadiness)
+        // Returning to AOM refreshes it too (below), so a quick return to
+        // this page keeps the readiness read a few seconds ago.
+        .aomPageLifecycle(minimumInterval: 5, onActivate: refreshReadiness)
         .onChange(of: trackpadSnapOn) { _, _ in gestureSettingChanged() }
         .onChange(of: trackpadSnapHaptic) { _, _ in refreshReadiness() }
         .onChange(of: topBarSpaceSwipe) { _, _ in gestureSettingChanged() }
@@ -215,7 +218,7 @@ struct ModernWindowSnappingView: View {
         .onChange(of: motionPause) { _, _ in gestureSettingChanged() }
         .onChange(of: resnapDelay) { _, _ in gestureSettingChanged() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            refreshReadiness()
+            if pageActivity.isActive { refreshReadiness() }
         }
     }
 
@@ -923,14 +926,18 @@ struct ModernWindowSnappingView: View {
         // The title-bar Space moves (tap and hold or ⌥, then sideways) post
         // the same Mission Control shortcuts as the top-bar Space swipe.
         let titleBarSpaces = trackpadSnapOn && (trackpadSnapHold || trackpadSnapModifiers)
-        readiness = TrackpadReadiness.current(hapticsWanted: trackpadSnapOn && trackpadSnapHaptic,
-                                              spaceSwipeOn: topBarSpaceSwipe || titleBarSpaces)
+        let current = TrackpadReadiness.current(hapticsWanted: trackpadSnapOn && trackpadSnapHaptic,
+                                                spaceSwipeOn: topBarSpaceSwipe || titleBarSpaces)
+        if current != readiness { readiness = current }
     }
 
     /// The same notification Settings rows post: the trackpad stream starts or
     /// stops when these gestures are its only consumers (AppState), and the
     /// title-bar snap picks up its switch.
+    /// A hidden page sees settings changed elsewhere (Settings posts its own
+    /// notification) and refreshes when it is selected again.
     private func gestureSettingChanged() {
+        guard pageActivity.isActive else { return }
         NotificationCenter.default.post(name: .aomSettingChanged, object: nil)
         refreshReadiness()
     }

@@ -6,7 +6,7 @@ import SwiftUI
 /// tokens, plus the shared surfaces and pressable styles.
 ///
 /// Two layers, as on macOS 26/27: content sits on one opaque canvas in opaque
-/// cards with a hairline (`aomCard`); navigation and floating controls
+/// cards one fill step above it, with no outline (`aomCard`); navigation and floating controls
 /// (sidebar, toolbar, palette, HUDs) are Liquid Glass drawn by the system or
 /// by `aomChrome`. Colour is reserved for interaction (the accent), status
 /// (semantic colours with a glyph and text) and module identity badges.
@@ -90,7 +90,8 @@ extension View {
 /// The surfaces AOM uses. There is one content surface (the card); wells sit
 /// inside it; glass is for floating chrome only.
 enum AOMCardStyle: Equatable {
-    /// The opaque card: `surface` fill and a 0.5 pt hairline.
+    /// The opaque card: `surface` fill; an outline only with Increase
+    /// Contrast or Show Borders.
     case paper
     /// Inset fill inside a card: no edge, no shadow.
     case well
@@ -108,7 +109,6 @@ struct AOMCardSurface: ViewModifier {
     var pressed = false
     /// Kept for source compatibility; cards are flat.
     var elevated = true
-    @Environment(\.colorScheme) private var scheme
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.accessibilityShowBorders) private var showBorders
 
@@ -122,13 +122,13 @@ struct AOMCardSurface: ViewModifier {
                 .background {
                     shape.fill(pressed ? AOMColor.surfacePressed : (hovering ? AOMColor.surfaceHover : AOMColor.surface))
                 }
-                // A 0.5 pt hairline: white on #F5F5F7 alone is too faint to
-                // read as a group (1 pt with Increase Contrast / Show Borders).
+                // The fill alone marks the group; Increase Contrast and Show
+                // Borders add a 1 pt edge.
                 .overlay {
-                    shape.strokeBorder(contrast == .increased ? AOMColor.strongLine
-                                                              : AOMColor.hairline.opacity(scheme == .dark ? 0.9 : 0.7),
-                                       lineWidth: contrast == .increased || showBorders ? 1 : 0.5)
-                        .allowsHitTesting(false)
+                    if contrast == .increased || showBorders {
+                        shape.strokeBorder(contrast == .increased ? AOMColor.strongLine : AOMColor.hairline, lineWidth: 1)
+                            .allowsHitTesting(false)
+                    }
                 }
                 .containerShape(shape)
         case .well:
@@ -156,9 +156,9 @@ extension View {
         modifier(AOMCardSurface(style: style, radius: radius, padding: padding, hovering: hovering, elevated: elevated))
     }
 
-    /// The content layer's only card style: radius 12, `surface` fill, 0.5 pt
-    /// hairline (1 pt with Increase Contrast or Show Borders), 12 pt padding
-    /// for free content (pass 0 when the card holds rows).
+    /// The content layer's only card style: radius 10, `surface` fill, no
+    /// outline (1 pt with Increase Contrast or Show Borders), no shadow, 12 pt
+    /// padding for free content (pass 0 when the card holds rows).
     func aomCard(radius: CGFloat = AOMTheme.cardRadius, padding: CGFloat? = AOMSpace.cardPadding,
                  elevated: Bool = true) -> some View {
         modifier(AOMCardSurface(style: .paper, radius: radius, padding: padding, elevated: elevated))
@@ -349,7 +349,7 @@ struct AOMKeycap: View {
             .foregroundStyle(onSelection ? Color.white.opacity(0.92) : AOMTheme.textSecondary)
             .lineLimit(1)
             .fixedSize()
-            .padding(.horizontal, AOMSpace.x1 + 1)
+            .padding(.horizontal, AOMSpace.x1)
             .frame(minWidth: AOMIcon.row, minHeight: AOMIcon.row)
             .background(onSelection ? Color.white.opacity(0.18) : AOMColor.sunken, in: shape)
             .overlay {

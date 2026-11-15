@@ -20,6 +20,7 @@ struct AudioUnitEffectCard: View {
     @State private var effects: [AudioUnitEffectHost.Choice] = []
     @State private var selection = ""
     @State private var message: String?
+    @Environment(\.aomPageActivity) private var pageActivity
 
     init(style: Style = .section) {
         self.style = style
@@ -52,9 +53,10 @@ struct AudioUnitEffectCard: View {
                 .controlSize(.small)
             }
         }
-        .onAppear {
-            selection = SharedOutputRenderer.shared.masterEffect?.key ?? ""
-        }
+        .aomPageLifecycle(onActivate: {
+            let current = SharedOutputRenderer.shared.masterEffect?.key ?? ""
+            if current != selection { selection = current }
+        })
         // Enumerating Audio Units loads their bundles; doing it on the main
         // thread stalled the Audio page as it opened.
         .task {
@@ -65,6 +67,7 @@ struct AudioUnitEffectCard: View {
         // one reaches the other (the renderer's choice is stored in defaults).
         .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
             .receive(on: DispatchQueue.main)) { _ in
+            guard pageActivity.isActive else { return }
             let current = SharedOutputRenderer.shared.masterEffect?.key ?? ""
             if current != selection { selection = current }
         }

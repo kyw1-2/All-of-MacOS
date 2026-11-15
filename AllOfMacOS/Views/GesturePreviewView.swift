@@ -11,8 +11,20 @@ extension EnvironmentValues {
     }
 }
 
+/// The preview of a trackpad gesture. It stops while the Automation page is
+/// hidden; only this wrapper's content observes the page's activity.
 struct GesturePreviewView: View {
     let gesture: TrackpadGesture
+    @Environment(\.aomPageActivity) private var pageActivity
+
+    var body: some View {
+        GesturePreviewContent(gesture: gesture, activity: pageActivity)
+    }
+}
+
+private struct GesturePreviewContent: View {
+    let gesture: TrackpadGesture
+    @ObservedObject var activity: AOMPageActivity
     @EnvironmentObject var appState: AppState
     /// 3.4.33 audit: this preview looped forever at 30 fps. On an otherwise
     /// idle machine the Gestures page measured 30 % CPU against 7 % on Home,
@@ -21,7 +33,7 @@ struct GesturePreviewView: View {
     @State private var autoPhase = false
     @State private var hovering = false
     private static let autoPhaseSeconds: UInt64 = 8
-    private var animating: Bool { autoPhase || hovering }
+    private var animating: Bool { (autoPhase || hovering) && pageActive }
     /// Bumped when the preview comes to rest. A `repeatForever` animation keeps
     /// running after its value turns false (3.6.1: the Automation page held
     /// ~35 % CPU on the main thread, which also delays every keystroke through
@@ -33,9 +45,11 @@ struct GesturePreviewView: View {
     /// `WindowGroup` window, so this preview used to animate at 30 fps with
     /// nothing on screen. Gate it on real visibility instead.
     @ObservedObject private var uiVisibility = AOMUIVisibility.shared
+    /// The Automation page can be kept alive behind another page.
+    private var pageActive: Bool { activity.isActive }
 
     private var animationKey: String { "\(gesture.rawValue)-\(isOnScreen)-\(reduceMotion)" }
-    private var isOnScreen: Bool { scenePhase == .active && uiVisibility.anyWindowVisible }
+    private var isOnScreen: Bool { scenePhase == .active && uiVisibility.anyWindowVisible && pageActive }
 
     var body: some View {
         VStack(spacing: 8) {

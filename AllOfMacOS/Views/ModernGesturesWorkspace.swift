@@ -124,30 +124,34 @@ struct ModernGesturesWorkspace: View {
             .frame(width: geometry.size.width, height: geometry.size.height)
         }
         .aomPane()
-        .navigationTitle("Automation")
         .aomToolbarSubtitle(subtitle)
-        .searchable(text: $searchQuery, isPresented: $searchPresented, placement: .toolbar, prompt: "Search names or actions")
-        .toolbar { toolbarContent }
+        .aomPageToolbar {
+            toolbarContent
+            // Presenting the search (Edit ▸ Search Automations) focuses it.
+            AOMToolbarSearchItem(text: $searchQuery, prompt: "Search names or actions", focusRequest: $searchPresented)
+        }
         // File ▸ New Automation (⌘N) and Edit ▸ Search Automations (⌘F) act on
-        // this page; the toolbar help promises ⌘N.
-        .focusedSceneValue(\.triggerEditorCommands, TriggerEditorCommandActions(
+        // this page while it is selected; the toolbar help promises ⌘N.
+        .aomPageFocusedSceneValue(\.triggerEditorCommands, TriggerEditorCommandActions(
             search: { searchPresented = true },
             newTrigger: { presentAddTrigger(selectedDeviceCategory) }))
-        .sheet(isPresented: $appState.showingAddTrigger) {
+        // AppState's sheet flags present only on the selected page.
+        .aomPageSheet(isPresented: $appState.showingAddTrigger) {
             AddTriggerSheet(keyboardMonitor: appState.keyboardMonitor, category: addCategory)
         }
         .sheet(isPresented: $showingGroupsEditor) {
             ActivationGroupsEditor().environmentObject(appState)
         }
-        .sheet(isPresented: $appState.showingAddAction) {
+        .aomPageSheet(isPresented: $appState.showingAddAction) {
             BrowseActionsSheet(parentID: parentID, toElse: toElse, replaceActionID: replaceActionID)
         }
         .sheet(isPresented: $showingBrowseActions) {
             BrowseActionsSheet()
         }
         .aomToast(toast)
+        // Automations can change while the page is hidden.
+        .aomPageLifecycle(onActivate: reconcileSelection)
         .onAppear {
-            reconcileSelection()
             syncExpandedEditorState()
             applyPreviewEditorHook()
             let args = ProcessInfo.processInfo.arguments
@@ -168,7 +172,7 @@ struct ModernGesturesWorkspace: View {
             syncExpandedEditorState()
             applyPreviewEditorHook()
         }
-        .onDeleteCommand { if let trigger = selectedTrigger { delete(trigger) } }
+        .aomPageDeleteCommand { if let trigger = selectedTrigger { delete(trigger) } }
     }
 
     @ToolbarContentBuilder private var toolbarContent: some ToolbarContent {
@@ -313,7 +317,8 @@ struct ModernGesturesWorkspace: View {
             AOMScopeBar(items: items, selection: $selectedDeviceCategory, accessibilityLabel: "Input")
                 .padding(.horizontal, AOMSpace.rowInset)
         }
-        .scrollIndicators(.hidden)
+        // `.hidden` still draws the scroller when macOS shows scroll bars always.
+        .scrollIndicators(.never)
         // One chip plus 8 pt above and below it.
         .frame(height: AOMFeatureSize.chip + AOMSpace.x4)
     }
@@ -497,7 +502,7 @@ struct ModernGesturesWorkspace: View {
                             Label("All Automations", systemImage: "chevron.left")
                         }
                         .buttonStyle(.link)
-                        .keyboardShortcut("[", modifiers: .command)
+                        .aomShortcut("[")
                     }
                     editorHeader(current)
                     whenSection(current)
@@ -848,7 +853,7 @@ struct ModernGesturesWorkspace: View {
     private var onboardingView: some View {
         AOMEmptyState("No Automations", systemImage: "bolt", message: "") {
             Button("New Automation") { presentAddTrigger(.trackpad) }
-                .keyboardShortcut("n", modifiers: .command)
+                .aomShortcut("n")
             Menu("Add by Input") {
                 ForEach(TriggerCategory.inputCategories) { category in
                     Button(Self.shortTitle(category)) { presentAddTrigger(category) }
@@ -863,11 +868,13 @@ struct ModernGesturesWorkspace: View {
 private struct FiredFlash: ViewModifier {
     let triggerID: UUID
     @State private var flashing = false
+    /// A hidden page does not flash (read, not observed).
+    @Environment(\.aomPageActivity) private var pageActivity
     func body(content: Content) -> some View {
         content
             .background(AOMTheme.positive.opacity(flashing ? 0.18 : 0), in: RoundedRectangle(cornerRadius: AOMRadius.control))
             .onReceive(LiveTouchState.shared.$lastFiredTriggerID.removeDuplicates()) { id in
-                let value = id == triggerID
+                let value = pageActivity.isActive && id == triggerID
                 if flashing != value { flashing = value }
             }
             .animation(AOMDesign.animation(.easeOut(duration: 0.3)), value: flashing)

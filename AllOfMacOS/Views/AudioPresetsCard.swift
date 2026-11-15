@@ -111,6 +111,7 @@ struct HeadphoneEQCard: View {
     @State private var names: [String] = []
     @State private var assigned = ""
     @State private var message: String?
+    @Environment(\.aomPageActivity) private var pageActivity
 
     init(style: Style = .section) {
         self.style = style
@@ -123,12 +124,14 @@ struct HeadphoneEQCard: View {
             case .panel: panel
             }
         }
-        .onAppear(perform: reload)
+        // Read again when the Audio page is selected, unless read in the
+        // last few seconds.
+        .aomPageLifecycle(minimumInterval: 5, onActivate: reload)
         // The page and the mixer panel can both show this card; a change in
         // one (or an import) reaches the other. Only stored values are read
         // here, never the device list.
         .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
-            .receive(on: DispatchQueue.main)) { _ in syncFromStore() }
+            .receive(on: DispatchQueue.main)) { _ in if pageActivity.isActive { syncFromStore() } }
         .onChange(of: deviceUID) { _, _ in assigned = AudioDeviceEQ.assignment(uid: deviceUID) ?? "" }
         .onChange(of: assigned) { _, name in apply(name.isEmpty ? nil : name) }
     }

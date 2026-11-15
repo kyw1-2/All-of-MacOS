@@ -9,6 +9,8 @@ import SwiftUI
 /// Move Down reorder (context menu and VoiceOver actions).
 struct FilesFavoriteRow: View {
     let path: String
+    /// The folder's name and whether it exists, read by the page.
+    let info: FilesPathInfo
     let index: Int
     let count: Int
     let shortcut: String?
@@ -18,8 +20,8 @@ struct FilesFavoriteRow: View {
     let remove: () -> Void
     @State private var targeted = false
 
-    private var name: String { FilesPath.displayName(path) }
-    private var exists: Bool { FileManager.default.fileExists(atPath: path) }
+    private var name: String { info.name }
+    private var exists: Bool { info.exists }
 
     var body: some View {
         HStack(spacing: AOMSpace.x2) {
@@ -31,7 +33,7 @@ struct FilesFavoriteRow: View {
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 1) {
                 Text(name).font(AOMFont.body).foregroundStyle(AOMColor.text).lineLimit(1).truncationMode(.middle)
-                Text(FilesPath.abbreviated(path))
+                Text(info.abbreviated)
                     .font(AOMFont.callout)
                     .foregroundStyle(AOMColor.textSecondary)
                     .lineLimit(1)
@@ -66,7 +68,7 @@ struct FilesFavoriteRow: View {
             Button("Remove", role: .destructive, action: remove)
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(name), \(FilesPath.abbreviated(path))")
+        .accessibilityLabel("\(name), \(info.abbreviated)")
         .accessibilityValue(shortcut.map { "Shortcut \($0)" } ?? "")
         .accessibilityAction(named: "Move Up") { if index > 0 { move(index - 1) } }
         .accessibilityAction(named: "Move Down") { if index < count - 1 { move(index + 2) } }

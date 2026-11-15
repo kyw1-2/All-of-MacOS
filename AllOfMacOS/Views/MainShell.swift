@@ -43,13 +43,11 @@ struct AOMMainShell<Content: View>: View {
 
     var body: some View {
         NavigationSplitView(columnVisibility: columnVisibility) {
-            AOMSidebar(appState: appState,
-                       selected: appState.selectedMainTab,
-                       engineOn: appState.globalEnabled,
-                       snappingOn: appState.currentPreset.snappingEnabled,
-                       paletteKeys: AOMPaletteShortcut.current(appState.currentPreset).displayString,
-                       showingCommandPalette: $showingCommandPalette)
-                .equatable()
+            AOMSidebarHost(appState: appState,
+                           engineOn: appState.globalEnabled,
+                           snappingOn: appState.currentPreset.snappingEnabled,
+                           paletteKeys: AOMPaletteShortcut.current(appState.currentPreset).displayString,
+                           showingCommandPalette: $showingCommandPalette)
                 .navigationSplitViewColumnWidth(min: AOMSize.sidebarMin, ideal: AOMSize.sidebarIdeal,
                                                 max: AOMSize.sidebarMax)
         } detail: {
@@ -91,7 +89,7 @@ struct AOMMainShell<Content: View>: View {
             .background(AOMWorkspaceBackground())
             // The system toolbar title (design-3.3.6 b.11): standard size,
             // with the page's subtitle from `aomToolbarSubtitle`.
-            .navigationTitle(appState.selectedMainTab.title)
+            .modifier(AOMShellTitle())
             // Back and Forward beside the title (System Settings, Finder's Go
             // menu; design-3.4.0 b.3, #228–#229, #233).
             .toolbar {
@@ -107,6 +105,45 @@ struct AOMMainShell<Content: View>: View {
 }
 
 // MARK: - Sidebar
+
+/// The only part of the sidebar column that observes the selected page, so a
+/// page change compares the sidebar's values instead of re-rendering the shell.
+private struct AOMSidebarHost: View {
+    let appState: AppState
+    let engineOn: Bool
+    let snappingOn: Bool
+    let paletteKeys: String
+    @Binding var showingCommandPalette: Bool
+    @ObservedObject private var navigation = AOMNavigation.shared
+
+    var body: some View {
+        AOMSidebar(appState: appState,
+                   selected: navigation.selected,
+                   engineOn: engineOn,
+                   snappingOn: snappingOn,
+                   paletteKeys: paletteKeys,
+                   showingCommandPalette: $showingCommandPalette)
+            .equatable()
+    }
+}
+
+/// The window title from the selected page and the subtitle the active page
+/// reports through `AOMToolbarSubtitleKey`. Set once here: with several pages
+/// alive, page-level titles would compete.
+private struct AOMShellTitle: ViewModifier {
+    @ObservedObject private var navigation = AOMNavigation.shared
+    @State private var subtitle = ""
+
+    func body(content: Content) -> some View {
+        content
+            .navigationTitle(navigation.selected.title)
+            .navigationSubtitle(subtitle)
+            .onPreferenceChange(AOMToolbarSubtitleKey.self) { value in
+                let text = value ?? ""
+                if text != subtitle { subtitle = text }
+            }
+    }
+}
 
 /// Navigation only, the way Finder, Mail and Notes draw it: the search field
 /// at the top (the visible way into ⌘K), then outline symbols the system
@@ -262,10 +299,12 @@ struct AOMSidebar: View, Equatable {
 // MARK: - Navigation history
 
 /// Back and Forward in the toolbar. Only these two buttons observe the
-/// history, so recording a page change redraws them, not the shell.
+/// history, so recording a page change redraws them, not the shell. They
+/// also follow the selected page, which keeps the Back/Forward help current.
 private struct AOMHistoryButtons: View {
     let appState: AppState
     @ObservedObject private var history = AOMNavigationHistory.shared
+    @ObservedObject private var navigation = AOMNavigation.shared
 
     var body: some View {
         Button { history.goBack(appState) } label: {
@@ -285,20 +324,28 @@ private struct AOMHistoryButtons: View {
 /// View menu): every page change is recorded, at most 50, and ⌘[ / ⌘] and
 /// the toolbar chevrons walk it. A change made by Back or Forward itself is
 /// not recorded again.
+///
+/// Only `canGoBack` and `canGoForward` are published, and only when they
+/// change, so recording an ordinary page change publishes nothing.
 @MainActor
 final class AOMNavigationHistory: ObservableObject {
     static let shared = AOMNavigationHistory()
     static let limit = 50
 
-    @Published private(set) var backStack: [AOMMainTab] = []
-    @Published private(set) var forwardStack: [AOMMainTab] = []
+    private(set) var backStack: [AOMMainTab] = [] { didSet { publishAvailability() } }
+    private(set) var forwardStack: [AOMMainTab] = [] { didSet { publishAvailability() } }
+    @Published private(set) var canGoBack = false
+    @Published private(set) var canGoForward = false
     /// The page Back or Forward is about to select.
     private var pending: AOMMainTab?
 
-    var canGoBack: Bool { !backStack.isEmpty }
-    var canGoForward: Bool { !forwardStack.isEmpty }
     var backTarget: AOMMainTab? { backStack.last }
     var forwardTarget: AOMMainTab? { forwardStack.last }
+
+    private func publishAvailability() {
+        if canGoBack == backStack.isEmpty { canGoBack = !backStack.isEmpty }
+        if canGoForward == forwardStack.isEmpty { canGoForward = !forwardStack.isEmpty }
+    }
 
     /// Called for every page change.
     func record(from old: AOMMainTab, to new: AOMMainTab) {
@@ -312,7 +359,6 @@ final class AOMNavigationHistory: ObservableObject {
         back.append(old)
         if back.count > Self.limit { back.removeFirst(back.count - Self.limit) }
         backStack = back
-        // Assigning an empty array still publishes; skip it when already empty.
         if !forwardStack.isEmpty { forwardStack.removeAll() }
     }
 
@@ -340,6 +386,29 @@ final class AOMNavigationHistory: ObservableObject {
 
     func goForward(_ appState: AppState) {
         if let target = forward(from: appState.selectedMainTab) { appState.selectedMainTab = target }
+    }
+}
+
+/// View ▸ Back and Forward. Its own view, so the App's scene body does not
+/// observe the history.
+struct AOMHistoryMenuItems: View {
+    let appState: AppState
+    let showMainWindow: () -> Void
+    @ObservedObject private var history = AOMNavigationHistory.shared
+
+    var body: some View {
+        Button("Back") {
+            showMainWindow()
+            history.goBack(appState)
+        }
+        .keyboardShortcut("[", modifiers: .command)
+        .disabled(!history.canGoBack)
+        Button("Forward") {
+            showMainWindow()
+            history.goForward(appState)
+        }
+        .keyboardShortcut("]", modifiers: .command)
+        .disabled(!history.canGoForward)
     }
 }
 
@@ -386,8 +455,8 @@ private struct AOMSidebarSearchButton: View {
 }
 
 /// A page's one-line context under the toolbar title ("All Apps · 3 of 5
-/// on"). Pages set it with `aomToolbarSubtitle(_:)`; the system draws it as
-/// the window subtitle. The preference stays for views that read it.
+/// on"). Pages set it with `aomToolbarSubtitle(_:)`; the shell
+/// (`AOMShellTitle`) draws it as the window subtitle.
 struct AOMToolbarSubtitleKey: PreferenceKey {
     static let defaultValue: String? = nil
     static func reduce(value: inout String?, nextValue: () -> String?) { value = nextValue() ?? value }
@@ -395,9 +464,29 @@ struct AOMToolbarSubtitleKey: PreferenceKey {
 
 extension View {
     /// The page's context line: the window subtitle under the system title.
+    /// A page kept alive behind the selected one reports none.
     func aomToolbarSubtitle(_ subtitle: String) -> some View {
-        navigationSubtitle(subtitle)
-            .preference(key: AOMToolbarSubtitleKey.self, value: subtitle.isEmpty ? nil : subtitle)
+        modifier(AOMToolbarSubtitle(subtitle: subtitle))
+    }
+}
+
+private struct AOMToolbarSubtitle: ViewModifier {
+    let subtitle: String
+    @Environment(\.aomPageActivity) private var activity
+
+    func body(content: Content) -> some View {
+        content.modifier(AOMToolbarSubtitleValue(subtitle: subtitle, activity: activity))
+    }
+}
+
+/// Observes the page's activity, so only this modifier re-renders on a switch.
+private struct AOMToolbarSubtitleValue: ViewModifier {
+    let subtitle: String
+    @ObservedObject var activity: AOMPageActivity
+
+    func body(content: Content) -> some View {
+        content.preference(key: AOMToolbarSubtitleKey.self,
+                           value: activity.isActive && !subtitle.isEmpty ? subtitle : nil)
     }
 }
 

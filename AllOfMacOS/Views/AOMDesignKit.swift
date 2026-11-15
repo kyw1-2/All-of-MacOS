@@ -4,8 +4,8 @@ import SwiftUI
 // AOM design kit: chrome (glass), page chrome, cards with titles, mode
 // buttons, scope bars and tiling diagrams. Values come from AOMTokens.swift.
 //
-// - Content layer: one opaque canvas, opaque cards with a hairline, colour only
-//   for interaction, status and module identity badges.
+// - Content layer: one opaque canvas, opaque cards one fill step above it with
+//   no outline, colour only for interaction, status and module identity badges.
 // - Functional layer: the system sidebar and toolbar, plus floating chrome
 //   (palette, HUDs, Quick Access, shelf, toasts) through `aomChrome`: system
 //   Liquid Glass on macOS 26+, an AppKit material before. Never glass on glass,
@@ -125,7 +125,7 @@ extension View {
     }
 
     /// The one hero area of a page (the Workspace header): an ordinary
-    /// content pane with the card hairline.
+    /// content pane with the card fill.
     @ViewBuilder func aomGlassPanel(radius: CGFloat = AOMRadius.card) -> some View {
         modifier(AOMCardSurface(style: .paper, radius: radius, padding: 0))
     }
@@ -140,10 +140,12 @@ extension View {
         }
     }
 
-    /// The page title in the window toolbar. Context belongs in the page
-    /// header (`AOMPageHeader`), not in a toolbar subtitle.
+    /// A main-window page filling the detail column. `title` names the page
+    /// it is; the shell shows it in the toolbar from the selected tab, since
+    /// pages kept alive behind the selected one must not set it. Context
+    /// belongs in the page header (`AOMPageHeader`), not in a toolbar subtitle.
     func aomPage(_ title: String) -> some View {
-        modifier(AOMPageChrome(title: title))
+        modifier(AOMPageChrome())
     }
 
     /// Floating chrome (panels, HUDs, bars) in the shared AOM material.
@@ -153,14 +155,12 @@ extension View {
     }
 }
 
-/// The page title for a main-window page. The canvas belongs to the shell
+/// A main-window page's frame. The canvas and the title belong to the shell
 /// (`AOMMainShell`).
 private struct AOMPageChrome: ViewModifier {
-    let title: String
     func body(content: Content) -> some View {
         content
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .navigationTitle(title)
     }
 }
 
@@ -219,7 +219,7 @@ struct AOMSectionCard<Accessory: View, Content: View, Footer: View>: View {
 
 /// The trailing link of a section title ("View All ›", "Show All ⌄").
 /// A capsule link to a tool (Window Tiling's Snap Zones, Profiles…): the
-/// bordered capsule (glass on macOS 26), its symbol in a fixed
+/// 24 pt bordered capsule (glass on macOS 26), its symbol in a fixed
 /// `AOMIcon.inlineGlyph` frame so every capsule in a row has one height
 /// whatever the glyph, and the longer description as its tooltip.
 struct AOMCapsuleLink: View {
@@ -243,11 +243,12 @@ struct AOMCapsuleLink: View {
                 Image(systemName: symbol)
                     .frame(width: AOMIcon.row, height: AOMIcon.inlineGlyph)
             }
-            .padding(.horizontal, AOMSpace.x1)
+            .padding(.horizontal, AOMSpace.x0_5)
         }
         .buttonStyle(.bordered)
         .buttonBorderShape(.capsule)
-        .controlSize(.large)
+        // One regular control high (24 pt), whatever the page's control size.
+        .controlSize(.regular)
         .help(help ?? title)
     }
 }
@@ -290,8 +291,8 @@ struct AOMCardLink: View {
 
 // MARK: - Mode buttons
 
-/// A launch button for one tool mode (capture modes, quick layouts): glyph
-/// over a short label, its shortcut underneath. The whole tile is the target;
+/// A launch button for one tool mode (capture modes, quick layouts): a 30 pt
+/// round face over a short label (11 pt), its shortcut (10 pt) underneath. The whole tile is the target;
 /// hover shows a quiet well and the press dims, so a row of them reads like
 /// the system screenshot toolbar.
 struct AOMModeButton: View {
@@ -332,11 +333,11 @@ struct AOMModeButton: View {
                 .frame(maxWidth: .infinity, minHeight: AOMSize.rowStandard - 2)
                 .contentShape(Rectangle())
             } else {
-                // The Workspace quick-action face: a round glass button with
-                // the name and its shortcut under it, no box around.
+                // The Workspace quick-action face: a round button with the
+                // name and its shortcut under it, no box around.
                 VStack(spacing: AOMSpace.x1) {
                     Image(systemName: symbol)
-                        .font(.system(size: 16, weight: .medium))
+                        .font(AOMFont.body.weight(.medium))
                         .foregroundStyle(tint)
                         .frame(width: AOMSize.modeButton, height: AOMSize.modeButton)
                         .aomRoundGlass()
@@ -440,7 +441,7 @@ private struct AOMScopeChip<ID: Hashable>: View {
         Button(action: action) {
             HStack(spacing: AOMSpace.x1 + 1) {
                 if let dot = item.dot {
-                    Circle().fill(selected ? onAccentText : dot).frame(width: 6, height: 6)
+                    Circle().fill(selected ? onAccentText : dot).frame(width: AOMIcon.dot, height: AOMIcon.dot)
                 } else if let symbol = item.symbol {
                     Image(systemName: symbol).imageScale(.small)
                 }
@@ -449,7 +450,7 @@ private struct AOMScopeChip<ID: Hashable>: View {
                     Text("\(count)")
                         .monospacedDigit()
                         .foregroundStyle(selected ? onAccentText.opacity(0.85) : AOMTheme.textSecondary)
-                        .padding(.horizontal, 4)
+                        .padding(.horizontal, AOMSpace.x1)
                         .padding(.vertical, 0.5)
                         .background(
                             Capsule().fill(selected ? onAccentText.opacity(0.18) : AOMColor.track)
@@ -458,8 +459,8 @@ private struct AOMScopeChip<ID: Hashable>: View {
             }
             .font(AOMFont.caption.weight(selected ? .semibold : .medium))
             .foregroundStyle(selected ? onAccentText : (hovering ? AOMTheme.text : AOMTheme.textSecondary))
-            .padding(.horizontal, AOMSpace.x2 + 2)
-            .frame(height: 24)
+            .padding(.horizontal, AOMSpace.x2)
+            .frame(height: AOMFeatureSize.chip)
             .background {
                 if selected {
                     Capsule().fill(Color.accentColor.gradient)
@@ -588,7 +589,7 @@ struct AOMLayoutDiagram: View {
                     .offset(x: inset + scaled.minX, y: inset + scaled.minY)
                 if arrow {
                     Image(systemName: "arrow.right")
-                        .font(.system(size: max(8, size.height * 0.34), weight: .bold))
+                        .font(.system(size: max(8, size.height * 0.34), weight: .semibold))
                         .foregroundStyle(.white)
                         .frame(width: size.width, height: size.height)
                 }
@@ -603,7 +604,7 @@ struct AOMLayoutDiagram: View {
 /// Groups sibling glass shapes so the system renders them as one layer
 /// (and lets them blend) instead of one glass pass each.
 struct AOMGlassGroup<Content: View>: View {
-    var spacing: CGFloat = AOMSpace.x4
+    var spacing: CGFloat = AOMSpace.x3
     @ViewBuilder var content: Content
 
     var body: some View {

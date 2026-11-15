@@ -22,7 +22,7 @@ import UniformTypeIdentifiers
 //   AOMInlineEmpty         a one-line empty state inside a card
 //   AOMTipCard             a dismissible inline tip (instead of TipKit, b.6)
 //   AOMHUDContent          the content of a floating HUD (mic mute, focus start)
-//   AOMIconButton          a 28 pt borderless symbol button with tooltip and label
+//   AOMIconButton          a 24 pt borderless symbol button with tooltip and label
 //   AOMFlowLayout          wraps chips and tokens onto new lines
 //   AOMUndo                one-call undo registration with redo
 //   aomHoverHighlight / aomFocusRing / aomDropTarget   the interaction layer (b.4)
@@ -88,7 +88,7 @@ private struct AOMHoverHighlight: ViewModifier {
     }
 }
 
-/// A borderless symbol button with a 28 pt hit area, a tooltip and a
+/// A borderless symbol button with a 24 pt hit area, a tooltip and a
 /// VoiceOver label (HIG Buttons, Toolbars: symbols with `.help`).
 struct AOMIconButton: View {
     let symbol: String
@@ -310,7 +310,7 @@ struct AOMAddRemoveBar<More: View>: View {
 }
 
 /// Inspector content (Xcode, Shortcuts, Keynote): no cards, titled groups
-/// split by hairlines, 16 pt padding, controls at small size.
+/// split by hairlines, 12 pt padding, controls at small size.
 struct AOMInspector<Content: View>: View {
     @ViewBuilder var content: Content
 
@@ -346,7 +346,7 @@ struct AOMInspectorSection<Content: View>: View {
                 .accessibilityAddTraits(.isHeader)
             content
         }
-        .padding(AOMSpace.x4)
+        .padding(AOMSpace.x3)
         .frame(maxWidth: .infinity, alignment: .leading)
         .overlay(alignment: .top) { if showsDivider { AOMDivider() } }
         .accessibilityElement(children: .contain)
@@ -399,7 +399,7 @@ struct AOMConditionGroupHeader: View {
 
 /// One condition or action row of a rule (Hazel's editor): the subject
 /// pop-ups (attribute, operator) at their natural width, the value filling
-/// the rest, then − and +. 36 pt, a hairline above, indented per nesting
+/// the rest, then − and +. 30 pt, a hairline above, indented per nesting
 /// level. Remove is disabled for the last row instead of hidden, so rows
 /// never jump.
 struct AOMConditionRow<Subject: View, Value: View>: View {
@@ -483,7 +483,7 @@ struct AOMTokenPill: View {
                 Button(action: onRemove) {
                     Image(systemName: "xmark")
                         .imageScale(.small)
-                        .font(AOMFont.token.weight(.bold))
+                        .font(AOMFont.token.weight(.semibold))
                         .opacity(hoveringRemove ? 1 : 0.65)
                         .frame(width: AOMIcon.dot * 2 + AOMSpace.x0_5, height: AOMIcon.dot * 2 + AOMSpace.x0_5)
                         .contentShape(Rectangle())
@@ -631,7 +631,7 @@ struct AOMTokenField: View {
 struct AOMProgressRing: View {
     let progress: Double
     var tint: Color = AOMColor.accent
-    var lineWidth: CGFloat = AOMSpace.x1 + 1
+    var lineWidth: CGFloat = AOMSpace.x1
     var label: String = "Progress"
 
     var body: some View {
@@ -651,10 +651,11 @@ struct AOMProgressRing: View {
 }
 
 /// The large live header of a module page (a Focus session, today's tidied
-/// files): the squircle inside an optional progress ring, a title, the one
-/// big figure in Display (26 pt, monospaced digits, numeric transition) with
-/// its unit, a detail line, an optional status pill, and the actions at
-/// large size on the trailing edge. It sits on the canvas, never in a card.
+/// files): the glyph inside an optional 48 pt progress ring, a title (13 pt
+/// medium), the one live figure in Display (22 pt, monospaced digits, numeric
+/// transition) with its unit, a detail line, an optional status pill, and the
+/// actions at regular size on the trailing edge. It sits on the canvas, never
+/// in a card.
 struct AOMStatusHeader<Actions: View>: View {
     let module: AOMModule
     var active = true
@@ -682,7 +683,7 @@ struct AOMStatusHeader<Actions: View>: View {
     }
 
     var body: some View {
-        HStack(alignment: .center, spacing: AOMSpace.x4) {
+        HStack(alignment: .center, spacing: AOMSpace.x3) {
             // The ring only while something is in progress (a Focus
             // session); otherwise the big figure stands alone.
             if let progress {
@@ -690,7 +691,7 @@ struct AOMStatusHeader<Actions: View>: View {
                     AOMProgressRing(progress: progress, tint: active ? module.hue : AOMColor.paused,
                                     label: "\(title) progress")
                     Image(systemName: module.symbol)
-                        .font(.system(size: 20, weight: .medium))
+                        .font(AOMFont.title)
                         .foregroundStyle(active ? AOMColor.text : AOMColor.textTertiary)
                         .symbolEffect(.pulse, options: .repeating, isActive: active && !reduceMotion)
                         .accessibilityHidden(true)
@@ -730,12 +731,12 @@ struct AOMStatusHeader<Actions: View>: View {
             .accessibilityElement(children: .combine)
             Spacer(minLength: AOMSpace.x3)
             HStack(spacing: AOMSpace.x2) { actions }
-                .controlSize(.large)
+                .controlSize(.regular)
                 .fixedSize()
         }
         .frame(minHeight: progress == nil ? nil : AOMIcon.statusRing + AOMSpace.x2)
-        // The same 2 pt optical inset as AOMPageHeader and section titles,
-        // so the title starts on the page's text line.
+        // The same 2 pt optical inset as AOMPageHeader, so the title starts
+        // on the header's text line.
         .padding(.horizontal, AOMSpace.x0_5)
         .accessibilityElement(children: .contain)
     }
@@ -808,7 +809,7 @@ struct AOMLogRow<Trailing: View>: View {
                     .truncationMode(.middle)
                     .frame(maxWidth: 160, alignment: .trailing)
             }
-            TimelineView(.periodic(from: .now, by: 30)) { context in
+            AOMPageTimeline(every: 30) { context in
                 Text(AOMRelativeTime.string(entry.date, now: context.date))
                     .font(AOMFont.timestamp)
                     .foregroundStyle(AOMColor.textTertiary)
@@ -819,7 +820,7 @@ struct AOMLogRow<Trailing: View>: View {
                 .controlSize(.small)
         }
         .padding(.horizontal, AOMSpace.rowInset)
-        .padding(.vertical, AOMSpace.x1 + AOMSpace.x0_5)
+        .padding(.vertical, AOMSpace.rowPadding)
         .frame(minHeight: AOMSize.logRow)
         .overlay(alignment: .top) { if showsDivider { AOMRowDivider(inset: AOMSpace.rowSymbolInset) } }
         .contextMenu {
@@ -924,9 +925,10 @@ struct AOMProgressRow: View {
     }
 }
 
-/// A one-line empty state inside a card (design-3.4.0 b.5): a 20 pt
-/// hierarchical glyph, one sentence in Body secondary and at most one button,
-/// in a 48 pt row. A whole empty page uses `AOMEmptyState` instead.
+/// A one-line empty state inside a card (design-3.4.0 b.5): a hierarchical
+/// glyph in the rows' 16 pt symbol column, so the sentence starts on the row
+/// label line, one sentence in Body medium secondary and at most one regular
+/// button, in a 40 pt row. A whole empty page uses `AOMEmptyState` instead.
 struct AOMInlineEmpty: View {
     let symbol: String
     let message: String
@@ -944,22 +946,23 @@ struct AOMInlineEmpty: View {
         HStack(spacing: AOMSpace.x2) {
             Image(systemName: symbol)
                 .font(AOMFont.body)
-                .imageScale(.large)
                 .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(AOMColor.textTertiary)
                 .frame(width: AOMIcon.row)
                 .accessibilityHidden(true)
             Text(message)
-                .font(AOMFont.body)
+                .font(AOMFont.bodyEmphasis)
                 .foregroundStyle(AOMColor.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: AOMSpace.x2)
             if let actionTitle, let action {
-                Button(actionTitle, action: action).fixedSize()
+                Button(actionTitle, action: action)
+                    .controlSize(.regular)
+                    .fixedSize()
             }
         }
         .padding(.horizontal, AOMSpace.rowInset)
-        .padding(.vertical, AOMSpace.x2)
+        .padding(.vertical, AOMSpace.x1)
         .frame(minHeight: AOMSize.rowDetail)
         .accessibilityElement(children: .combine)
     }
@@ -996,7 +999,7 @@ struct AOMTipCard: View {
     var body: some View {
         if !dismissed {
             let shape = RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous)
-            HStack(alignment: .top, spacing: AOMSpace.x3) {
+            HStack(alignment: .top, spacing: AOMSpace.x2) {
                 Image(systemName: symbol)
                     .font(AOMFont.title)
                     .symbolRenderingMode(.hierarchical)
@@ -1020,7 +1023,8 @@ struct AOMTipCard: View {
                     withAnimation(AOMMotion.standard) { dismissed = true }
                 }
             }
-            .padding(AOMSpace.x3)
+            .padding(.horizontal, AOMSpace.rowInset)
+            .padding(.vertical, AOMSpace.x2)
             .background(AOMColor.surface, in: shape)
             .overlay { if contrast == .increased { shape.strokeBorder(AOMColor.accent.opacity(0.8), lineWidth: 1) } }
             .transition(.opacity)

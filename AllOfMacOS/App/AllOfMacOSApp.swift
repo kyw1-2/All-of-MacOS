@@ -108,7 +108,6 @@ enum AOMLauncher {
 struct AllOfMacOSApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var appState = AppState()
-    @StateObject private var history = AOMNavigationHistory.shared
 
     var body: some Scene {
         WindowGroup {
@@ -133,18 +132,7 @@ struct AllOfMacOSApp: App {
             // View: Back, Forward, every page, Search…, Customize Workspace…
             // (System Settings' View menu; HIG The menu bar, design-3.4.0 b.14).
             CommandGroup(before: .sidebar) {
-                Button("Back") {
-                    appDelegate.showMainWindow()
-                    history.goBack(appState)
-                }
-                .keyboardShortcut("[", modifiers: .command)
-                .disabled(!history.canGoBack)
-                Button("Forward") {
-                    appDelegate.showMainWindow()
-                    history.goForward(appState)
-                }
-                .keyboardShortcut("]", modifiers: .command)
-                .disabled(!history.canGoForward)
+                AOMHistoryMenuItems(appState: appState, showMainWindow: { appDelegate.showMainWindow() })
                 Divider()
                 ForEach(AOMMainTab.allCases) { tab in
                     Button(tab.title) {

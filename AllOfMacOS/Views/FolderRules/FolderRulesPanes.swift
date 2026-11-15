@@ -225,7 +225,7 @@ struct FolderRulesActivityRow: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            TimelineView(.periodic(from: .now, by: 30)) { context in
+            AOMPageTimeline(every: 30) { context in
                 Text(AOMRelativeTime.string(activity.date, now: context.date))
                     .font(AOMFont.timestamp)
                     .foregroundStyle(AOMColor.textTertiary)
