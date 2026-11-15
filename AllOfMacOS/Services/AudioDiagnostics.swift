@@ -12,9 +12,10 @@ enum AudioDiagnostics {
 
     /// The file's content (pure apart from the log it reads).
     static func payload(captures: [String: [String: Any]], outputs: [String: [String: Any]],
+                        control: [String: Double] = [:],
                         log: AudioEventLog = .shared, now: Date = Date()) -> [String: Any] {
         let snapshot = log.snapshot()
-        return ["timestamp": now.timeIntervalSince1970,
+        var object: [String: Any] = ["timestamp": now.timeIntervalSince1970,
                 "sourceRevision": Bundle.main.object(forInfoDictionaryKey: "AOMSourceRevision") as? String ?? "test",
                 "captures": captures, "outputs": outputs,
                 // 3.3.3 (A03): the last 200 events with wall-clock times, and
@@ -24,6 +25,9 @@ enum AudioDiagnostics {
                 "sinceReset": ["resetAt": AudioEventLog.Event.timeString(snapshot.resetAt),
                                "seconds": (now.timeIntervalSince(snapshot.resetAt) * 10).rounded() / 10,
                                "counters": snapshot.sinceReset]]
+        // Audio control timings since reset: gather mean, worst main-thread apply.
+        for (key, value) in control { object[key] = value }
+        return object
     }
 
     /// 3.4.43: the sync runs every second while audio is captured, and each
@@ -39,10 +43,17 @@ enum AudioDiagnostics {
     /// Lets the caller skip collecting statistics nobody will write.
     static var isWriteDue: Bool {
         shouldWrite(now: ProcessInfo.processInfo.systemUptime, lastWrite: lastWriteAt,
-                    resetRequested: UserDefaults.standard.double(forKey: resetRequestKey) > appliedResetRequest)
+                    resetRequested: isResetRequested)
     }
 
-    static func write(captures: [String: [String: Any]], outputs: [String: [String: Any]]) {
+    /// A reset request the next write will apply; callers reset their own
+    /// "since reset" numbers before collecting them.
+    static var isResetRequested: Bool {
+        UserDefaults.standard.double(forKey: resetRequestKey) > appliedResetRequest
+    }
+
+    static func write(captures: [String: [String: Any]], outputs: [String: [String: Any]],
+                      control: [String: Double] = [:]) {
         let request = UserDefaults.standard.double(forKey: resetRequestKey)
         let resetRequested = request > appliedResetRequest
         let now = ProcessInfo.processInfo.systemUptime
@@ -52,7 +63,7 @@ enum AudioDiagnostics {
             appliedResetRequest = request
             AudioEventLog.shared.resetCounters()
         }
-        let object = payload(captures: captures, outputs: outputs)
+        let object = payload(captures: captures, outputs: outputs, control: control)
         guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) else { return }
         writer.async {
             guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }

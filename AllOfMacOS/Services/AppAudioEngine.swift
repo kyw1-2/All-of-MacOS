@@ -4,6 +4,7 @@ import CoreAudio
 import AudioToolbox
 import AVFoundation
 import Darwin
+import os
 
 /// Per-app control through public Core Audio process taps. Capture lifetime is
 /// independent of playback activity; output is mixed by a stable device graph.
@@ -274,6 +275,21 @@ final class AppAudioEngine {
     private var playbackSnapshotAt: TimeInterval = -.infinity
     private var appIdentitySnapshot: [AppState] = []
     private var appIdentitySnapshotAt: TimeInterval = -.infinity
+    /// The identity list as gathered; `appIdentitySnapshot` adds the icons.
+    private var appIdentities: [AudioAppIdentity] = []
+    private var bundleIDsByPID: [pid_t: String] = [:]
+    /// Bumped by every invalidation: a list gathered before it is applied but
+    /// does not restart the TTL, so the next gather rebuilds it.
+    private var identityGeneration: UInt64 = 0
+    private var iconCache: [String: NSImage] = [:]
+    /// The last applied snapshot. The periodic path reads CoreAudio and
+    /// LaunchServices facts only from here, never directly on main.
+    private var controlSnapshot = AudioControlSnapshot.empty
+    private var syncGate = AudioControlSyncGate()
+    private var pendingAnnounce = false
+    private var pendingPlaybackRefresh = false
+    private var controlTimings = AudioControlTimingStats()
+    private let controlQueue = DispatchQueue(label: "com.kyw.allofmacos.audio.control", qos: .userInitiated)
     private var timer: Timer?
     private var lastSyncAt: TimeInterval = 0
     private var syncing = false
@@ -294,8 +310,8 @@ final class AppAudioEngine {
         let workspaceCenter = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
             sleepObservers.append(workspaceCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                self?.appIdentitySnapshotAt = -.infinity
-                Self.ownerResolutionCache.removeAll(keepingCapacity: true)
+                self?.invalidateAppIdentities()
+                Self.resetOwnerResolution()
                 self?.scheduleSync()
             })
         }
@@ -366,14 +382,63 @@ final class AppAudioEngine {
 
     func requestSync() { scheduleSync() }
 
-    private func scheduleSync() {
+    private func scheduleSync() { scheduleGather(announce: true) }
+
+    /// Coalesces requests for 80 ms, then gathers off main. `announce: false`
+    /// is a refresh the mixer asked for: it notifies only when its result
+    /// changed what the mixer shows.
+    private func scheduleGather(announce: Bool) {
+        if announce { pendingAnnounce = true }
         guard !syncScheduled else { return }
         syncScheduled = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
             guard let self else { return }
             self.syncScheduled = false
-            self.syncActiveProcesses()
+            self.startGather()
         }
+    }
+
+    /// At most one gather in flight; a request meanwhile runs one more after
+    /// the apply (see `AudioControlSyncGate`).
+    private func startGather() {
+        guard let sequence = syncGate.beginBackground() else { return }
+        let request = makeGatherRequest(sequence: sequence)
+        controlQueue.async { [weak self] in
+            let snapshot = AudioControlSnapshot.gather(request)
+            DispatchQueue.main.async { self?.finishGather(snapshot) }
+        }
+    }
+
+    private func finishGather(_ snapshot: AudioControlSnapshot) {
+        let rerun = syncGate.finishBackground()
+        if syncGate.accept(snapshot.sequence) { applyMeasured(snapshot) }
+        if rerun { startGather() }
+    }
+
+    /// Engine facts the gather needs, captured on main as values.
+    private func makeGatherRequest(sequence: UInt64, announce: Bool? = nil) -> AudioControlGatherRequest {
+        var request = AudioControlGatherRequest(sequence: sequence)
+        request.announce = announce ?? pendingAnnounce
+        let enabled = isEnabled
+        request.appAudioEnabled = enabled
+        request.sweep = !systemSleeping && (enabled || pendingPlaybackRefresh)
+        pendingAnnounce = false
+        pendingPlaybackRefresh = false
+        request.includeIdentities = ProcessInfo.processInfo.systemUptime - appIdentitySnapshotAt >= Self.appIdentityTTL
+        request.identityGeneration = identityGeneration
+        request.knownPIDs = Set(appIdentities.map(\.pid))
+        request.sessionPIDs = Set(sessions.keys)
+        request.tapIDs = Set(sessions.values.map(\.tapID))
+        return request
+    }
+
+    /// Names and icons do not change with every playback edge. Workspace
+    /// notifications invalidate the list; the TTL also catches renames.
+    static let appIdentityTTL: TimeInterval = 30
+
+    private func invalidateAppIdentities() {
+        appIdentitySnapshotAt = -.infinity
+        identityGeneration &+= 1
     }
 
     /// Identifies routes requiring either native bypass or the dedicated
@@ -384,7 +449,7 @@ final class AppAudioEngine {
             routeTransport == kAudioDeviceTransportTypeAirPlay
     }
 
-    private static func outputTransport(_ id: AudioDeviceID?) -> UInt32? {
+    nonisolated static func outputTransport(_ id: AudioDeviceID?) -> UInt32? {
         guard let id, id != AudioObjectID(kAudioObjectUnknown) else { return nil }
         var property = AudioOutputService.address(kAudioDevicePropertyTransportType)
         var type: UInt32 = 0
@@ -392,20 +457,39 @@ final class AppAudioEngine {
         return AudioObjectGetPropertyData(id, &property, 0, nil, &size, &type) == noErr ? type : nil
     }
 
-    private static func isNativeAirPlayActive() -> Bool {
-        shouldBypassAirPlayCapture(defaultTransport: outputTransport(AudioOutputService.currentDeviceID()),
-                                    routeTransport: nil)
+    /// Gathers on the calling (main) thread and applies at once, for callers
+    /// that need the result immediately (user actions, tests). The periodic
+    /// path goes through `scheduleSync()` instead.
+    func syncActiveProcesses() {
+        guard !syncing else { return }
+        let snapshot = AudioControlSnapshot.gather(makeGatherRequest(sequence: syncGate.beginInline(), announce: true))
+        if syncGate.accept(snapshot.sequence) { applyMeasured(snapshot) }
     }
 
-    func syncActiveProcesses() {
-        let interval = AOMPerformance.begin("Audio.sync")
-        defer { AOMPerformance.end("Audio.sync", interval) }
+    private func applyMeasured(_ snapshot: AudioControlSnapshot) {
+        let interval = AOMPerformance.begin("Audio.apply")
+        let start = mach_absolute_time()
+        apply(snapshot)
+        controlTimings.recordApply(ms: AudioHostTime.milliseconds(from: start, to: mach_absolute_time()))
+        controlTimings.recordGather(ms: snapshot.gatherMS)
+        AOMPerformance.end("Audio.apply", interval)
+    }
+
+    /// Main-thread bookkeeping against one gathered snapshot. Tap, aggregate
+    /// and renderer changes still happen here, but only when something
+    /// changed; steady state reads nothing from CoreAudio.
+    private func apply(_ snapshot: AudioControlSnapshot) {
         guard !syncing else { return }
         syncing = true
         lastSyncAt = ProcessInfo.processInfo.systemUptime
+        controlSnapshot = snapshot
+        let wasBypassed = airPlayBypassed
+        let hadSessions = !sessions.isEmpty
+        var listChanged = false
         defer {
             syncing = false
             if UserDefaults.standard.bool(forKey: "AOMAudioDiagnostics"), AudioDiagnostics.isWriteDue {
+                if AudioDiagnostics.isResetRequested { controlTimings.reset() }
                 let capture = Dictionary(uniqueKeysWithValues: sessions.values.compactMap { session -> (String, [String: Any])? in
                     guard let transport = session.transport else { return nil }
                     var stats = transport.statistics
@@ -415,15 +499,36 @@ final class AppAudioEngine {
                     return (String(session.pid), stats)
                 })
                 let outputs = MainActor.assumeIsolated { SharedOutputRenderer.shared.airPlayStatistics }
-                AudioDiagnostics.write(captures: capture, outputs: outputs)
+                AudioDiagnostics.write(captures: capture, outputs: outputs, control: controlTimings.json)
             }
-            NotificationCenter.default.post(name: NSNotification.Name("AOMAudioAppsChanged"), object: nil)
+            // While App Audio is off, a playback refresh the mixer asked for
+            // only notifies when it changed something; otherwise the reload
+            // it causes would ask again.
+            if snapshot.announce || (isEnabled && !systemSleeping) || listChanged ||
+                wasBypassed != airPlayBypassed || hadSessions != !sessions.isEmpty {
+                NotificationCenter.default.post(name: NSNotification.Name("AOMAudioAppsChanged"), object: nil)
+            }
         }
-        airPlayBypassed = Self.isNativeAirPlayActive() && !Self.airPlayProcessingEnabled
+        airPlayBypassed = Self.shouldBypassAirPlayCapture(defaultTransport: snapshot.defaultOutputTransport,
+                                                          routeTransport: nil) && !Self.airPlayProcessingEnabled
         pendingAirPlayPIDs.removeAll(keepingCapacity: true)
         bypassedPIDs.removeAll(keepingCapacity: true)
+        if let identities = snapshot.apps {
+            listChanged = applyIdentities(identities) || listChanged
+            if snapshot.identityGeneration == identityGeneration { appIdentitySnapshotAt = snapshot.takenAt }
+        }
+        if snapshot.swept {
+            listChanged = listChanged || playingPIDs != snapshot.playingOwners
+            playingPIDs = snapshot.playingOwners
+            playbackSnapshotAt = snapshot.takenAt
+        }
         guard isEnabled, !systemSleeping else {
             if !sessions.isEmpty { stopAll() }
+            return
+        }
+        // Gathered while App Audio was off or the Mac asleep: no process data.
+        guard snapshot.swept else {
+            scheduleSync()
             return
         }
         // Native mode releases taps without changing the selected HomePod.
@@ -438,29 +543,17 @@ final class AppAudioEngine {
                 SharedOutputRenderer.shared.shutdownAirPlayOutputs()
             }
         }
-        // Use one HAL membership snapshot for listeners and owner resolution.
-        let processObjects = Self.readProcessObjectList()
-        updatePlaybackListeners(objects: processObjects)
-        let objectsByOwner = Self.processObjectsByOwner(objects: processObjects ?? [])
-        refreshPlaybackActivity(objectsByOwner)
-        // Some apps become regular only after their launch notification.
-        // A newly playing owner must not wait for the metadata TTL to appear.
-        let knownPIDs = Set(appIdentitySnapshot.map(\.pid))
-        if playingPIDs.subtracting(knownPIDs).contains(where: {
-            NSRunningApplication(processIdentifier: $0)?.activationPolicy == .regular
-        }) {
-            appIdentitySnapshotAt = -.infinity
-            // Its helpers may have been resolved while it was not yet regular.
-            Self.ownerResolutionCache.removeAll(keepingCapacity: true)
-        }
-        let apps = runningAudioApps()
-        // Nothing playing and nothing captured: enumerating devices and rebinding
-        // renderers for an empty session list is pure overhead.
+        // One HAL membership snapshot for listeners and owner resolution.
+        updatePlaybackListeners(objects: snapshot.processObjects)
+        let objectsByOwner = snapshot.objectsByOwner
+        let apps = appIdentities
+        // Nothing playing and nothing captured: rebinding renderers for an
+        // empty session list is pure overhead.
         if apps.isEmpty && sessions.isEmpty { return }
-        let devices = AudioOutputService.devices()
+        let devices = snapshot.devices
         defer {
             let requested = Self.airPlayProcessingEnabled
-                ? Set(apps.compactMap { Self.targetOutputUID(for: $0.bundleID) })
+                ? Set(apps.compactMap { snapshot.targetOutputUID(for: $0.bundleID) })
                 : Set<String>()
             MainActor.assumeIsolated { SharedOutputRenderer.shared.releaseUnusedAirPlayOutputs(keeping: requested) }
         }
@@ -488,9 +581,7 @@ final class AppAudioEngine {
                 // A live sender alone does not prove the tap can capture this
                 // app (for example, offloaded playback). Restore direct audio
                 // if an actively playing producer has no capture callbacks.
-                let playing = session.processIDs.contains {
-                    Self.property($0, selector: kAudioProcessPropertyIsRunningOutput, as: UInt32.self) == 1
-                }
+                let playing = session.processIDs.contains { snapshot.runningOutput.contains($0) }
                 let activity = transport.activity
                 if session.sourceToken?.isAirPlay == true {
                     let counters = transport.eventCounters
@@ -516,9 +607,7 @@ final class AppAudioEngine {
         if let affectedUID = cracklingAirPlayUIDs.sorted().first,
            restartAppAudioAfterCrackle(uid: affectedUID) { return }
         // Playback/process-object disappearance is not application termination.
-        for pid in Array(sessions.keys) {
-            if NSRunningApplication(processIdentifier: pid)?.isTerminated != false { stop(pid: pid) }
-        }
+        for pid in Array(sessions.keys) where snapshot.terminatedPIDs.contains(pid) { stop(pid: pid) }
         let livePIDs = Set(apps.map(\.pid)).union(sessions.keys)
         errors = errors.filter { livePIDs.contains($0.key) }
         retryAfter = retryAfter.filter { livePIDs.contains($0.key) }
@@ -527,21 +616,16 @@ final class AppAudioEngine {
         for app in apps where app.pid > 0 && app.pid != ProcessInfo.processInfo.processIdentifier {
             if let session = sessions[app.pid], session.bundleID != app.bundleID { stop(pid: app.pid) }
             let ids = objectsByOwner[app.pid] ?? []
-            if let uid = Self.targetOutputUID(for: app.bundleID),
-               let device = devices.first(where: { $0.uid == uid }),
-               Self.outputTransport(device.id) == kAudioDeviceTransportTypeAirPlay,
-               !Self.airPlayProcessingEnabled {
+            let route = snapshot.targetOutputUID(for: app.bundleID).flatMap { uid in snapshot.device(uid: uid) }
+            if let device = route, snapshot.isAirPlay(device), !Self.airPlayProcessingEnabled {
                 bypassedPIDs.insert(app.pid)
                 stop(pid: app.pid)
                 errors.removeValue(forKey: app.pid)
                 continue
             }
-            if Self.airPlayProcessingEnabled,
-               let uid = Self.targetOutputUID(for: app.bundleID),
-               let device = devices.first(where: { $0.uid == uid }),
-               Self.outputTransport(device.id) == kAudioDeviceTransportTypeAirPlay,
+            if Self.airPlayProcessingEnabled, let device = route, snapshot.isAirPlay(device),
                sessions[app.pid] != nil || !ids.isEmpty {
-                let key = "\(uid)|\(app.bundleID)"
+                let key = "\(device.uid)|\(app.bundleID)"
                 if let message = airPlayCaptureFailures[key] {
                     errors[app.pid] = message
                     continue
@@ -573,26 +657,30 @@ final class AppAudioEngine {
                 mixer.boostPreset = AudioBoostPreset.index(of: AudioBoostPreset.storedID(bundleID: app.bundleID))
                 mixer.overdrive = AppAudioPreferences.overdrive(bundleID: app.bundleID)
                 mixer.balance = AppAudioPreferences.balance(bundleID: app.bundleID)
-                guard updateProcesses(session, ids: ids) else {
+                guard updateProcesses(session, ids: ids, runningOutput: snapshot.runningOutput) else {
                     continue
                 }
-                guard let format = Self.property(session.tapID, selector: kAudioTapPropertyFormat, as: AudioStreamBasicDescription.self),
-                      Self.supports(format) else {
+                // A tap created after this snapshot was gathered is read here
+                // once; the next gather covers it.
+                let format = snapshot.queriedTaps.contains(session.tapID)
+                    ? snapshot.tapFormats[session.tapID]
+                    : Self.property(session.tapID, selector: kAudioTapPropertyFormat, as: AudioStreamBasicDescription.self)
+                guard let format, Self.supports(format) else {
                     // Transient format query during stream startup or playback state change.
                     // Never destroy the session tap here — doing so pauses media players.
                     continue
                 }
                 session.transport?.updateSampleRate(format.mSampleRate)
                 session.sampleRate = format.mSampleRate
-                guard let uid = Self.targetOutputUID(for: app.bundleID),
-                      let device = devices.first(where: { $0.uid == uid }) else {
+                guard let device = route else {
                     continue
                 }
+                let uid = device.uid
                 let ready = session.sourceToken.map { token in
                     MainActor.assumeIsolated { SharedOutputRenderer.shared.isReady(token) }
                 } ?? false
                 if session.sourceToken == nil || session.outputUID != uid || session.sourceToken?.deviceID != device.id {
-                    guard moveOutput(session, device: device) else {
+                    guard moveOutput(session, device: device, isAirPlay: snapshot.isAirPlay(device)) else {
                         errors[app.pid] = "Could not move audio to \(device.name). Previous output retained; use Reconnect to retry."
                         // If the previous object vanished, retaining its mute
                         // would strand the producer in silence.
@@ -612,12 +700,12 @@ final class AppAudioEngine {
                         }
                     }
                 }
-                let deviceGain = deviceGains[uid] ?? AudioOutputService.softwareGain(uid: uid)
+                let deviceGain = deviceGains[uid] ?? snapshot.softwareGain(uid: uid)
                 deviceGains[uid] = deviceGain
                 mixer.deviceGain = deviceGain
                 continue
             }
-            guard needsProcessing(app.bundleID) else {
+            guard needsProcessing(app.bundleID, in: snapshot) else {
                 errors.removeValue(forKey: app.pid)
                 retryAfter.removeValue(forKey: app.pid)
                 failedProcessIDs.removeValue(forKey: app.pid)
@@ -627,10 +715,33 @@ final class AppAudioEngine {
             // Master effects must not instantiate an aggregate for every
             // non-audio app. Process-list notifications attach new producers.
             guard !ids.isEmpty else { continue }
-            if attach(pid: app.pid, gain: Self.storedGain(bundleID: app.bundleID), muted: app.muted) {
+            if attach(pid: app.pid, bundleID: app.bundleID, ids: ids, snapshot: snapshot,
+                      gain: Self.storedGain(bundleID: app.bundleID),
+                      muted: UserDefaults.standard.bool(forKey: "AOMAudioMute_\(app.bundleID)")) {
                 GestureLog.shared.logFromAnyThread("Audio session attached: pid \(app.pid) (\(app.bundleID))", level: .noMatch)
             }
         }
+    }
+
+    /// Adopts a gathered identity list. Icons load once per bundle path, and
+    /// only when the list changed. True when the list changed.
+    private func applyIdentities(_ identities: [AudioAppIdentity]) -> Bool {
+        guard identities != appIdentities else { return false }
+        appIdentities = identities
+        var icons: [String: NSImage] = [:]
+        appIdentitySnapshot = identities.map { identity in
+            let icon = identity.bundlePath.map { path -> NSImage in
+                let image = iconCache[path] ?? NSWorkspace.shared.icon(forFile: path)
+                icons[path] = image
+                return image
+            }
+            return AppState(pid: identity.pid, name: identity.name, bundleID: identity.bundleID, icon: icon,
+                            gain: 1, muted: false, tapped: false)
+        }
+        iconCache = icons
+        bundleIDsByPID = Dictionary(identities.filter { $0.pid > 0 }.map { ($0.pid, $0.bundleID) },
+                                    uniquingKeysWith: { first, _ in first })
+        return true
     }
 
     private func updatePlaybackListeners(objects: [AudioObjectID]?) {
@@ -653,21 +764,28 @@ final class AppAudioEngine {
 
     func level(pid: pid_t) -> Float { sessions[pid]?.box.takeUnretainedValue().peakLevel ?? 0 }
 
-    func status(pid: pid_t) -> String {
+    /// The bundle identifier the engine knows for a PID, from its session or
+    /// the identity list; no LaunchServices lookup.
+    private func bundleID(for pid: pid_t) -> String? {
+        sessions[pid]?.bundleID ?? bundleIDsByPID[pid]
+    }
+
+    func status(pid: pid_t) -> String { status(pid: pid, bundleID: bundleID(for: pid)) }
+
+    private func status(pid: pid_t, bundleID: String?) -> String {
         if !isEnabled { return "Audio processing off — settings saved" }
         if bypassedPIDs.contains(pid) || (airPlayBypassed && sessions[pid] == nil) {
             return "AirPlay direct — volume, EQ and boost saved for local output"
         }
         if pendingAirPlayPIDs.contains(pid) { return "Preparing HomePod output — current playback continues" }
-        if !recoveringAirPlayUIDs.isEmpty, let bundleID = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier,
-           let uid = Self.targetOutputUID(for: bundleID), recoveringAirPlayUIDs.contains(uid) {
+        if !recoveringAirPlayUIDs.isEmpty, let bundleID,
+           let uid = controlSnapshot.targetOutputUID(for: bundleID), recoveringAirPlayUIDs.contains(uid) {
             return "Reconnecting HomePod — native playback continues meanwhile"
         }
         if let error = errors[pid] { return error }
         guard let session = sessions[pid], let transport = session.transport else {
             if pid <= 0 { return "App closed — settings saved" }
-            let bundleID = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? ""
-            return needsProcessing(bundleID) ? "Waiting for app audio" : "Native playback — no effects applied"
+            return needsProcessing(bundleID ?? "", in: controlSnapshot) ? "Waiting for app audio" : "Native playback — no effects applied"
         }
         let activity = transport.activity
         if activity.captured == 0 || !activity.recent {
@@ -682,8 +800,9 @@ final class AppAudioEngine {
 
     func retry(pid: pid_t) {
         // A remote sender is shared: recovery must release all its sources
-        // before replacing it, rather than recovering only one app.
-        let bundleID = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? ""
+        // before replacing it, rather than recovering only one app. An
+        // explicit Reconnect reads the route fresh, not from the snapshot.
+        let bundleID = self.bundleID(for: pid) ?? NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? ""
         let remoteRoute = Self.targetOutputUID(for: bundleID).flatMap { uid in
             AudioOutputService.devices().first(where: { $0.uid == uid })
         }.map { Self.outputTransport($0.id) == kAudioDeviceTransportTypeAirPlay } ?? false
@@ -702,8 +821,8 @@ final class AppAudioEngine {
     private func retryAirPlay(uid: String, requestedPID: pid_t) {
         // Only apps sharing this receiver need their capture restarted.
         // A per-app Reconnect must not tear down unrelated local video players.
-        var affected = Set(runningAudioApps().filter {
-            Self.targetOutputUID(for: $0.bundleID) == uid
+        var affected = Set(appIdentities.filter {
+            controlSnapshot.targetOutputUID(for: $0.bundleID) == uid
         }.map(\.pid))
         affected.formUnion(sessions.values.filter { $0.outputUID == uid }.map(\.pid))
         if requestedPID > 0 { affected.insert(requestedPID) }
@@ -720,7 +839,9 @@ final class AppAudioEngine {
         // An automatic recovery can be requested during sync itself. A direct
         // recursive call would be ignored by the syncing guard, leaving
         // capture stopped until an unrelated event finally wakes it.
-        if syncing { scheduleSync() } else { syncActiveProcesses() }
+        // Automatic recoveries (no requesting app) gather off main; an
+        // explicit Reconnect reconciles at once.
+        if syncing || requestedPID <= 0 { scheduleSync() } else { syncActiveProcesses() }
     }
 
     func retryAll() {
@@ -735,11 +856,10 @@ final class AppAudioEngine {
         syncActiveProcesses()
     }
 
-    private func needsProcessing(_ bundleID: String) -> Bool {
+    private func needsProcessing(_ bundleID: String, in snapshot: AudioControlSnapshot) -> Bool {
         guard isEnabled else { return false }
-        if let uid = Self.targetOutputUID(for: bundleID),
-           let destination = AudioOutputService.devices().first(where: { $0.uid == uid }),
-           Self.outputTransport(destination.id) == kAudioDeviceTransportTypeAirPlay {
+        let target = snapshot.targetOutputUID(for: bundleID)
+        if let destination = target.flatMap({ snapshot.device(uid: $0) }), snapshot.isAirPlay(destination) {
             // All apps on this route share the buffered clock, including unity
             // gain apps, so changing an effect never rebuilds the connection.
             return Self.airPlayProcessingEnabled
@@ -753,24 +873,24 @@ final class AppAudioEngine {
             d.bool(forKey: "AOMAudioMasterBoostEnabled") ||
             d.string(forKey: AudioUnitEffectHost.choiceKey) != nil ||
             Self.appEQ(bundleID: bundleID).isEnabled || Self.masterEQ().isEnabled ||
-            Self.targetOutputUID(for: bundleID).map { AudioDeviceEQ.hasEQ(uid: $0) } == true ||
-            Self.targetOutputUID(for: bundleID).map { AudioOutputService.softwareGain(uid: $0) != 1 } == true
+            target.map { AudioDeviceEQ.hasEQ(uid: $0) } == true ||
+            target.map { snapshot.softwareGain(uid: $0) != 1 } == true
     }
 
-    private func attach(pid: pid_t, gain: Float, muted: Bool) -> Bool {
+    private func attach(pid: pid_t, bundleID: String, ids: [AudioObjectID], snapshot: AudioControlSnapshot,
+                        gain: Float, muted: Bool) -> Bool {
         guard isEnabled else { return false }
         errors.removeValue(forKey: pid)
-        guard let session = createSession(pid: pid, gain: gain, muted: muted) else {
+        guard let session = createSession(pid: pid, bundleID: bundleID, ids: ids, snapshot: snapshot,
+                                          gain: gain, muted: muted) else {
             if errors[pid] == nil { errors[pid] = "Audio processing could not start. Check Screen & System Audio Recording permission." }
             // A permission/format/start failure must not repeatedly create and
             // destroy devices underneath a video player. Retry on explicit
             // request or an actual process/output topology change.
             retryAfter[pid] = .infinity
-            failedProcessIDs[pid] = Self.processObjectIDs(for: pid).sorted()
-            if Self.airPlayProcessingEnabled, let uid = Self.targetOutputUID(for: NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? ""),
-               let device = AudioOutputService.devices().first(where: { $0.uid == uid }),
-               Self.outputTransport(device.id) == kAudioDeviceTransportTypeAirPlay {
-                let bundleID = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? ""
+            failedProcessIDs[pid] = ids.sorted()
+            if Self.airPlayProcessingEnabled, let uid = snapshot.targetOutputUID(for: bundleID),
+               let device = snapshot.device(uid: uid), snapshot.isAirPlay(device) {
                 let message = (errors[pid] ?? "AirPlay capture failed.") + " Native playback restored; use Reconnect to retry."
                 airPlayCaptureFailures["\(uid)|\(bundleID)"] = message
                 errors[pid] = message
@@ -893,33 +1013,54 @@ final class AppAudioEngine {
     /// At 5 s, every expiry re-ran the fallback, which asks LaunchServices once
     /// per running app (`-[NSRunningApplication processIdentifier]`).
     static let ownerResolutionTTL: TimeInterval = 30
-    private nonisolated(unsafe) static var ownerResolutionCache: [pid_t: (app: NSRunningApplication?, at: TimeInterval)] = [:]
 
-    private static func owner(of object: AudioObjectID, pid: pid_t, lookup: AudioOwnerLookup<NSRunningApplication>, fallback: () -> [AudioOwnerIdentity]) -> NSRunningApplication? {
-        let now = ProcessInfo.processInfo.systemUptime
-        if let hit = ownerResolutionCache[pid], now - hit.at < ownerResolutionTTL { return hit.app }
-        let app = resolveOwner(of: object, pid: pid, lookup: lookup, fallback: fallback)
-        if ownerResolutionCache.count > 512 { ownerResolutionCache.removeAll(keepingCapacity: true) }
-        ownerResolutionCache[pid] = (app, now)
-        return app
+    /// Sweeps run on the audio control queue and, for a few callers, on main;
+    /// the cache is shared under a lock. A reset bumps the generation, so a
+    /// resolution that started before it is not stored after it.
+    private struct OwnerResolutionCache: Sendable {
+        struct Entry: Sendable {
+            let owner: pid_t?
+            let at: TimeInterval
+        }
+        var entries: [pid_t: Entry] = [:]
+        var generation: UInt64 = 0
+    }
+    private static let ownerResolution = OSAllocatedUnfairLock(initialState: OwnerResolutionCache())
+
+    /// Callable from any thread (app launch/quit, newly regular owners).
+    nonisolated static func resetOwnerResolution() {
+        ownerResolution.withLock { cache in
+            cache.entries.removeAll(keepingCapacity: true)
+            cache.generation &+= 1
+        }
     }
 
-    private static func resolveOwner(of object: AudioObjectID, pid: pid_t, lookup: AudioOwnerLookup<NSRunningApplication>, fallback: () -> [AudioOwnerIdentity]) -> NSRunningApplication? {
-        if let app = mainApp(for: pid, lookup: lookup) { return app }
+    private static func owner(of object: AudioObjectID, pid: pid_t, lookup: AudioOwnerLookup<NSRunningApplication>, fallback: () -> [AudioOwnerIdentity]) -> pid_t? {
+        let now = ProcessInfo.processInfo.systemUptime
+        let (hit, generation) = ownerResolution.withLock { ($0.entries[pid], $0.generation) }
+        if let hit, now - hit.at < ownerResolutionTTL { return hit.owner }
+        let owner = resolveOwner(of: object, pid: pid, lookup: lookup, fallback: fallback)
+        ownerResolution.withLock { cache in
+            guard cache.generation == generation else { return }
+            if cache.entries.count > 512 { cache.entries.removeAll(keepingCapacity: true) }
+            cache.entries[pid] = OwnerResolutionCache.Entry(owner: owner, at: now)
+        }
+        return owner
+    }
+
+    private static func resolveOwner(of object: AudioObjectID, pid: pid_t, lookup: AudioOwnerLookup<NSRunningApplication>, fallback: () -> [AudioOwnerIdentity]) -> pid_t? {
+        if let app = mainApp(for: pid, lookup: lookup) { return app.processIdentifier }
         let bundleID = AudioOutputService.string(object, kAudioProcessPropertyBundleID)
         let processURL = NSRunningApplication(processIdentifier: pid)?.bundleURL?.standardizedFileURL.path
         guard let ownerPID = AudioOwnerIdentity.uniqueOwner(bundleID: bundleID, processPath: processURL,
                                                             among: fallback()) else { return nil }
-        return NSRunningApplication(processIdentifier: ownerPID)
-    }
-
-    static func processObjectIDs(for targetPID: pid_t) -> [AudioObjectID] {
-        processObjectsByOwner()[targetPID] ?? []
+        return NSRunningApplication(processIdentifier: ownerPID)?.processIdentifier
     }
 
     /// One pass over the process-object list with owner resolution memoised.
     /// Callers used to re-read the whole list, and re-scan every running app, once
-    /// per pid, which is what made the once-a-second sweep expensive.
+    /// per pid, which is what made the once-a-second sweep expensive. Safe on
+    /// any thread; the engine itself calls it only from the control gather.
     static func processObjectsByOwner(objects: [AudioObjectID]? = nil) -> [pid_t: [AudioObjectID]] {
         let interval = AOMPerformance.begin("Audio.processOwners")
         defer { AOMPerformance.end("Audio.processOwners", interval) }
@@ -953,7 +1094,7 @@ final class AppAudioEngine {
             let ownerPID: pid_t
             if let cached = ownerCache[rawPID] { ownerPID = cached }
             else {
-                let resolved = owner(of: obj, pid: rawPID, lookup: lookup, fallback: fallback)?.processIdentifier ?? rawPID
+                let resolved = owner(of: obj, pid: rawPID, lookup: lookup, fallback: fallback) ?? rawPID
                 ownerCache[rawPID] = resolved
                 ownerPID = resolved
             }
@@ -966,7 +1107,7 @@ final class AppAudioEngine {
         readProcessObjectList() ?? []
     }
 
-    private static func readProcessObjectList() -> [AudioObjectID]? {
+    nonisolated static func readProcessObjectList() -> [AudioObjectID]? {
         var address = AudioOutputService.address(kAudioHardwarePropertyProcessObjectList)
         var size: UInt32 = 0
         guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size) == noErr else { return nil }
@@ -978,76 +1119,18 @@ final class AppAudioEngine {
 
     // MARK: - Running audio apps (process objects, 14.2+)
 
-    private func refreshPlaybackActivity(_ objectsByOwner: [pid_t: [AudioObjectID]]) {
-        playingPIDs = AudioPlaybackActivity.playingOwners(objectsByOwner) {
-            Self.property($0, selector: kAudioProcessPropertyIsRunningOutput, as: UInt32.self) == 1
-        }
-        playbackSnapshotAt = ProcessInfo.processInfo.systemUptime
-    }
-
+    /// Rows from the last applied snapshot plus UserDefaults; no CoreAudio
+    /// or LaunchServices reads. A stale identity list (or, with processing
+    /// off, stale playback) asks for a background gather, whose apply posts
+    /// `AOMAudioAppsChanged` when the rows changed.
     func runningAudioApps() -> [AppState] {
         let now = ProcessInfo.processInfo.systemUptime
         // The mixer still lists native playback with processing switched off.
         if !isEnabled, !systemSleeping, now - playbackSnapshotAt >= 1 {
-            refreshPlaybackActivity(Self.processObjectsByOwner())
+            pendingPlaybackRefresh = true
+            scheduleGather(announce: false)
         }
-        // Names and icons do not change with every playback edge. Workspace
-        // notifications invalidate this cache; the TTL also catches renames.
-        if now - appIdentitySnapshotAt < 30 {
-            return currentStates(for: appIdentitySnapshot)
-        }
-        var results: [AppState] = []
-        var seenPIDs = Set<pid_t>()
-
-        // Every regular owner of a CoreAudio helper is already in this list.
-        // Resolve process membership once in syncActiveProcesses, not again
-        // while constructing UI rows (which also used to reload every icon).
-        let knownMedia = Set([
-            "com.apple.Music", "com.spotify.client", "com.apple.Safari",
-            "com.google.Chrome", "org.mozilla.firefox", "org.videolan.vlc",
-            "com.apple.QuickTimePlayerX", "com.tinyspeck.slackmacgap",
-            "com.hnc.Discord", "us.zoom.xos", "com.apple.FaceTime",
-            "com.apple.Podcasts", "com.apple.TV"
-        ])
-        let customApps = Set(UserDefaults.standard.stringArray(forKey: "AOMAudioUserApps") ?? [])
-
-        for app in NSWorkspace.shared.runningApplications {
-            let pid = app.processIdentifier
-            guard pid != ProcessInfo.processInfo.processIdentifier, !seenPIDs.contains(pid) else { continue }
-            let bundleID = app.bundleIdentifier ?? ""
-            let isMedia = knownMedia.contains(bundleID) || customApps.contains(bundleID)
-            let isRegular = app.activationPolicy == .regular
-            guard isMedia || (isRegular && bundleID != Bundle.main.bundleIdentifier) else { continue }
-
-            seenPIDs.insert(pid)
-            results.append(AppState(
-                pid: pid,
-                name: app.localizedName ?? bundleID,
-                bundleID: bundleID,
-                icon: app.icon,
-                gain: sessions[pid]?.gain ?? Self.storedGain(bundleID: bundleID),
-                muted: sessions[pid]?.muted ?? UserDefaults.standard.bool(forKey: "AOMAudioMute_\(bundleID)"),
-                tapped: sessions[pid] != nil,
-                outputDeviceUID: UserDefaults.standard.string(forKey: "AOMAudioRoute_\(bundleID)"),
-                magicBoost: UserDefaults.standard.bool(forKey: "AOMAudioMagicBoost_\(bundleID)"),
-                        error: errors[pid], peakLevel: level(pid: pid), processingStatus: status(pid: pid)
-            ))
-        }
-
-        // Manually added apps remain configurable while closed.
-        for (index, bundleID) in customApps.sorted().enumerated() where !results.contains(where: { $0.bundleID == bundleID }) {
-            let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
-            let name = url.flatMap { Bundle(url: $0)?.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String }
-                ?? url?.deletingPathExtension().lastPathComponent ?? bundleID
-            results.append(AppState(pid: -pid_t(index + 1), name: name, bundleID: bundleID,
-                                    icon: url.map { NSWorkspace.shared.icon(forFile: $0.path) },
-                                    gain: Self.storedGain(bundleID: bundleID),
-                                    muted: UserDefaults.standard.bool(forKey: "AOMAudioMute_\(bundleID)"), tapped: false,
-                                    outputDeviceUID: UserDefaults.standard.string(forKey: "AOMAudioRoute_\(bundleID)"),
-                                    magicBoost: UserDefaults.standard.bool(forKey: "AOMAudioMagicBoost_\(bundleID)")))
-        }
-        appIdentitySnapshot = results.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-        appIdentitySnapshotAt = now
+        if now - appIdentitySnapshotAt >= Self.appIdentityTTL { scheduleGather(announce: false) }
         return currentStates(for: appIdentitySnapshot)
     }
 
@@ -1064,9 +1147,9 @@ final class AppAudioEngine {
             state.overdrive = AppAudioPreferences.overdrive(bundleID: state.bundleID, defaults: d)
             state.balance = AppAudioPreferences.balance(bundleID: state.bundleID, defaults: d)
             let recovering = !recoveringAirPlayUIDs.isEmpty &&
-                Self.targetOutputUID(for: state.bundleID).map { recoveringAirPlayUIDs.contains($0) } == true
+                controlSnapshot.targetOutputUID(for: state.bundleID, defaults: d).map { recoveringAirPlayUIDs.contains($0) } == true
             state.error = airPlayBypassed || !isEnabled || recovering ? nil : errors[state.pid]
-            state.processingStatus = status(pid: state.pid)
+            state.processingStatus = status(pid: state.pid, bundleID: sessions[state.pid]?.bundleID ?? state.bundleID)
             // Meters have their own observable model. Do not invalidate an
             // entire application list for a changing sample peak.
             state.peakLevel = 0
@@ -1075,7 +1158,7 @@ final class AppAudioEngine {
     }
 
     func addCustomApp(bundleID: String) {
-        appIdentitySnapshotAt = -.infinity
+        invalidateAppIdentities()
         var list = UserDefaults.standard.stringArray(forKey: "AOMAudioUserApps") ?? []
         if !list.contains(bundleID) {
             list.append(bundleID)
@@ -1112,7 +1195,7 @@ final class AppAudioEngine {
         return true
     }
 
-    nonisolated private static func property<T>(_ object: AudioObjectID, selector: AudioObjectPropertySelector,
+    nonisolated static func property<T>(_ object: AudioObjectID, selector: AudioObjectPropertySelector,
                                                 as type: T.Type) -> T? {
         var address = AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal,
                                                  mElement: kAudioObjectPropertyElementMain)
@@ -1253,19 +1336,22 @@ final class AppAudioEngine {
         return description
     }
 
-    private func createSession(pid: pid_t, gain: Float, muted: Bool) -> Session? {
-        let bundleID = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? ""
+    /// `ids`: the app's process objects in `snapshot`, the same membership
+    /// the apply step decided to attach for.
+    private func createSession(pid: pid_t, bundleID: String, ids: [AudioObjectID], snapshot: AudioControlSnapshot,
+                               gain: Float, muted: Bool) -> Session? {
         // Never mute the original producer before the remote callback clock
         // has been observed. Setup itself is asynchronous and outputs silence.
-        guard let uid = Self.targetOutputUID(for: bundleID),
-              let destination = AudioOutputService.devices().first(where: { $0.uid == uid }) else { return nil }
-        if Self.outputTransport(destination.id) == kAudioDeviceTransportTypeAirPlay {
+        guard let uid = snapshot.targetOutputUID(for: bundleID),
+              let destination = snapshot.device(uid: uid) else { return nil }
+        let isAirPlay = snapshot.isAirPlay(destination)
+        if isAirPlay {
             guard Self.airPlayProcessingEnabled,
                   case .ready = MainActor.assumeIsolated({ SharedOutputRenderer.shared.prepareAirPlay(device: destination) }) else { return nil }
         }
 
-        // 1. Resolve all CoreAudio process object IDs for this app (main + audio service helpers)
-        let processObjIDs = Self.processObjectIDs(for: pid)
+        // 1. All CoreAudio process objects of this app (main + audio service helpers)
+        let processObjIDs = ids
         guard !processObjIDs.isEmpty else { return nil }
         let description = Self.captureDescription(processIDs: processObjIDs, bundleID: bundleID)
         var tapID = AudioObjectID(kAudioObjectUnknown)
@@ -1298,7 +1384,7 @@ final class AppAudioEngine {
             AudioHardwareDestroyProcessTap(tapID)
             return nil
         }
-        if Self.outputTransport(destination.id) == kAudioDeviceTransportTypeAirPlay {
+        if isAirPlay {
             var address = AudioOutputService.address(kAudioDevicePropertyBufferFrameSize)
             var writable: DarwinBoolean = false
             if AudioObjectIsPropertySettable(aggregateID, &address, &writable) == noErr, writable.boolValue {
@@ -1312,8 +1398,7 @@ final class AppAudioEngine {
             }
         }
         guard let format = Self.property(tapID, selector: kAudioTapPropertyFormat, as: AudioStreamBasicDescription.self),
-              Self.supports(format),
-              let device = AudioOutputService.devices().first(where: { $0.uid == outUID }) else {
+              Self.supports(format) else {
             errors[pid] = "The app audio format or selected output is unavailable."
             AudioHardwareDestroyAggregateDevice(aggregateID)
             AudioHardwareDestroyProcessTap(tapID)
@@ -1330,8 +1415,8 @@ final class AppAudioEngine {
         mixer.boostPreset = AudioBoostPreset.index(of: AudioBoostPreset.storedID(bundleID: bundleID))
         mixer.overdrive = AppAudioPreferences.overdrive(bundleID: bundleID)
         mixer.balance = AppAudioPreferences.balance(bundleID: bundleID)
-        mixer.deviceGain = AudioOutputService.softwareGain(uid: outUID)
-        let isAirPlay = Self.outputTransport(device.id) == kAudioDeviceTransportTypeAirPlay
+        mixer.deviceGain = snapshot.softwareGain(uid: outUID)
+        let device = destination
         // Overdrive on an AirPlay output releases like the network bus.
         mixer.usesNetworkDynamics = isAirPlay
         let transport = AppAudioTransport(sampleRate: sampleRate, bufferedForAirPlay: isAirPlay)
@@ -1389,7 +1474,8 @@ final class AppAudioEngine {
         format.mSampleRate.isFinite && format.mSampleRate > 0
     }
 
-    private func updateProcesses(_ session: Session, ids: [AudioObjectID]) -> Bool {
+    /// `runningOutput`: the snapshot's playing process objects.
+    private func updateProcesses(_ session: Session, ids: [AudioObjectID], runningOutput: Set<AudioObjectID>) -> Bool {
         guard ids != session.processIDs else { session.membership.settle(); return true }
         // An empty snapshot during helper replacement is transient. Keep the
         // tap alive; the next process-list notification updates its membership.
@@ -1402,9 +1488,7 @@ final class AppAudioEngine {
         // unmuted, until then), and a member still producing output is
         // never dropped.
         let current = Set(session.processIDs)
-        let outputting = current.union(ids).filter {
-            Self.property($0, selector: kAudioProcessPropertyIsRunningOutput, as: UInt32.self) == 1
-        }
+        let outputting = current.union(ids).intersection(runningOutput)
         guard let next = session.membership.propose(Set(ids), current: current, outputting: outputting) else {
             return true
         }
@@ -1434,10 +1518,9 @@ final class AppAudioEngine {
         return true
     }
 
-    private func moveOutput(_ session: Session, device: AudioOutputDevice) -> Bool {
+    private func moveOutput(_ session: Session, device: AudioOutputDevice, isAirPlay: Bool) -> Bool {
         guard let transport = session.transport else { return false }
         let mixer = session.box.takeUnretainedValue()
-        let isAirPlay = Self.outputTransport(device.id) == kAudioDeviceTransportTypeAirPlay
         // Bridge, don't break: the new source is added before the old one is
         // removed. A failed add must leave the session playing through its
         // existing output — losing the device is what pauses every player.
@@ -1512,7 +1595,7 @@ final class AppAudioEngine {
         stop(pid: session.pid)
         errors[session.pid] = message
         retryAfter[session.pid] = .infinity
-        failedProcessIDs[session.pid] = Self.processObjectIDs(for: session.pid).sorted()
+        failedProcessIDs[session.pid] = controlSnapshot.objectsByOwner[session.pid] ?? []
         GestureLog.shared.logFromAnyThread(message, level: .error)
     }
 

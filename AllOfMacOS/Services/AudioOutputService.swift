@@ -166,6 +166,17 @@ final class AudioOutputService {
         }
     }
 
+    /// `softwareGain(uid:)` for the audio control gather queue: the device
+    /// list and the App Audio switch come from the caller, not from main state.
+    static func softwareGain(uid: String, in devices: [AudioOutputDevice], appAudioEnabled: Bool) -> Float {
+        let value = UserDefaults.standard.object(forKey: "AOMAudioDeviceGain_\(uid)") as? Double ?? 1
+        return resolvedSoftwareGain(value) {
+            guard appAudioEnabled, let device = devices.first(where: { $0.uid == uid }) else { return false }
+            return AudioOutputRestore.transportType(of: device.id) != kAudioDeviceTransportTypeAirPlay &&
+                volumeProperty(device.id) == nil
+        }
+    }
+
     /// Unity is the result for every device when no software attenuation is
     /// configured. Avoid synchronous HAL capability IPC on that common path.
     static func resolvedSoftwareGain(_ configured: Double, supports: () -> Bool) -> Float {
