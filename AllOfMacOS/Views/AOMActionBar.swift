@@ -1,6 +1,12 @@
 import AppKit
 import SwiftUI
 
+// AOM 6.0 note: the bar is now *contextual* (both 5.0 reviews: "a page sign,
+// not a context tool"). A page publishes what is selected and what can be
+// done to it with `aomBarContext`; the bar shows that title and its actions
+// as buttons with their shortcuts, and keeps the page-wide Actions panel and
+// Search on the right. Related-tool marks left the bar (they are in Actions).
+//
 // AOM 5.0 action bar, after Raycast's bottom bar ("A fresh look and feel",
 // 2022): the left half says where you are — the page's identity mark, its
 // name and what it is for — and the right half says what you can do now,
@@ -16,6 +22,77 @@ struct AOMBarAction: Identifiable {
     let identity: AOMIdentity
     var shortcut: String?
     let run: @MainActor () -> Void
+    /// A key the bar binds while this action is shown (contexts only).
+    var key: SwiftUI.KeyboardShortcut? = nil
+
+    /// The keys as text ("⌘↩"), from `key` when it is set.
+    var keysText: String? {
+        guard let key else { return shortcut }
+        var text = ""
+        if key.modifiers.contains(.control) { text += "⌃" }
+        if key.modifiers.contains(.option) { text += "⌥" }
+        if key.modifiers.contains(.shift) { text += "⇧" }
+        if key.modifiers.contains(.command) { text += "⌘" }
+        switch key.key {
+        case .return: text += "↩"
+        case .delete: text += "⌫"
+        case .space: text += "Space"
+        default: text += String(key.key.character).uppercased()
+        }
+        return text
+    }
+}
+
+/// What a page says about its current selection: a title ("Trackpad: 4
+/// Finger Tap") and what can be done to it, the first being the primary.
+struct AOMBarContext {
+    var title: String?
+    var actions: [AOMBarAction] = []
+}
+
+/// Each live page's context, written by the page itself.
+@MainActor
+final class AOMBarContexts: ObservableObject {
+    static let shared = AOMBarContexts()
+    @Published private(set) var contexts: [AOMMainTab: AOMBarContext] = [:]
+    /// Bumped on every write, so the bar re-renders though contexts hold closures.
+    @Published private(set) var revision = 0
+
+    func set(_ context: AOMBarContext?, for tab: AOMMainTab) {
+        contexts[tab] = context
+        revision &+= 1
+    }
+}
+
+extension View {
+    /// Publishes the page's selection context to the action bar whenever
+    /// `id` changes (pass what the context depends on: the selected item's
+    /// id and the states its actions show).
+    func aomBarContext<ID: Equatable>(id: ID, _ make: @escaping () -> AOMBarContext?) -> some View {
+        modifier(AOMBarContextWriter(id: id, make: make))
+    }
+}
+
+private struct AOMBarContextWriter<ID: Equatable>: ViewModifier {
+    let id: ID
+    let make: () -> AOMBarContext?
+    @Environment(\.aomPageTab) private var tab
+
+    func body(content: Content) -> some View {
+        content
+            .onAppear { publish() }
+            .onChange(of: id) { _, _ in publish() }
+            .onDisappear {
+                guard let tab else { return }
+                DispatchQueue.main.async { AOMBarContexts.shared.set(nil, for: tab) }
+            }
+    }
+
+    private func publish() {
+        guard let tab else { return }
+        let context = make()
+        DispatchQueue.main.async { AOMBarContexts.shared.set(context, for: tab) }
+    }
 }
 
 /// A titled group of rows in the Actions panel.
@@ -71,17 +148,19 @@ enum AOMActionBarModel {
     }
 }
 
-/// The bar under every page. Observes the selected page only.
+/// The bar under every page: where you are and what you can do now.
 struct AOMActionBar: View {
     let appState: AppState
     let paletteKeys: String
     @Binding var showingCommandPalette: Bool
     @ObservedObject private var navigation = AOMNavigation.shared
+    @ObservedObject private var contexts = AOMBarContexts.shared
     @Environment(\.openSettings) private var openSettings
     @State private var showsActions = false
 
     var body: some View {
         let tab = navigation.selected
+        let context = contexts.contexts[tab]
         HStack(spacing: AOMSpace.x2) {
             AOMAppIcon(tab, size: AOMIcon.identityBar)
             Text(tab.title)
@@ -89,60 +168,41 @@ struct AOMActionBar: View {
                 .foregroundStyle(AOMColor.text)
                 .lineLimit(1)
                 .fixedSize()
-            Text(tab.tagline)
-                .font(AOMFont.callout)
-                .foregroundStyle(AOMColor.textSecondary)
-                .lineLimit(1)
-                .truncationMode(.tail)
+            if let title = context?.title, !title.isEmpty {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(AOMColor.textTertiary)
+                Text(title)
+                    .font(AOMFont.callout)
+                    .foregroundStyle(AOMColor.textSecondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            } else {
+                Text(tab.tagline)
+                    .font(AOMFont.callout)
+                    .foregroundStyle(AOMColor.textTertiary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
             Spacer(minLength: AOMSpace.x3)
-            // Related tools: marks only, names in the tooltip, so the bar
-            // stays one quiet line at every width.
-            HStack(spacing: AOMSpace.x1) {
-                ForEach(AOMActionBarModel.related(to: tab)) { other in
-                    Button { appState.selectedMainTab = other } label: {
-                        AOMAppIcon(other, size: AOMIcon.identityBar)
-                            .padding(AOMSpace.x0_5)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .help("Open \(other.title) — \(other.tagline)")
-                    .accessibilityLabel("Open \(other.title)")
+            if let actions = context?.actions, !actions.isEmpty {
+                ForEach(Array(actions.prefix(3).enumerated()), id: \.element.id) { index, action in
+                    AOMBarButton(title: action.title, keys: action.keysText, primary: index == 0,
+                                 key: action.key, run: action.run)
                 }
+                AOMDivider(axis: .vertical).frame(height: AOMSpace.x4).padding(.horizontal, AOMSpace.x0_5)
             }
-            AOMDivider(axis: .vertical).frame(height: AOMSpace.x4)
-            Button { showsActions.toggle() } label: {
-                HStack(spacing: AOMSpace.x1 + AOMSpace.x0_5) {
-                    Text("Actions").font(AOMFont.callout.weight(.medium))
-                    Image(systemName: "chevron.up").font(.system(size: 9, weight: .bold))
-                }
-                .foregroundStyle(showsActions ? AOMColor.text : AOMColor.textSecondary)
-                .padding(.horizontal, AOMSpace.x2)
-                .padding(.vertical, AOMSpace.x1)
-                .background(showsActions ? AOMColor.rowPressed : Color.clear,
-                            in: RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous))
-                .contentShape(Rectangle())
+            AOMBarButton(title: "Actions", keys: nil, primary: false, chevron: true, highlighted: showsActions) {
+                showsActions.toggle()
             }
-            .buttonStyle(.plain)
-            .help("Actions for \(tab.title)")
+            .help("Every action for \(tab.title)")
             .popover(isPresented: $showsActions, arrowEdge: .top) {
-                AOMActionPanel(title: tab.title,
-                               sections: AOMActionBarModel.sections(
-                                   for: tab, appState: appState, paletteKeys: paletteKeys,
-                                   openPalette: { showingCommandPalette = true },
-                                   openSettings: { openSettings() }),
+                AOMActionPanel(title: context?.title ?? tab.title,
+                               sections: panelSections(tab: tab, context: context),
                                dismiss: { showsActions = false })
             }
-            Button { showingCommandPalette = true } label: {
-                HStack(spacing: AOMSpace.x1 + AOMSpace.x0_5) {
-                    Text("Search").font(AOMFont.callout.weight(.medium))
-                    AOMKeycap(text: paletteKeys)
-                }
-                .foregroundStyle(AOMColor.textSecondary)
-                .padding(.leading, AOMSpace.x2)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("Search all tools, settings and commands")
+            AOMBarButton(title: "Search", keys: paletteKeys, primary: false) { showingCommandPalette = true }
+                .help("Search all tools, settings and commands")
         }
         .padding(.horizontal, AOMSpace.x3)
         .frame(height: AOMSize.actionBarHeight)
@@ -156,6 +216,52 @@ struct AOMActionBar: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { showsActions = true }
             }
         }
+    }
+
+    private func panelSections(tab: AOMMainTab, context: AOMBarContext?) -> [AOMBarActionSection] {
+        var sections = AOMActionBarModel.sections(for: tab, appState: appState, paletteKeys: paletteKeys,
+                                                  openPalette: { showingCommandPalette = true },
+                                                  openSettings: { openSettings() })
+        if let context, !context.actions.isEmpty {
+            sections.insert(AOMBarActionSection(title: context.title ?? "Selection", actions: context.actions), at: 0)
+        }
+        return sections
+    }
+}
+
+/// A button in the bar: a word and its keys, the primary one tinted.
+private struct AOMBarButton: View {
+    let title: String
+    let keys: String?
+    let primary: Bool
+    var chevron = false
+    var highlighted = false
+    var key: SwiftUI.KeyboardShortcut? = nil
+    let run: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: run) {
+            HStack(spacing: AOMSpace.x1 + AOMSpace.x0_5) {
+                Text(title)
+                    .font(AOMFont.callout.weight(primary ? .semibold : .medium))
+                    .foregroundStyle(primary ? AOMColor.accent : (hovering || highlighted ? AOMColor.text : AOMColor.textSecondary))
+                if chevron {
+                    Image(systemName: "chevron.up").font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(AOMColor.textTertiary)
+                }
+                if let keys, !keys.isEmpty { AOMKeycap(text: keys) }
+            }
+            .padding(.horizontal, AOMSpace.x2)
+            .frame(height: 24)
+            .background(hovering || highlighted ? AOMColor.rowHover : Color.clear,
+                        in: RoundedRectangle(cornerRadius: AOMRadius.control + 1, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .keyboardShortcut(key)
+        .onHover { hovering = $0 }
+        .aomAnimation(.quick, value: hovering)
     }
 }
 
@@ -211,7 +317,7 @@ struct AOMActionPanel: View {
                     .foregroundStyle(isSelected ? Color.white : AOMColor.text)
                     .lineLimit(1)
                 Spacer(minLength: AOMSpace.x2)
-                if let keys = action.shortcut, !keys.isEmpty {
+                if let keys = action.keysText, !keys.isEmpty {
                     Text(keys)
                         .font(AOMFont.caption.monospacedDigit())
                         .foregroundStyle(isSelected ? Color.white.opacity(0.85) : AOMColor.textSecondary)

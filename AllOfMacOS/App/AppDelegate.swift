@@ -69,6 +69,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// The running delegate, for AppleScript commands that reuse URL handling.
     @MainActor static weak var current: AppDelegate?
     var statusItem: NSStatusItem?
+    /// The 6.0 control panel shown from the menu bar icon.
+    private var statusPopover: NSPopover?
+    private var previewPanelWindow: NSWindow?
     var appState: AppState? {
         didSet {
             // AppState is main-actor isolated and the delegate is wired from
@@ -260,6 +263,23 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 mainWindow?.makeKeyAndOrderFront(nil)
             }
             if let appState { AOMPageSwitchBench.runIfRequested(appState) }
+            // Isolated previews can show the menu bar panel in a window for
+            // screenshots (`--aom-preview-menubar-panel`).
+            if PresetManager.isUIPreview, ProcessInfo.processInfo.arguments.contains("--aom-preview-menubar-panel") {
+                MainActor.assumeIsolated {
+                    let model = AOMMenuBarPanelModel(appState: self.appState)
+                    let actions = AOMMenuBarPanelActions(openWindow: {}, openSettings: {}, showAllCommands: {},
+                                                         quit: {}, close: {})
+                    let host = NSHostingController(rootView: AOMMenuBarPanel(model: model, actions: actions)
+                        .background(.regularMaterial))
+                    let window = NSWindow(contentViewController: host)
+                    window.title = "AOM Menu Bar Panel"
+                    window.styleMask = [.titled]
+                    window.setFrameOrigin(NSPoint(x: 60, y: 200))
+                    window.makeKeyAndOrderFront(nil)
+                    self.previewPanelWindow = window
+                }
+            }
             let visits = appState.map(AOMPreviewVisit.runIfRequested) ?? 0
             AOMPreviewSnapshot.scheduleIfRequested(after: visits)
         }
@@ -544,6 +564,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// that show their state, one level of submenus). The version lives in
     /// Settings › About instead of heading the menu.
     @objc private func statusItemClicked() {
+        // 6.0: a left click opens the control panel; ⌥-click or a right
+        // click opens the full command menu, as before.
+        let event = NSApp.currentEvent
+        let wantsMenu = event?.type == .rightMouseUp || event?.modifierFlags.contains(.option) == true
+            || UserDefaults.standard.bool(forKey: "AOMClassicStatusMenu")
+        if !wantsMenu {
+            MainActor.assumeIsolated { toggleStatusPanel() }
+            return
+        }
+        showClassicStatusMenu()
+    }
+
+    private func showClassicStatusMenu() {
         let menu = makeStatusMenu()
         // Show the menu
         statusItem?.menu = menu
@@ -552,6 +585,34 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         DispatchQueue.main.async {
             self.statusItem?.menu = nil
         }
+    }
+
+    @MainActor private func toggleStatusPanel() {
+        if let popover = statusPopover, popover.isShown {
+            popover.performClose(nil)
+            return
+        }
+        guard let button = statusItem?.button else { return }
+        let model = AOMMenuBarPanelModel(appState: appState)
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.animates = true
+        let actions = AOMMenuBarPanelActions(
+            openWindow: { [weak self] in self?.showMainWindow() },
+            openSettings: { [weak self] in self?.openSettings() },
+            showAllCommands: { [weak self, weak popover] in
+                popover?.performClose(nil)
+                DispatchQueue.main.async { self?.showClassicStatusMenu() }
+            },
+            quit: { NSApp.terminate(nil) },
+            close: { [weak popover] in popover?.performClose(nil) })
+        popover.contentViewController = NSHostingController(
+            rootView: AOMMenuBarPanel(model: model, actions: actions)
+                .tint(appState?.accentColorChoice.color ?? .accentColor))
+        statusPopover = popover
+        NSApp.activate(ignoringOtherApps: true)
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        popover.contentViewController?.view.window?.makeKey()
     }
 
     /// Builds the status menu fresh for each click (state, frontmost app).

@@ -65,6 +65,8 @@ struct AOMMainShell<Content: View>: View {
                         // Body text and regular controls for every page
                         // (design-3.3.6 b.1, b.6); dense tables opt into small.
                         .font(AOMFont.body)
+                        // 6.0: page buttons without a style of their own are soft.
+                        .aomButtonDefaults()
                     if drawerOpen && sideBySide {
                         AOMDivider(axis: .vertical)
                         DiagnosticDrawerView(showLog: $showLog, showTouchVisualizer: $showTouchVisualizer)
@@ -148,16 +150,26 @@ private struct AOMSidebarHost: View {
 /// alive, page-level titles would compete.
 private struct AOMShellTitle: ViewModifier {
     @ObservedObject private var navigation = AOMNavigation.shared
-    @State private var subtitle = ""
+    @ObservedObject private var subtitles = AOMToolbarSubtitles.shared
 
     func body(content: Content) -> some View {
         content
             .navigationTitle(navigation.selected.title)
-            .navigationSubtitle(subtitle)
-            .onPreferenceChange(AOMToolbarSubtitleKey.self) { value in
-                let text = value ?? ""
-                if text != subtitle { subtitle = text }
-            }
+            .navigationSubtitle(subtitles.values[navigation.selected] ?? "")
+    }
+}
+
+/// Each page's context line, written by the page itself (5.1). It used to be
+/// a preference: every update of any page — including the hidden ones —
+/// re-collected it across all live pages, about 160 samples of main-thread
+/// time per window reopen in a debug sample.
+@MainActor
+final class AOMToolbarSubtitles: ObservableObject {
+    static let shared = AOMToolbarSubtitles()
+    @Published private(set) var values: [AOMMainTab: String] = [:]
+
+    func set(_ subtitle: String, for tab: AOMMainTab) {
+        if values[tab] != subtitle { values[tab] = subtitle }
     }
 }
 
@@ -217,7 +229,9 @@ struct AOMSidebar: View, Equatable {
                 Divider()
                 Button { openSettings() } label: {
                     HStack(spacing: AOMSpace.x2) {
-                        AOMAppIcon(.neutral("gearshape.fill"), size: AOMIcon.identityRow)
+                        Image(systemName: "gearshape")
+                            .foregroundStyle(AOMColor.textSecondary)
+                            .frame(width: AOMIcon.sidebarGlyph)
                         Text("Settings")
                         Spacer()
                         AOMKeycap(text: "⌘,")
@@ -298,8 +312,8 @@ struct AOMSidebar: View, Equatable {
         } icon: {
             // 5.0: the tool's identity mark (System Settings, Loop), so a
             // destination is found by colour and shape before its name.
-            AOMAppIcon(tab, size: AOMIcon.identityRow,
-                       active: tab == .gestures ? engineOn : true)
+            AOMAppIcon(tab, size: AOMIcon.sidebarGlyph,
+                       active: tab == .gestures ? engineOn : true, style: .glyph)
         }
         .tag(tab)
         .help(tab.shortcutKey.map { "\(tab.title) — ⌘\($0.character)" } ?? tab.title)
@@ -432,7 +446,13 @@ private struct AOMSidebarHeader: View {
 
     var body: some View {
         HStack(spacing: AOMSpace.x2 + AOMSpace.x0_5) {
-            AOMAppIcon(AOMMainTab.home.identity, size: 30, active: engineOn)
+            // The app's own icon, the way Bartender and Ice head their menus.
+            Image(nsImage: NSApp.applicationIconImage)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: 28, height: 28)
+                .opacity(engineOn ? 1 : 0.6)
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 0) {
                 Text("All of MacOS")
                     .font(AOMFont.bodyEmphasis)
@@ -505,15 +525,8 @@ private struct AOMSidebarSearchButton: View {
 
 /// A page's one-line context under the toolbar title ("All Apps · 3 of 5
 /// on"). Pages set it with `aomToolbarSubtitle(_:)`; the shell
-/// (`AOMShellTitle`) draws it as the window subtitle.
-struct AOMToolbarSubtitleKey: PreferenceKey {
-    static let defaultValue: String? = nil
-    static func reduce(value: inout String?, nextValue: () -> String?) { value = nextValue() ?? value }
-}
-
+/// (`AOMShellTitle`) draws the selected page's as the window subtitle.
 extension View {
-    /// The page's context line: the window subtitle under the system title.
-    /// A page kept alive behind the selected one reports none.
     func aomToolbarSubtitle(_ subtitle: String) -> some View {
         modifier(AOMToolbarSubtitle(subtitle: subtitle))
     }
@@ -521,21 +534,19 @@ extension View {
 
 private struct AOMToolbarSubtitle: ViewModifier {
     let subtitle: String
-    @Environment(\.aomPageActivity) private var activity
+    @Environment(\.aomPageTab) private var tab
 
     func body(content: Content) -> some View {
-        content.modifier(AOMToolbarSubtitleValue(subtitle: subtitle, activity: activity))
+        content
+            .onAppear { publish() }
+            .onChange(of: subtitle) { _, _ in publish() }
     }
-}
 
-/// Observes the page's activity, so only this modifier re-renders on a switch.
-private struct AOMToolbarSubtitleValue: ViewModifier {
-    let subtitle: String
-    @ObservedObject var activity: AOMPageActivity
-
-    func body(content: Content) -> some View {
-        content.preference(key: AOMToolbarSubtitleKey.self,
-                           value: activity.isActive && !subtitle.isEmpty ? subtitle : nil)
+    private func publish() {
+        guard let tab else { return }
+        // Outside the view update that produced it.
+        let text = subtitle
+        DispatchQueue.main.async { AOMToolbarSubtitles.shared.set(text, for: tab) }
     }
 }
 

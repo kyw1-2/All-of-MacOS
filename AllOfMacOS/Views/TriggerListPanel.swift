@@ -149,7 +149,7 @@ struct AddTriggerSheet: View {
                 Button("Cancel") { keyboardMonitor.stopRecording(); dismiss() }
                     .keyboardShortcut(.cancelAction)
                 Button("Add") { addTrigger() }
-                    .keyboardShortcut(.defaultAction)
+                    .keyboardShortcut(.defaultAction).buttonStyle(AOMPrimaryButtonStyle())
                     .disabled(!canAdd)
             }
         }

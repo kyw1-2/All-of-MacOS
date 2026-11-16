@@ -17,6 +17,8 @@ struct AOMPageHost<Page: View>: View {
     @ObservedObject private var navigation = AOMNavigation.shared
     /// Pages in the order they were first selected.
     @State private var visited: [AOMMainTab] = []
+    /// Selection order, most recent last (for `live`).
+    @State private var recent: [AOMMainTab] = []
     @State private var memory = AOMPageHostMemory()
     private let page: (AOMMainTab) -> Page
 
@@ -30,11 +32,33 @@ struct AOMPageHost<Page: View>: View {
         visited.contains(tab) ? visited : visited + [tab]
     }
 
+    /// How many pages stay built (5.1). Every live page is laid out again
+    /// whenever the window is shown, made key or resized: with all twelve
+    /// alive, reopening the window stalled the main thread about 230 ms
+    /// (debug build) against about 70 ms with one. Four keeps Back/Forward
+    /// and the pages you move between instant and bounds the reopen cost.
+    nonisolated static var keepAlive: Int { AOMPageRetention.keepAlive }
+
+    /// The live pages after selecting `tab`, given the selection order
+    /// (`recent`, most recent last): `visiting`, minus the least recently
+    /// selected pages beyond `keepAlive`. The remaining pages keep their
+    /// order, so no live page is re-inserted.
+    nonisolated static func live(selecting tab: AOMMainTab, after visited: [AOMMainTab],
+                                 recent: [AOMMainTab], limit: Int = keepAlive) -> [AOMMainTab] {
+        var pages = visiting(tab, after: visited)
+        guard pages.count > limit else { return pages }
+        let order = recent.filter { $0 != tab } + [tab]
+        let ranked = pages.sorted { (order.lastIndex(of: $0) ?? -1) < (order.lastIndex(of: $1) ?? -1) }
+        let evicted = Set(ranked.prefix(pages.count - limit))
+        pages.removeAll { evicted.contains($0) }
+        return pages
+    }
+
     var body: some View {
         let selected = navigation.selected
         // The new page is in the list from the first render of the switch;
         // `visited` catches up in `onChange` with the same order.
-        let pages = Self.visiting(selected, after: visited)
+        let pages = Self.live(selecting: selected, after: visited, recent: recent)
         GeometryReader { proxy in
             let live = proxy.size
             ZStack(alignment: .topLeading) {
@@ -60,13 +84,25 @@ struct AOMPageHost<Page: View>: View {
         }
         .background(AOMPageFocusProbe(memory: memory))
         .onChange(of: selected, initial: true) { _, tab in
-            let next = Self.visiting(tab, after: visited)
+            var order = recent.filter { $0 != tab }
+            order.append(tab)
+            recent = order
+            let next = Self.live(selecting: tab, after: visited, recent: order)
+            for page in visited where !next.contains(page) {
+                navigation.createdPages.remove(page)
+                memory.sizes[page] = nil
+            }
             if next != visited { visited = next }
             navigation.createdPages.insert(tab)
             memory.sizes[tab] = memory.live
             memory.resignHiddenFocus()
         }
     }
+}
+
+/// How many main-window pages stay built (see `AOMPageHost.live`).
+enum AOMPageRetention {
+    static let keepAlive = 4
 }
 
 /// How a page kept alive behind the selected one is hidden. Isolated previews

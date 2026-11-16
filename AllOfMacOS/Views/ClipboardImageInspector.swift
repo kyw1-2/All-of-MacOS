@@ -105,7 +105,7 @@ struct ClipboardImageInspector: View {
             }
             .font(AOMFont.callout.weight(.medium))
             .controlSize(.small)
-            .buttonStyle(.bordered)
+            .buttonStyle(AOMSoftButtonStyle())
             .padding(.horizontal, AOMSpace.x3).padding(.vertical, AOMSpace.x2)
             .aomCard(radius: AOMRadius.well, padding: 0)
             .aomElevation(.raised)

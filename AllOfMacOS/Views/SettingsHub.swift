@@ -164,14 +164,12 @@ struct HubRowShell<Control: View>: View {
 
     /// e.3, the `AOMSettingRow` geometry, so Settings rows line up with the
     /// Shortcuts and Permissions panes and every other page: a 20 pt
-    /// identity mark in the row's tint (5.0), Body title, an optional Caption line under it, the control at
+    /// neutral glyph (6.0; the tint stays in the API), Body title, an optional Caption line under it, the control at
     /// the trailing edge; 36 pt tall, 48 pt with a description.
     var body: some View {
         HStack(alignment: .center, spacing: AOMSpace.x2) {
             HStack(alignment: .center, spacing: AOMSpace.x2) {
-                // 5.0: System Settings' row icon — the row's own tint as
-                // a squircle behind a white glyph.
-                AOMAppIcon(AOMIdentity(symbol: icon, color: tint), size: AOMIcon.identityRow)
+                AOMRowIcon(symbol: icon)
                 // The title over its description, as System Settings draws a
                 // described row (design-336 #74; 3.3.5 put both on one line).
                 VStack(alignment: .leading, spacing: 1) {
@@ -766,6 +764,7 @@ struct SettingsHubView: View {
             .toolbar(removing: .sidebarToggle)
         } detail: {
             content
+                .aomButtonDefaults()
                 // The Settings window is not under MainShell, so it sets the
                 // shell's content default itself: Body text, regular controls.
                 .font(AOMFont.body)
@@ -988,7 +987,7 @@ struct SettingsSheetHost: View {
                 Text(sheet.title).font(AOMFont.headline)
                 Spacer()
                 Button("Done") { dismiss() }
-                    .keyboardShortcut(.defaultAction)
+                    .keyboardShortcut(.defaultAction).buttonStyle(AOMPrimaryButtonStyle())
             }
             .padding(.horizontal, AOMSpace.x4)
             .padding(.vertical, AOMSpace.x3)

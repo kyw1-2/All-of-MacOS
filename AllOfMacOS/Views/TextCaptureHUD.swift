@@ -346,7 +346,7 @@ struct TextCaptureEditorView: View {
                 }
                 ShareLink(item: model.text) { Label("Share", systemImage: "square.and.arrow.up") }
                 Button("Cancel", action: onCancel).keyboardShortcut(.cancelAction)
-                Button("Copy") { onCopy(model.text) }.keyboardShortcut(.defaultAction)
+                Button("Copy") { onCopy(model.text) }.keyboardShortcut(.defaultAction).buttonStyle(AOMPrimaryButtonStyle())
             }
         }
         .padding(AOMSpace.x4)

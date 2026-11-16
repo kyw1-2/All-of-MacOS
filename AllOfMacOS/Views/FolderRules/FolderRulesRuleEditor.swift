@@ -250,7 +250,7 @@ struct FolderRulesTurnOnPreview: View {
                     .keyboardShortcut(.cancelAction)
                 Button(ready.isEmpty ? "Turn On" : "Turn On and Run") { model.confirmTurnOn() }
                     .aomPrimaryButton()
-                    .keyboardShortcut(.defaultAction)
+                    .keyboardShortcut(.defaultAction).buttonStyle(AOMPrimaryButtonStyle())
                     .disabled(preview.folderState.problem != nil)
             }
             .padding(AOMSpace.rowInset)

@@ -226,7 +226,7 @@ private struct ClipboardRichTextEditor: View {
         VStack(spacing: 0) {
             HStack(spacing: AOMSpace.x1) {
                 Button("Cancel") { cancel() }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(AOMSoftButtonStyle())
                     .controlSize(.small)
                     .keyboardShortcut(.cancelAction).help("Cancel (Esc)")
                 Spacer(minLength: AOMSpace.x2)
@@ -246,7 +246,7 @@ private struct ClipboardRichTextEditor: View {
                 }
                 Spacer(minLength: AOMSpace.x2)
                 Button(saveTitle) { save() }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(AOMPrimaryButtonStyle())
                     .controlSize(.small)
                     .disabled(!model.canSave).keyboardShortcut("s", modifiers: .command)
                     .help("\(saveTitle) (⌘S)")

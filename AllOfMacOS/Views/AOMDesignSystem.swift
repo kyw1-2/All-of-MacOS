@@ -225,7 +225,7 @@ struct AOMEmptyState<Actions: View>: View {
                 AOMAppIcon(AOMIdentity(symbol: systemImage,
                                        color: pageTab.identity.isBrand ? AOMBrand.start : pageTab.identity.color),
                            size: AOMIcon.identityHero)
-                    .padding(.bottom, AOMSpace.x1)
+                    .padding(.bottom, AOMSpace.x0_5)
             } else {
                 Image(systemName: systemImage)
                     .font(.system(size: AOMIcon.empty, weight: .regular))

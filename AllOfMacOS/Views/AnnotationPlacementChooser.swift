@@ -59,7 +59,7 @@ struct AnnotationPlacementChooser: View {
                 }
                 Spacer()
                 Button("Cancel") { choose(nil) }.keyboardShortcut(.cancelAction)
-                Button("Place Below") { choose(.bottom) }.keyboardShortcut(.defaultAction)
+                Button("Place Below") { choose(.bottom) }.keyboardShortcut(.defaultAction).buttonStyle(AOMPrimaryButtonStyle())
             }
         }
         .padding(20)

@@ -22,7 +22,7 @@ struct AOMIdentity: Equatable {
     var isBrand = false
 
     static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.symbol == rhs.symbol && lhs.isBrand == rhs.isBrand && lhs.color.description == rhs.color.description
+        lhs.symbol == rhs.symbol && lhs.isBrand == rhs.isBrand && lhs.color == rhs.color
     }
 
     /// The fill of the squircle.
@@ -120,50 +120,82 @@ extension SettingsCategory {
 
 // MARK: - The mark
 
-/// A destination's mark: white filled symbol on its coloured squircle, with
-/// a hairline highlight on top and, from 28 pt, a soft drop shadow in its own
-/// hue. Off tools turn grey instead of disappearing. Increase Contrast adds
-/// a solid edge; the glyph stays white (≥ 3:1 on every hue, see AOMModule).
+/// How strongly a mark carries its hue (6.0 "Calm", after the 5.0 reviews:
+/// saturated squircles on every row read as decoration, not information).
+enum AOMMarkStyle {
+    /// The glyph in its hue on a soft wash of the same hue (Linear, Craft,
+    /// Notion): the default wherever a destination or command is listed.
+    case tinted
+    /// The glyph alone in its hue, no plate (Things' sidebar).
+    case glyph
+    /// White glyph on the solid hue: reserved for the app's own brand mark.
+    case solid
+}
+
+/// A destination's or command's mark. Off items turn grey (no filter
+/// layers, so long lists never render offscreen); Increase Contrast adds an
+/// edge to plated styles. On a selected row of a key window it turns white.
 struct AOMAppIcon: View {
     let identity: AOMIdentity
     var size: CGFloat = AOMIcon.identityRow
     var active = true
+    var style: AOMMarkStyle = .tinted
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.backgroundProminence) private var prominence
 
-    init(_ identity: AOMIdentity, size: CGFloat = AOMIcon.identityRow, active: Bool = true) {
+    init(_ identity: AOMIdentity, size: CGFloat = AOMIcon.identityRow, active: Bool = true,
+         style: AOMMarkStyle = .tinted) {
         self.identity = identity
         self.size = size
         self.active = active
+        self.style = style
     }
 
-    init(_ tab: AOMMainTab, size: CGFloat = AOMIcon.identityRow, active: Bool = true) {
-        self.init(tab.identity, size: size, active: active)
+    init(_ tab: AOMMainTab, size: CGFloat = AOMIcon.identityRow, active: Bool = true,
+         style: AOMMarkStyle = .tinted) {
+        self.init(tab.identity, size: size, active: active, style: style)
+    }
+
+    private var hue: Color {
+        guard active else { return AOMColor.textTertiary }
+        return identity.isBrand ? AOMBrand.start : identity.color
     }
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: AOMRadius.squircle(size), style: .continuous)
-        Image(systemName: identity.symbol)
-            .font(.system(size: (size * 0.52).rounded(), weight: .semibold))
-            .symbolRenderingMode(.monochrome)
-            .foregroundStyle(.white.opacity(active ? 1 : 0.85))
-            .frame(width: size, height: size)
-            // Off: a plain grey fill instead of a desaturating filter, so
-            // lists of marks never render offscreen.
-            .background(active ? identity.fill : AnyShapeStyle(AOMColor.paused.opacity(0.55).gradient), in: shape)
-            .overlay {
-                // A top-lit edge: light from above, like the system's icons.
-                shape.strokeBorder(
-                    LinearGradient(colors: [.white.opacity(scheme == .dark ? 0.28 : 0.38), .white.opacity(0.04)],
-                                   startPoint: .top, endPoint: .bottom),
-                    lineWidth: size >= 28 ? 1 : 0.5)
-            }
-            .overlay {
-                if contrast == .increased { shape.strokeBorder(AOMColor.strongLine, lineWidth: 1) }
-            }
-            .shadow(color: size >= 28 && active ? identity.color.opacity(scheme == .dark ? 0.35 : 0.28) : .clear,
-                    radius: size * 0.12, y: size * 0.06)
-            .accessibilityHidden(true)
+        let shape = RoundedRectangle(cornerRadius: (size * 0.28).rounded(), style: .continuous)
+        let onSelection = prominence == .increased
+        switch style {
+        case .glyph:
+            Image(systemName: identity.symbol)
+                .font(.system(size: (size * 0.78).rounded(), weight: .medium))
+                .symbolRenderingMode(.monochrome)
+                .foregroundStyle(onSelection ? Color.white : hue)
+                .frame(width: size, height: size)
+                .accessibilityHidden(true)
+        case .tinted:
+            Image(systemName: identity.symbol)
+                .font(.system(size: (size * 0.5).rounded(), weight: .semibold))
+                .symbolRenderingMode(.monochrome)
+                .foregroundStyle(onSelection ? Color.white : hue)
+                .frame(width: size, height: size)
+                .background(onSelection ? Color.white.opacity(0.2) : hue.opacity(scheme == .dark ? 0.2 : 0.12), in: shape)
+                .overlay {
+                    if contrast == .increased { shape.strokeBorder(AOMColor.strongLine, lineWidth: 1) }
+                }
+                .accessibilityHidden(true)
+        case .solid:
+            Image(systemName: identity.symbol)
+                .font(.system(size: (size * 0.5).rounded(), weight: .semibold))
+                .symbolRenderingMode(.monochrome)
+                .foregroundStyle(.white)
+                .frame(width: size, height: size)
+                .background(active ? identity.fill : AnyShapeStyle(AOMColor.paused.opacity(0.55)), in: shape)
+                .overlay {
+                    if contrast == .increased { shape.strokeBorder(AOMColor.strongLine, lineWidth: 1) }
+                }
+                .accessibilityHidden(true)
+        }
     }
 }
 
@@ -183,16 +215,19 @@ extension EnvironmentValues {
     }
 }
 
-/// A row's small symbol, drawn as a System Settings row icon: the glyph in
-/// white on a squircle of the page's hue, or graphite outside a page.
+/// A setting row's symbol (6.0): a neutral glyph in a fixed column. Colour
+/// marks *which tool*; a row inside a tool needs no second colour.
 struct AOMRowIcon: View {
     let symbol: String
     var size: CGFloat = AOMIcon.identityRow
     var active = true
-    @Environment(\.aomPageTab) private var pageTab
 
     var body: some View {
-        let color = pageTab.map { $0.identity.isBrand ? AOMBrand.start : $0.identity.color } ?? AOMBrand.graphite
-        AOMAppIcon(AOMIdentity(symbol: symbol, color: color), size: size, active: active)
+        Image(systemName: symbol)
+            .font(.system(size: (size * 0.7).rounded(), weight: .regular))
+            .symbolRenderingMode(.hierarchical)
+            .foregroundStyle(active ? AOMColor.textSecondary : AOMColor.textTertiary)
+            .frame(width: size, height: size)
+            .accessibilityHidden(true)
     }
 }

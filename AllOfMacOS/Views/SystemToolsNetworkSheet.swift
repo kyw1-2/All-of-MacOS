@@ -25,7 +25,7 @@ struct NetworkInfoSheet: View {
                 Text("Network Info").font(AOMFont.pageStatus)
                 Spacer()
                 Button("Refresh") { refresh() }
-                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction).buttonStyle(AOMPrimaryButtonStyle())
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: AOMSpace.sectionGap) {

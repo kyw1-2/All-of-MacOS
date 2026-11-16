@@ -330,7 +330,7 @@ struct AOMTintedButtonStyle: PrimitiveButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         Button(configuration)
-            .buttonStyle(.bordered)
+            .buttonStyle(AOMSoftButtonStyle())
             .controlSize(height >= 32 ? .large : .regular)
     }
 }

@@ -721,7 +721,7 @@ extension AOMModuleTile where MenuItems == EmptyView {
 struct AOMDestructiveButtonStyle: PrimitiveButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         Button(role: .destructive, action: configuration.trigger) { configuration.label }
-            .buttonStyle(.bordered)
+            .buttonStyle(AOMSoftButtonStyle())
             .foregroundStyle(AOMColor.dangerText)
     }
 }
@@ -835,7 +835,7 @@ struct AOMNotice<Actions: View>: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             HStack(spacing: AOMSpace.x2) { actions }
-                .buttonStyle(.bordered)
+                .buttonStyle(AOMSoftButtonStyle())
                 .controlSize(.small)
                 .fixedSize()
         }

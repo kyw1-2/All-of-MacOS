@@ -48,7 +48,8 @@ struct AOMAutomationRow: View, Equatable {
     var body: some View {
         // Names only: the input glyph and the trailing value say the rest.
         AOMListRow(trigger.displayName, dimmed: !trigger.isEnabled) {
-            AOMModuleBadge(symbol: trigger.input.category.iconName, size: 22, active: trigger.isEnabled)
+            // A neutral input glyph (6.0): the list is about names, not colour.
+            Image(systemName: trigger.input.category.iconName)
                 .help(trigger.input.category.rawValue)
         } trailing: {
             HStack(spacing: AOMSpace.xs) {

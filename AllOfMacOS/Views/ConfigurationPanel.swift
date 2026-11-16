@@ -455,6 +455,7 @@ struct ActionConfigView: View {
     @State private var url: String
     @State private var applicationName: String
     @State private var recordedShortcut: KeyboardShortcut?
+    @State private var showsLabel: Bool
     @EnvironmentObject private var state: AppState
 
     init(keyboardMonitor: KeyboardMonitor, trigger: Trigger, action: TriggerAction) {
@@ -471,25 +472,12 @@ struct ActionConfigView: View {
             _recordedShortcut = State(initialValue: nil)
         }
         _applicationName = State(initialValue: action.parameters.applicationName ?? "")
+        _showsLabel = State(initialValue: !(action.parameters.label ?? "").isEmpty || !(action.parameters.notes ?? "").isEmpty)
     }
 
     var body: some View {
         // Groups inside the step's card, each with a hairline above (e.2).
         VStack(alignment: .leading, spacing: 0) {
-            AOMEditorGroup("Step", detail: action.actionType.rawValue, rows: true) {
-                AOMToggleRow("Enabled", isOn: Binding(get: { action.isEnabled }, set: { value in
-                    saveAction { $0.isEnabled = value }
-                }))
-                AOMSettingRow("Name") {
-                    TextField("Optional action name", text: stringParameter(\.label))
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: AOMEditorSize.rowField)
-                }
-                TextField("Notes", text: stringParameter(\.notes), axis: .vertical).lineLimit(2...4)
-                    .textFieldStyle(.roundedBorder)
-                    .aomRowInset()
-            }
-
             // Action-specific parameters
             switch action.actionType {
             case .triggerNamedTrigger:
@@ -741,75 +729,30 @@ struct ActionConfigView: View {
                 }
 
             case .sendKeyStroke:
-                let monitoring = keyboardMonitor.isMonitoring
                 AOMEditorGroup("Shortcut to send") {
-                    // Display well: the recorded keys as key caps, or the recording state.
-                    Group {
-                        if monitoring {
-                            Label("Recording — press any key…", systemImage: "record.circle")
-                                .font(AOMFont.bodyEmphasis)
-                                .foregroundStyle(AOMColor.dangerText)
-                                .symbolEffect(.pulse, options: .repeating, isActive: monitoring)
-                        } else if let shortcut = recordedShortcut {
-                            AOMShortcutKeys(shortcut: shortcut)
-                        } else {
-                            Text("No shortcut set")
-                                .font(AOMFont.body)
-                                .foregroundStyle(AOMColor.textSecondary)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, minHeight: AOMSize.rowDetail)
-                    .background(monitoring ? AOMTone.recording.wash(increasedContrast: false) : AOMColor.raised,
-                                in: RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous)
-                            .strokeBorder(monitoring ? AOMColor.recording : AOMColor.hairline, lineWidth: monitoring ? 2 : 1)
-                    }
-                    .aomAnimation(.quick, value: monitoring)
-
-                    // Buttons
-                    HStack(spacing: AOMSpace.x3) {
-                        if monitoring {
-                            Button(action: {
-                                keyboardMonitor.stopRecording()
-                            }) {
-                                Label("Stop", systemImage: "stop.fill")
-                                    .frame(minWidth: AOMSize.rowDetail * 2)
-                            }
-                            .aomShortcut(.escape, modifiers: [])
-                            .buttonStyle(.borderedProminent)
-                            .tint(AOMColor.recording)
-                        } else {
-                            Button(action: {
-                                keyboardMonitor.startRecording { shortcut in
-                                    recordedShortcut = shortcut
-                                    saveAction {
-                                        $0.parameters.shortcutKeyCode = shortcut.keyCode
-                                        $0.parameters.shortcutModifiers = shortcut.modifiers.rawValue
-                                    }
-                                }
-                            }) {
-                                Label("Record Shortcut", systemImage: "record.circle")
-                                    .lineLimit(1)
-                                    .fixedSize()
-                            }
-                            .buttonStyle(.bordered)
-                        }
-
-                        if recordedShortcut != nil && !monitoring {
-                            Button(action: {
-                                recordedShortcut = nil
+                    // 6.0: one recorder field (Raycast, System Settings ›
+                    // Keyboard): click to record, keys show as caps, Esc stops,
+                    // × clears.
+                    AOMShortcutRecorderField(
+                        shortcut: recordedShortcut,
+                        recording: keyboardMonitor.isMonitoring,
+                        start: {
+                            keyboardMonitor.startRecording { shortcut in
+                                recordedShortcut = shortcut
                                 saveAction {
-                                    $0.parameters.shortcutKeyCode = nil
-                                    $0.parameters.shortcutModifiers = nil
+                                    $0.parameters.shortcutKeyCode = shortcut.keyCode
+                                    $0.parameters.shortcutModifiers = shortcut.modifiers.rawValue
                                 }
-                            }) {
-                                Label("Clear", systemImage: "xmark.circle")
                             }
-                            .buttonStyle(.borderless)
-                            .foregroundStyle(AOMColor.dangerText)
-                        }
-                    }
+                        },
+                        stop: { keyboardMonitor.stopRecording() },
+                        clear: {
+                            recordedShortcut = nil
+                            saveAction {
+                                $0.parameters.shortcutKeyCode = nil
+                                $0.parameters.shortcutModifiers = nil
+                            }
+                        })
                 }
                 AOMEditorGroup("Target app", help: "A named app must already be running. Delivery uses its process ID; app support for background shortcuts varies.") {
                     TextField("Target app bundle ID (empty = focused app)", text: stringParameter(\.targetApplicationBundleID))
@@ -824,6 +767,17 @@ struct ActionConfigView: View {
                         AOMEditorNote(action.actionType.description)
                     }
                 }
+            }
+
+            // 6.0: the step's own name and note fold away (the switch moved to
+            // the step's header); open when either has text.
+            AOMEditorGroup("Name and note",
+                           detail: (action.parameters.label ?? "").isEmpty ? "Optional" : (action.parameters.label ?? ""),
+                           isExpanded: $showsLabel) {
+                TextField("Name shown in the list", text: stringParameter(\.label))
+                    .textFieldStyle(.roundedBorder)
+                TextField("Note", text: stringParameter(\.notes), axis: .vertical).lineLimit(2...4)
+                    .textFieldStyle(.roundedBorder)
             }
 
             if action.actionType.isDestructive {
@@ -879,7 +833,7 @@ struct ActionConfigView: View {
                 Label("Test Action", systemImage: "play.fill")
                     .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(AOMPrimaryButtonStyle())
             .padding(AOMSpace.x3)
             .overlay(alignment: .top) { AOMRowDivider(inset: 0, trailingInset: 0) }
 

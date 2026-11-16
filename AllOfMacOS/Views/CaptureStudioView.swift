@@ -295,7 +295,7 @@ struct CaptureStudioView: View {
                 } label: {
                     Label("Open & Annotate…", systemImage: "pencil.and.outline")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(AOMSoftButtonStyle())
                 .controlSize(.small)
                 .help("Open an image file or annotation project to mark up")
 
@@ -304,7 +304,7 @@ struct CaptureStudioView: View {
                 } label: {
                     Label("History Overlay", systemImage: "clock.arrow.circlepath")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(AOMSoftButtonStyle())
                 .controlSize(.small)
                 .help("Open the floating capture history window")
 
@@ -314,7 +314,7 @@ struct CaptureStudioView: View {
                 } label: {
                     Label("Toggle Desktop Icons", systemImage: "menubar.dock.rectangle")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(AOMSoftButtonStyle())
                 .controlSize(.small)
                 .help("Hide or show Finder desktop icons for clean screenshots")
 
@@ -332,7 +332,7 @@ struct CaptureStudioView: View {
                 } label: {
                     Label("Capture Settings…", systemImage: "slider.horizontal.3")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(AOMSoftButtonStyle())
                 .controlSize(.small)
                 .help("Format, save folder, recording FPS, audio & Quick Access options")
         }
@@ -403,7 +403,7 @@ struct CaptureStudioView: View {
             } label: {
                 Label("Stop", systemImage: "stop.fill")
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(AOMPrimaryButtonStyle())
             .tint(AOMColor.recording)
         }
         .aomCard()
@@ -461,7 +461,7 @@ struct CaptureStudioView: View {
             AOMEmptyState("No Captures Yet", systemImage: "camera.badge.ellipsis",
                           message: "Screenshots and recordings you take appear here, ready to annotate, pin, copy or reopen.") {
                 Button("Capture Area") { CaptureCoordinator.shared.captureArea() }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(AOMPrimaryButtonStyle())
             }
             .frame(minHeight: CaptureGalleryMetrics.emptyMinHeight)
         } else {
@@ -785,7 +785,7 @@ struct ModuleSettingsSheet<Content: View>: View {
                     .accessibilityAddTraits(.isHeader)
                 Spacer(minLength: AOMSpace.x2)
                 Button("Done", action: done)
-                    .keyboardShortcut(.defaultAction)
+                    .keyboardShortcut(.defaultAction).buttonStyle(AOMPrimaryButtonStyle())
             }
             .padding(.horizontal, AOMSpace.x4)
             .padding(.vertical, AOMSpace.x3)

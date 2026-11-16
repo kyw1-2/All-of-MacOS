@@ -72,11 +72,6 @@ struct AOMFeatureDirectory: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: AOMSpace.x4) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("Explore your tools").font(AOMFont.pageTitle).accessibilityAddTraits(.isHeader)
-                Spacer()
-                Text("11 tools · one workspace").font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
-            }
             HStack(spacing: AOMSpace.x2) {
                 Image(systemName: "magnifyingglass").foregroundStyle(AOMColor.textSecondary)
                 TextField("Find a tool or task — try OCR, volume, or 창 배치", text: $query)
@@ -90,11 +85,12 @@ struct AOMFeatureDirectory: View {
                         .buttonStyle(.plain).accessibilityLabel("Clear tool search")
                 } else { AOMKeycap(text: "⌘F") }
             }
-            .padding(AOMSpace.x3)
-            .background(AOMColor.surface, in: RoundedRectangle(cornerRadius: AOMRadius.card))
+            .padding(.horizontal, AOMSpace.x3)
+            .frame(height: 34)
+            .background(AOMColor.surface, in: RoundedRectangle(cornerRadius: AOMRadius.well + 2, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: AOMRadius.card)
-                    .strokeBorder(searchFocused ? AOMColor.accent : AOMColor.hairline, lineWidth: 1)
+                RoundedRectangle(cornerRadius: AOMRadius.well + 2, style: .continuous)
+                    .strokeBorder(searchFocused ? AOMColor.accent : AOMColor.hairline, lineWidth: searchFocused ? 1.5 : 0.5)
             }
             ScrollView(.horizontal) {
                 HStack(spacing: AOMSpace.x2) {
@@ -111,10 +107,15 @@ struct AOMFeatureDirectory: View {
                     Button("Show All Tools") { query = ""; group = nil }
                 }
             } else {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: AOMSize.directoryTileMin), spacing: AOMSpace.x3)],
-                          alignment: .leading, spacing: AOMSpace.x3) {
+                // 6.0: one grouped list in two columns (System Settings,
+                // Raycast Store) instead of a grid of hue-washed cards.
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: AOMSpace.x1),
+                                    GridItem(.flexible(), spacing: AOMSpace.x1)],
+                          alignment: .leading, spacing: AOMSpace.x1) {
                     ForEach(results) { tab in AOMFeatureCard(tab: tab) { appState.selectedMainTab = tab } }
                 }
+                .padding(AOMSpace.x1 + AOMSpace.x0_5)
+                .aomCard(padding: 0)
                 if !settings.isEmpty {
                     AOMSection("Matching settings") {
                         ForEach(settings) { category in
@@ -149,11 +150,21 @@ struct AOMFeatureDirectory: View {
         }
     }
     private func scopeButton(_ title: String, value: AOMFeatureGroup?) -> some View {
+        // 6.0: a segmented row of words — the selected one on a raised
+        // plate, the rest plain (Linear's view tabs).
         Button { group = value } label: {
-            Text(title).font(AOMFont.callout)
-                .padding(.horizontal, AOMSpace.x3).padding(.vertical, AOMSpace.x2)
-                .foregroundStyle(group == value ? AOMColor.accent : AOMColor.textSecondary)
-                .background(group == value ? AOMColor.accent.opacity(0.12) : AOMColor.surface, in: Capsule())
+            Text(title).font(AOMFont.callout.weight(group == value ? .semibold : .regular))
+                .padding(.horizontal, AOMSpace.x2 + AOMSpace.x0_5).frame(height: 26)
+                .foregroundStyle(group == value ? AOMColor.text : AOMColor.textSecondary)
+                .background(group == value ? AOMColor.surface : Color.clear,
+                            in: RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous))
+                .overlay {
+                    if group == value {
+                        RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous)
+                            .strokeBorder(AOMColor.hairline, lineWidth: 0.5)
+                    }
+                }
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain).accessibilityAddTraits(group == value ? .isSelected : [])
     }
@@ -163,42 +174,32 @@ private struct AOMFeatureCard: View {
     let tab: AOMMainTab
     let action: () -> Void
     @State private var hovering = false
-    @Environment(\.colorSchemeContrast) private var contrast
     var body: some View {
         Button(action: action) {
-            VStack(alignment: .leading, spacing: AOMSpace.x2) {
-                HStack(spacing: AOMSpace.x3) {
-                    AOMAppIcon(tab, size: AOMIcon.identityCard)
-                    Text(tab.title).font(AOMFont.title).foregroundStyle(AOMColor.text)
-                    Spacer(minLength: 0)
-                    Image(systemName: "arrow.right")
-                        .font(AOMFont.caption.weight(.semibold))
-                        .foregroundStyle(hovering ? tab.identity.color : AOMColor.textTertiary)
-                        .offset(x: hovering ? 2 : 0)
+            HStack(spacing: AOMSpace.x3) {
+                AOMAppIcon(tab, size: AOMIcon.identityCard)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(tab.title).font(AOMFont.headline).foregroundStyle(AOMColor.text).lineLimit(1)
+                    Text(tab.subtitle).font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
+                        .lineLimit(1).truncationMode(.tail)
                 }
-                Text(tab.subtitle).font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
-                    .lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
-                    .frame(minHeight: AOMSize.rowStandard, alignment: .top)
-            }
-            .padding(AOMSpace.x4).frame(maxWidth: .infinity, alignment: .leading)
-            .background {
-                // A wash of the tool's hue from the top-leading corner: the
-                // card says which tool it is before its name is read.
-                ZStack {
-                    AOMColor.surface
-                    LinearGradient(colors: [tab.identity.color.opacity(hovering ? 0.14 : 0.07), .clear],
-                                   startPoint: .topLeading, endPoint: .center)
+                Spacer(minLength: AOMSpace.x2)
+                if let key = tab.shortcutKey {
+                    Text("⌘\(String(key.character))")
+                        .font(AOMFont.caption.monospacedDigit())
+                        .foregroundStyle(AOMColor.textTertiary)
+                        .opacity(hovering ? 1 : 0)
                 }
-                .clipShape(RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous))
+                Image(systemName: "chevron.right")
+                    .font(AOMFont.caption.weight(.semibold))
+                    .foregroundStyle(hovering ? AOMColor.textSecondary : AOMColor.textTertiary)
             }
-            .overlay {
-                RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous)
-                    .strokeBorder(hovering ? tab.identity.color.opacity(0.55)
-                                  : (contrast == .increased ? AOMColor.strongLine : AOMColor.hairline),
-                                  lineWidth: hovering ? 1 : 0.5)
-            }
-            .aomElevation(.raised, enabled: hovering)
-            .contentShape(RoundedRectangle(cornerRadius: AOMRadius.card))
+            .padding(.horizontal, AOMSpace.x2 + AOMSpace.x0_5)
+            .frame(height: 50)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(hovering ? AOMColor.rowHover : Color.clear,
+                        in: RoundedRectangle(cornerRadius: AOMRadius.well + 2, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: AOMRadius.well + 2, style: .continuous))
         }
         .buttonStyle(.plain).onHover { hovering = $0 }.aomAnimation(.quick, value: hovering)
         .accessibilityLabel("Open \(tab.title)").accessibilityHint(tab.subtitle).help(tab.subtitle)

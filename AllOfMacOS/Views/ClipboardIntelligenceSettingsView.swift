@@ -126,7 +126,7 @@ private struct ClipboardMCPConnectSheet: View {
                         copied = true
                     }
                     Spacer()
-                    Button("Done") { done() }.keyboardShortcut(.defaultAction)
+                    Button("Done") { done() }.keyboardShortcut(.defaultAction).buttonStyle(AOMPrimaryButtonStyle())
                 }
             } else {
                 TextField("Name (e.g. My AI Tool)", text: $request.name).textFieldStyle(.roundedBorder)
@@ -143,7 +143,7 @@ private struct ClipboardMCPConnectSheet: View {
                         } catch {
                             connectError = error.localizedDescription
                         }
-                    }.keyboardShortcut(.defaultAction)
+                    }.keyboardShortcut(.defaultAction).buttonStyle(AOMPrimaryButtonStyle())
                 }
             }
         }

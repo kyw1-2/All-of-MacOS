@@ -1082,11 +1082,11 @@ struct ClipboardPanelView: View {
                 }
                 ForEach(filterSuggestions, id: \.self) { token in
                     Button("+ " + token) { state.query = ClipboardSearchQuery.inserting(token: token, into: state.query); state.searchFocusToken = UUID() }
-                        .buttonStyle(.bordered).controlSize(.mini)
+                        .buttonStyle(AOMSoftButtonStyle()).controlSize(.mini)
                 }
                 if state.query.isEmpty {
                     ForEach(state.recentSearches.prefix(3), id: \.self) { query in
-                        Button(query) { state.query = query }.buttonStyle(.bordered).controlSize(.mini)
+                        Button(query) { state.query = query }.buttonStyle(AOMSoftButtonStyle()).controlSize(.mini)
                     }
                 }
             }.padding(.horizontal, AOMSpace.x6).padding(.bottom, AOMSpace.x1 + AOMSpace.x0_5)
@@ -1535,10 +1535,10 @@ struct ClipboardPanelView: View {
                         if !store.isLoading && !isFiltering && state.board == nil {
                             if store.storageStatus != .ok {
                                 Button("Open Clipboard Settings…") { controller.openSettings() }
-                                    .buttonStyle(.bordered).controlSize(.small)
+                                    .buttonStyle(AOMSoftButtonStyle()).controlSize(.small)
                             } else if store.paused {
                                 Button("Resume") { controller.togglePause() }
-                                    .buttonStyle(.bordered).controlSize(.small)
+                                    .buttonStyle(AOMSoftButtonStyle()).controlSize(.small)
                             }
                         }
                     }

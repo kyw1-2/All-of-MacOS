@@ -148,7 +148,7 @@ private struct FloatingMenuView: View {
                             .font(AOMFont.body)
                             .frame(maxWidth: .infinity, minHeight: AOMSize.rowDetail - AOMSpace.x1)
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(AOMSoftButtonStyle())
                     .help(item.title)
                     }
                 }
@@ -285,7 +285,7 @@ struct FloatingMenuEditor: View {
                     Button("Show") { if save() { FloatingMenuController.shared.show(draft.id.uuidString) } }
                         .help("Save and show this menu over the current app")
                     Button("Save") { if save() { toast.show("Saved “\(draft.name)”") } }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(AOMPrimaryButtonStyle())
                         .keyboardShortcut("s", modifiers: .command)
                         .disabled(!isEdited)
                         .help("Save (⌘S)")

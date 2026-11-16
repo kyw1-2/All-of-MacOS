@@ -220,7 +220,7 @@ struct FilesPage: View {
             }
             ForEach(Array(settings.favorites.enumerated()), id: \.element) { index, path in
                 // A path added since the last refresh is read once here.
-                FilesFavoriteRow(path: path, info: favoriteInfo[path] ?? FilesPathInfo(path),
+                FilesFavoriteRow(path: path, info: favoriteInfo[path] ?? FilesPathInfo(placeholder: path),
                                  index: index, count: settings.favorites.count,
                                  shortcut: settings.favoriteShortcuts && index < 9 ? "⌘⌥\(index + 1)" : nil,
                                  move: { settings.moveFavorite(from: index, to: $0) },

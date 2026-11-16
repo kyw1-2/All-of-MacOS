@@ -325,16 +325,16 @@ struct AOMHomeView: View {
             Button { appState.toggleGlobalEnabled() } label: {
                 Label("Pause AOM", systemImage: "pause.fill")
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(AOMSoftButtonStyle())
             .help("Pause every gesture, shortcut, snap and clipboard capture")
         case .paused:
             Button(action: resumeAOM) {
                 Label("Resume", systemImage: "play.fill")
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(AOMPrimaryButtonStyle())
         case .blocked(let permission, _):
             Button("Allow \(permission.shortTitle)…") { _ = permission.openSettings() }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(AOMPrimaryButtonStyle())
         }
     }
 
@@ -353,7 +353,7 @@ struct AOMHomeView: View {
                 .foregroundStyle(AOMColor.textSecondary)
             Spacer(minLength: AOMSpace.x2)
             Button(recording.isPaused ? "Resume" : "Pause") { recording.togglePause() }
-                .buttonStyle(.bordered)
+                .buttonStyle(AOMSoftButtonStyle())
             Button {
                 Task {
                     _ = try? await recording.stopRecording()
@@ -362,7 +362,7 @@ struct AOMHomeView: View {
             } label: {
                 Label("Stop", systemImage: "stop.fill")
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(AOMPrimaryButtonStyle())
             .tint(AOMColor.recording)
         }
         .padding(.horizontal, AOMSpace.x2)
@@ -577,7 +577,7 @@ struct AOMHomeView: View {
                           active: !globalPaused && enabled > 0,
                           open: { appState.selectedMainTab = .gestures }) {
                 if triggers.isEmpty {
-                    Button("Create…", action: newAutomation).buttonStyle(.bordered)
+                    Button("Create…", action: newAutomation).buttonStyle(AOMSoftButtonStyle())
                 } else {
                     WorkspaceTileChevron()
                 }
@@ -624,18 +624,18 @@ struct AOMHomeView: View {
                         Task { _ = try? await recording.stopRecording(); toast.show("Recording saved") }
                     } label: { Label("Stop Recording", systemImage: "stop.fill") }
                         .labelStyle(.iconOnly)
-                        .buttonStyle(.bordered)
+                        .buttonStyle(AOMSoftButtonStyle())
                         .help("Stop Recording")
                 } else if needsSetup {
                     Button("Set Up…") { _ = AOMPermission.screenRecording.openSettings() }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(AOMSoftButtonStyle())
                         .help("Allow Screen Recording in System Settings")
                 } else {
                     Button { CaptureCoordinator.shared.captureArea() } label: {
                         Label("Capture Area", systemImage: "viewfinder")
                     }
                     .labelStyle(.iconOnly)
-                    .buttonStyle(.bordered)
+                    .buttonStyle(AOMSoftButtonStyle())
                     .help("Capture Area" + (captureKeys(.captureArea).map { " (\($0))" } ?? ""))
                 }
             } menu: {
@@ -738,10 +738,11 @@ struct AOMHomeView: View {
             if kinds.isEmpty && pinned.isEmpty {
                 hiddenTilesRow("Every quick action is hidden.")
             } else {
-                // Round buttons straight on the glass, Control Center style.
+                // 6.0: command tiles in one grouped card (Raycast's
+                // quicklinks): mark, name and shortcut on one line each.
                 AOMGlassGroup {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: AOMSize.quickActionCell), spacing: AOMSpace.x2, alignment: .top)],
-                          alignment: .leading, spacing: AOMSpace.x4) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 196), spacing: AOMSpace.x1, alignment: .top)],
+                          alignment: .leading, spacing: AOMSpace.x1) {
                     ForEach(kinds) { kind in
                         quickActionTile(kind)
                     }
@@ -762,6 +763,8 @@ struct AOMHomeView: View {
                         }
                     }
                 }
+                .padding(AOMSpace.x1 + AOMSpace.x0_5)
+                .aomCard(padding: 0)
                 }
             }
         }
@@ -1099,29 +1102,26 @@ enum AOMWorkspaceGreeting {
     }
 }
 
-/// The top of Workspace (5.0): the brand mark on a wash of the brand
-/// gradient, a greeting for the time of day and one line of state — the
-/// welcome band of Raycast's and Arc's home views, kept to one row.
+/// The top of Workspace (6.0): the page's name and one line of state,
+/// left-aligned like Things' and Linear's view titles. The 5.0 banner (a
+/// brand-gradient wash and a time-of-day greeting) read as decoration.
 private struct WorkspaceBanner<Trailing: View>: View {
     let engineOn: Bool
     let automations: Int
     @ViewBuilder var trailing: Trailing
-    @Environment(\.colorScheme) private var scheme
-    @Environment(\.colorSchemeContrast) private var contrast
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: AOMRadius.panel, style: .continuous)
         HStack(alignment: .center, spacing: AOMSpace.x4) {
-            AOMAppIcon(AOMMainTab.home.identity, size: AOMIcon.identityHero, active: engineOn)
             VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
-                Text(AOMWorkspaceGreeting.text()).font(AOMFont.workspaceTitle).foregroundStyle(AOMColor.text)
+                Text("Workspace")
+                    .font(AOMFont.workspaceTitle)
+                    .foregroundStyle(AOMColor.text)
+                    .accessibilityAddTraits(.isHeader)
                 HStack(spacing: AOMSpace.x1 + AOMSpace.x0_5) {
                     Circle().fill(engineOn ? AOMColor.success : AOMColor.paused)
                         .frame(width: AOMIcon.dot, height: AOMIcon.dot)
-                    Text(engineOn ? "AOM is running" : "AOM is paused")
-                    Text("·")
-                    Text("\(AOMFeatureGroup.allCases.flatMap(\.tabs).count) tools")
-                    Text("·")
+                    Text(engineOn ? "Running" : "Paused")
+                    Text("·").foregroundStyle(AOMColor.textTertiary)
                     Text(automations == 1 ? "1 automation on" : "\(automations) automations on")
                 }
                 .font(AOMFont.callout)
@@ -1131,21 +1131,7 @@ private struct WorkspaceBanner<Trailing: View>: View {
             Spacer(minLength: AOMSpace.x3)
             trailing
         }
-        .padding(.horizontal, AOMSpace.x5)
-        .padding(.vertical, AOMSpace.x4)
-        .background {
-            ZStack {
-                AOMColor.surface
-                LinearGradient(colors: [AOMBrand.start.opacity(scheme == .dark ? 0.26 : 0.14),
-                                        AOMBrand.end.opacity(scheme == .dark ? 0.16 : 0.08), .clear],
-                               startPoint: .topLeading, endPoint: .bottomTrailing)
-            }
-            .clipShape(shape)
-        }
-        .overlay {
-            shape.strokeBorder(contrast == .increased ? AOMColor.strongLine : AOMColor.hairline,
-                               lineWidth: contrast == .increased ? 1 : 0.5)
-        }
+        .padding(.horizontal, AOMSpace.rowInset)
         .accessibilityElement(children: .contain)
     }
 }
@@ -1395,16 +1381,16 @@ private struct WorkspaceSetupCard: View {
             Spacer(minLength: AOMSpace.x2)
             if let next, !expanded {
                 if prominentNext {
-                    Button(next.actionTitle, action: next.action).buttonStyle(.borderedProminent).help(next.detail)
+                    Button(next.actionTitle, action: next.action).buttonStyle(AOMPrimaryButtonStyle()).help(next.detail)
                 } else {
-                    Button(next.actionTitle, action: next.action).buttonStyle(.bordered).help(next.detail)
+                    Button(next.actionTitle, action: next.action).buttonStyle(AOMSoftButtonStyle()).help(next.detail)
                 }
             }
             Button("Show the Tour", action: tour)
                 .buttonStyle(.link)
                 .help("A short tour of the main window. Help › Show Welcome Again opens it later.")
             Button("Skip", action: skip)
-                .buttonStyle(.bordered)
+                .buttonStyle(AOMSoftButtonStyle())
                 .help("Hide setup. Help › Show Welcome Again opens the tour.")
             AOMCardLink(expanded ? "Hide Steps" : "Show Steps", symbol: expanded ? "chevron.up" : "chevron.down") {
                 withAnimation(AOMMotion.standard) { expanded.toggle() }
@@ -1455,9 +1441,9 @@ private struct WorkspaceSetupStep: View {
                     .foregroundStyle(AOMColor.successText)
                     .frame(minHeight: AOMIcon.hitArea - AOMSpace.x0_5)
             } else if isNext && prominent {
-                Button(item.actionTitle, action: item.action).buttonStyle(.borderedProminent)
+                Button(item.actionTitle, action: item.action).buttonStyle(AOMPrimaryButtonStyle())
             } else {
-                Button(item.actionTitle, action: item.action).buttonStyle(.bordered)
+                Button(item.actionTitle, action: item.action).buttonStyle(AOMSoftButtonStyle())
             }
         }
         .padding(AOMSpace.cardPadding)
@@ -1597,7 +1583,7 @@ private struct WorkspaceAttentionRow: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Button(item.actionTitle, action: item.action)
-                .buttonStyle(.bordered)
+                .buttonStyle(AOMSoftButtonStyle())
             if item.kind == .suggestion {
                 Button(action: dismiss) {
                     Image(systemName: "xmark")
@@ -1678,25 +1664,32 @@ private struct WorkspaceQuickAction: View {
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: AOMSpace.x1 + AOMSpace.x0_5) {
+            HStack(spacing: AOMSpace.x2 + AOMSpace.x0_5) {
                 badge
                 Text(title)
-                    .font(AOMFont.caption.weight(.medium))
+                    .font(AOMFont.body.weight(.medium))
                     .foregroundStyle(active ? AOMColor.text : AOMColor.textSecondary)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: AOMSpace.x1)
                 if let keys {
                     Text(keys)
-                        .font(AOMFont.badge)
+                        .font(AOMFont.caption.monospacedDigit())
                         .foregroundStyle(AOMColor.textTertiary)
                         .lineLimit(1)
+                        .fixedSize()
                 }
             }
-            .frame(maxWidth: .infinity)
-            .contentShape(Rectangle())
+            .padding(.horizontal, AOMSpace.x2 + AOMSpace.x0_5)
+            .frame(height: 44)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(hovering && active ? AOMColor.rowHover : Color.clear,
+                        in: RoundedRectangle(cornerRadius: AOMRadius.well + 2, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: AOMRadius.well + 2, style: .continuous))
         }
         .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .aomAnimation(.quick, value: hovering)
         .help(help.map { keys == nil ? $0 : "\($0) (\(keys!))" } ?? (keys.map { "\(title) (\($0))" } ?? title))
         .accessibilityLabel(title)
         .accessibilityHint(keys.map { "Shortcut \($0)" } ?? "")
@@ -1710,16 +1703,13 @@ private struct WorkspaceQuickAction: View {
         ZStack {
             if running {
                 ProgressView().controlSize(.small)
-                    .frame(width: AOMSize.quickActionButton, height: AOMSize.quickActionButton)
             } else {
                 AOMAppIcon(AOMIdentity(symbol: symbol, color: live ? AOMColor.recording : tint),
-                           size: AOMSize.quickActionButton, active: active)
+                           size: 28, active: active)
                     .symbolEffect(.pulse, options: .repeating, isActive: live && !reduceMotion)
-                    .scaleEffect(hovering && active ? 1.06 : 1)
             }
         }
-        .onHover { hovering = $0 }
-        .aomAnimation(.quick, value: hovering)
+        .frame(width: 28, height: 28)
     }
 }
 

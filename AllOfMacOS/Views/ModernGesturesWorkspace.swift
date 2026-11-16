@@ -173,6 +173,9 @@ struct ModernGesturesWorkspace: View {
             applyPreviewEditorHook()
         }
         .aomPageDeleteCommand { if let trigger = selectedTrigger { delete(trigger) } }
+        // 6.0: the selected automation and what can be done to it, in the
+        // action bar (Test ⌘↩ is the primary).
+        .aomBarContext(id: BarContextKey(trigger: selectedTrigger)) { barContext() }
     }
 
     @ToolbarContentBuilder private var toolbarContent: some ToolbarContent {
@@ -410,6 +413,44 @@ struct ModernGesturesWorkspace: View {
         Button("Delete", role: .destructive) { delete(trigger) }
     }
 
+    private struct BarContextKey: Equatable {
+        var id: UUID?
+        var enabled = false
+        var favorite = false
+        var runnable = false
+        var name = ""
+        init(trigger: Trigger?) {
+            id = trigger?.id
+            enabled = trigger?.isEnabled ?? false
+            favorite = trigger?.isFavorite ?? false
+            runnable = trigger.map { !$0.actions.isEmpty && ActionTree.problem($0.actions) == nil } ?? false
+            name = trigger?.displayName ?? ""
+        }
+    }
+
+    private func barContext() -> AOMBarContext? {
+        guard let trigger = selectedTrigger else { return nil }
+        let hue = AOMModule.automation.hue
+        var actions: [AOMBarAction] = []
+        if !trigger.actions.isEmpty, ActionTree.problem(trigger.actions) == nil {
+            actions.append(AOMBarAction(id: "auto.test", title: "Test", identity: AOMIdentity(symbol: "play.fill", color: hue),
+                                        run: { test(trigger) }, key: SwiftUI.KeyboardShortcut(.return, modifiers: .command)))
+        }
+        actions.append(AOMBarAction(id: "auto.toggle", title: trigger.isEnabled ? "Turn Off" : "Turn On",
+                                    identity: AOMIdentity(symbol: trigger.isEnabled ? "pause.fill" : "play.circle", color: hue),
+                                    run: { appState.toggleTrigger(trigger) }))
+        actions.append(AOMBarAction(id: "auto.duplicate", title: "Duplicate",
+                                    identity: AOMIdentity(symbol: "plus.square.on.square", color: hue),
+                                    run: { duplicate(trigger) }))
+        actions.append(AOMBarAction(id: "auto.pin", title: trigger.isFavorite ? "Unpin from Workspace" : "Pin to Workspace",
+                                    identity: AOMIdentity(symbol: trigger.isFavorite ? "pin.slash" : "pin", color: hue),
+                                    run: { appState.toggleFavorite(trigger) }))
+        actions.append(AOMBarAction(id: "auto.delete", title: "Delete",
+                                    identity: AOMIdentity(symbol: "trash", color: AOMColor.danger),
+                                    shortcut: "⌫", run: { delete(trigger) }))
+        return AOMBarContext(title: trigger.displayName, actions: actions)
+    }
+
     private func duplicate(_ trigger: Trigger) {
         let copy = TriggerClipboard.duplicate(trigger)
         appState.addTrigger(copy)
@@ -531,6 +572,11 @@ struct ModernGesturesWorkspace: View {
     /// edge; the name truncates first.
     private func editorHeader(_ trigger: Trigger) -> some View {
         HStack(spacing: AOMSpace.x3) {
+            // 6.0: the input's mark and a summary line under the name, so the
+            // header says what this automation is before any section is read.
+            AOMAppIcon(AOMIdentity(symbol: trigger.input.category.iconName, color: AOMModule.automation.hue),
+                       size: 36, active: trigger.isEnabled)
+            VStack(alignment: .leading, spacing: 1) {
             HStack(spacing: AOMSpace.x1) {
                 if editingName {
                     TextField("Name", text: Binding(
@@ -569,24 +615,40 @@ struct ModernGesturesWorkspace: View {
                 .help("Pin, duplicate or delete")
                 .accessibilityLabel("More for \(trigger.displayName)")
             }
+            Text(editorSummary(trigger))
+                .font(AOMFont.callout)
+                .foregroundStyle(AOMColor.textSecondary)
+                .lineLimit(1)
+            }
             .layoutPriority(1)
             Spacer(minLength: AOMSpace.x2)
-            HStack(spacing: AOMSpace.x1) {
-                Text("Applies to").font(AOMFont.body).foregroundStyle(AOMColor.textSecondary)
-                appScopePicker(trigger)
-            }
+            appScopePicker(trigger)
+                .controlSize(.regular)
             Toggle("Enabled", isOn: Binding(get: { trigger.isEnabled },
                                             set: { appState.setTriggerEnabled($0, triggerID: trigger.id) }))
                 .toggleStyle(.switch)
+                .labelsHidden()
                 .fixedSize()
+                .help(trigger.isEnabled ? "Turn this automation off" : "Turn this automation on")
         }
-        .frame(minHeight: AOMSize.rowStandard)
+        .padding(.bottom, AOMSpace.x1)
+        .frame(minHeight: AOMSize.rowDetail)
+    }
+
+    /// "Trackpad · 2 steps · On" under the editor's title.
+    private func editorSummary(_ trigger: Trigger) -> String {
+        let steps = trigger.actions.count
+        var parts = [trigger.input.category.rawValue,
+                     steps == 1 ? "1 step" : "\(steps) steps"]
+        parts.append(trigger.isEnabled ? "On" : "Off")
+        if trigger.isFavorite { parts.append("Pinned") }
+        return parts.joined(separator: " · ")
     }
 
     /// Where this automation works. Changing it moves the list's scope along,
     /// so the automation stays selected.
     private func appScopePicker(_ trigger: Trigger) -> some View {
-        Picker("Applies to", selection: Binding<String>(
+        Picker(selection: Binding<String>(
             get: {
                 if let id = trigger.activationGroupID { return "group:" + id.uuidString }
                 return trigger.appBundleID.flatMap { $0.isEmpty ? nil : "app:" + $0 } ?? "global"
@@ -614,6 +676,8 @@ struct ModernGesturesWorkspace: View {
             ForEach(appState.currentPreset.activationGroups) { group in
                 Text("Group: " + group.name).tag("group:" + group.id.uuidString)
             }
+        } label: {
+            Label("Applies to", systemImage: "app.badge")
         }
         .labelsHidden()
         .pickerStyle(.menu)

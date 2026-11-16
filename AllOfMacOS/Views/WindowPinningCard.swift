@@ -22,7 +22,7 @@ struct WindowPinningCard: View {
                     HStack(spacing: AOMSpace.x2) { chooseButton; selectButton }
                     VStack(alignment: .leading, spacing: AOMSpace.x2) { chooseButton; selectButton }
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(AOMSoftButtonStyle())
                 .disabled(service.isChoosingWindow)
                 if let error = service.lastError {
                     Text(error).font(AOMFont.caption).foregroundStyle(AOMColor.dangerText).textSelection(.enabled)
@@ -96,7 +96,7 @@ private struct WindowPinningOptionsView: View {
                     .foregroundStyle(AOMColor.text)
                     .accessibilityAddTraits(.isHeader)
                 Spacer()
-                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction).buttonStyle(AOMPrimaryButtonStyle())
             }
             .padding(.horizontal, AOMSpace.x4)
             .padding(.vertical, AOMSpace.x3)

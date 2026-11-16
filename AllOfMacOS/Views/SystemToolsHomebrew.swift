@@ -454,7 +454,7 @@ struct HomebrewSheet: View {
             }
             .disabled(model.isBusy || model.brew == nil)
             Button("Done") { dismiss() }
-                .keyboardShortcut(.defaultAction)
+                .keyboardShortcut(.defaultAction).buttonStyle(AOMPrimaryButtonStyle())
         }
     }
 

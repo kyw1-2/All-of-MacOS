@@ -55,7 +55,7 @@ struct ActivationGroupsEditor: View {
             AOMDivider()
             HStack {
                 Spacer()
-                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction).buttonStyle(AOMPrimaryButtonStyle())
             }
             .padding(AOMSpace.x3)
         }

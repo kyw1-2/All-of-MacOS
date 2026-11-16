@@ -172,7 +172,7 @@ struct BrowseActionsSheet: View {
             Button(commitTitle) {
                 if let selection { commit(selection) }
             }
-            .keyboardShortcut(.defaultAction)
+            .keyboardShortcut(.defaultAction).buttonStyle(AOMPrimaryButtonStyle())
             .disabled(selection == nil)
         }
         .padding(.horizontal, AOMSpace.x5)

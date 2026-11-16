@@ -1052,7 +1052,7 @@ private struct EqualizerSheet: View {
                 .controlSize(.small).fixedSize()
                 Button("Flat") { preset = "Flat" }.controlSize(.small)
                     .help("Set every band to 0 dB")
-                Button("Done", action: onDone).keyboardShortcut(.defaultAction).aomPrimaryButton()
+                Button("Done", action: onDone).keyboardShortcut(.defaultAction).buttonStyle(AOMPrimaryButtonStyle()).aomPrimaryButton()
             }
             AudioEqualizerControls(gains: gains, enabled: enabled, onChange: onBand)
             Text("Boosted bands lower the overall level first so loud passages stay clean; Magic Boost restores loudness.")

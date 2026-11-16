@@ -420,17 +420,17 @@ struct CleanupReviewContent: View {
                         Button("Move \(selected.count) to Trash", role: .destructive) { trash() }
                             .disabled(selected.isEmpty)
                         Button("Cancel", role: .cancel, action: onCancel)
-                            .keyboardShortcut(.defaultAction)
+                            .keyboardShortcut(.defaultAction).buttonStyle(AOMPrimaryButtonStyle())
                     } else {
                         Button("Cancel", role: .cancel, action: onCancel).keyboardShortcut(.cancelAction)
                         Button("Move \(selected.count) to Trash") { trash() }
-                            .keyboardShortcut(.defaultAction)
+                            .keyboardShortcut(.defaultAction).buttonStyle(AOMPrimaryButtonStyle())
                             .disabled(selected.isEmpty)
                     }
                 } else {
                     Text("\(review.candidates.count) items").font(AOMFont.caption.monospacedDigit()).foregroundStyle(AOMColor.textSecondary)
                     Spacer()
-                    Button("Done", action: onCancel).keyboardShortcut(.defaultAction)
+                    Button("Done", action: onCancel).keyboardShortcut(.defaultAction).buttonStyle(AOMPrimaryButtonStyle())
                 }
             }
             .controlSize(.regular)
@@ -486,7 +486,7 @@ struct ProcessReviewSheet: View {
                 Text("Quit asks the process to stop (SIGTERM). Processes of other users can't be stopped from here.")
                     .font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
                 Spacer()
-                Button("Done", action: onClose).keyboardShortcut(.defaultAction)
+                Button("Done", action: onClose).keyboardShortcut(.defaultAction).buttonStyle(AOMPrimaryButtonStyle())
             }
             .controlSize(.regular)
         }

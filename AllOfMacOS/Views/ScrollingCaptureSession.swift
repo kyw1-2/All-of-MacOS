@@ -195,7 +195,7 @@ private struct ScrollSessionView: View {
                 Button("Cancel", action: session.cancel)
                 Spacer()
                 Button(session.paused ? "Resume" : "Pause") { session.paused.toggle() }
-                Button("Finish", action: session.finish).buttonStyle(.borderedProminent)
+                Button("Finish", action: session.finish).buttonStyle(AOMPrimaryButtonStyle())
             }.controlSize(.regular)
         }.padding(16).aomFloatingSurface(.bar, radius: AOMRadius.bar)
     }

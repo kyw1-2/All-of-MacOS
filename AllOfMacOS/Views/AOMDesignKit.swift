@@ -100,10 +100,10 @@ extension View {
         modifier(AOMChromeSurface(radius: radius, interactive: interactive, role: role, inWindow: inWindow))
     }
 
-    /// Primary action: the system prominent style (Liquid Glass tinted on
-    /// macOS 26). Use for the one action a page or sheet exists for.
+    /// Primary action (6.0): the accent-filled AOM button. Use for the one
+    /// action a page or sheet exists for.
     @ViewBuilder func aomPrimaryButton() -> some View {
-        buttonStyle(.borderedProminent)
+        buttonStyle(AOMPrimaryButtonStyle())
     }
 
     /// A button on floating chrome (HUDs, Quick Access, pins). macOS 26
@@ -245,7 +245,7 @@ struct AOMCapsuleLink: View {
             }
             .padding(.horizontal, AOMSpace.x0_5)
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(AOMSoftButtonStyle())
         .buttonBorderShape(.capsule)
         // One regular control high (24 pt), whatever the page's control size.
         .controlSize(.regular)
@@ -451,12 +451,14 @@ private struct AOMScopeChip<ID: Hashable>: View {
     /// chip, so selection is not carried by a tint alone (WCAG 1.4.11).
     private var outlined: Bool { selected && (contrast == .increased || differentiateWithoutColor) }
 
+    // 6.0: Linear's view tabs — the selected item on a raised plate with a
+    // hairline, the rest plain words; no accent gradient, no shadow.
     var body: some View {
-        let onAccentText = AOMTheme.onAccent(Color.accentColor)
+        let shape = RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous)
         Button(action: action) {
             HStack(spacing: AOMSpace.x1 + 1) {
                 if let dot = item.dot {
-                    Circle().fill(selected ? onAccentText : dot).frame(width: AOMIcon.dot, height: AOMIcon.dot)
+                    Circle().fill(dot).frame(width: AOMIcon.dot, height: AOMIcon.dot)
                 } else if let symbol = item.symbol {
                     Image(systemName: symbol).imageScale(.small)
                 }
@@ -464,33 +466,26 @@ private struct AOMScopeChip<ID: Hashable>: View {
                 if let count = item.count {
                     Text("\(count)")
                         .monospacedDigit()
-                        .foregroundStyle(selected ? onAccentText.opacity(0.85) : AOMTheme.textSecondary)
-                        .padding(.horizontal, AOMSpace.x1)
-                        .padding(.vertical, 0.5)
-                        .background(
-                            Capsule().fill(selected ? onAccentText.opacity(0.18) : AOMColor.track)
-                        )
+                        .foregroundStyle(AOMColor.textTertiary)
                 }
             }
             .font(AOMFont.caption.weight(selected ? .semibold : .medium))
-            .foregroundStyle(selected ? onAccentText : (hovering ? AOMTheme.text : AOMTheme.textSecondary))
+            .foregroundStyle(selected || hovering ? AOMTheme.text : AOMTheme.textSecondary)
             .padding(.horizontal, AOMSpace.x2)
             .frame(height: AOMFeatureSize.chip)
             .background {
                 if selected {
-                    Capsule().fill(Color.accentColor.gradient)
-                } else {
-                    Capsule().fill(hovering ? AOMColor.surfaceHover : AOMColor.surface)
+                    shape.fill(AOMColor.surface)
+                } else if hovering {
+                    shape.fill(AOMColor.rowHover)
                 }
             }
             .overlay {
-                Capsule().strokeBorder(
-                    outlined ? Color.primary : (selected ? Color.white.opacity(0.25) : AOMColor.hairline),
-                    lineWidth: outlined ? 1.2 : 0.65
-                )
+                if selected {
+                    shape.strokeBorder(outlined ? Color.primary : AOMColor.hairline, lineWidth: outlined ? 1.2 : 0.5)
+                }
             }
-            .shadow(color: selected ? Color.accentColor.opacity(0.25) : .clear, radius: 3, x: 0, y: 1)
-            .contentShape(Capsule())
+            .contentShape(shape)
         }
         .buttonStyle(.plain)
         .help(compact ? item.title : "")

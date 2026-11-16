@@ -26,8 +26,50 @@ enum AOMPageSwitchBench {
             for _ in 0..<3 { plan += AOMMainTab.allCases.filter { $0 != .home } + [.home] }
         }
         var results: [[String: Any]] = []
+        // `--aom-preview-bench-reopen`: after visiting every page, hide and
+        // show the main window a few times (what the menu bar's "Open All of
+        // MacOS" does) and record the main thread's CPU time and its longest
+        // stall in the 1.5 s after each show.
+        if args.contains("--aom-preview-bench-reopen") {
+            // `--aom-preview-bench-reopen-home` reopens with Workspace alone alive.
+            plan = args.contains("--aom-preview-bench-reopen-home") ? [.home]
+                : AOMMainTab.allCases.filter { $0 != .home } + [.home]
+        }
+        func reopen(_ cycle: Int) {
+            guard cycle < 6, let window = NSApp.windows.first(where: { $0.isVisible && $0.canBecomeMain })
+                    ?? NSApp.windows.first(where: { $0.canBecomeMain }) else {
+                let data = try? JSONSerialization.data(withJSONObject: results, options: [.prettyPrinted])
+                try? data?.write(to: URL(fileURLWithPath: output))
+                NSApp.terminate(nil)
+                return
+            }
+            window.orderOut(nil)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                let startCPU = mainThreadCPUSeconds()
+                let start = CACurrentMediaTime()
+                var last = start
+                var worst: CFTimeInterval = 0
+                let probe = Timer(timeInterval: 0.008, repeats: true) { _ in
+                    let now = CACurrentMediaTime()
+                    worst = max(worst, now - last)
+                    last = now
+                }
+                RunLoop.main.add(probe, forMode: .common)
+                NSApp.activate(ignoringOtherApps: true)
+                window.makeKeyAndOrderFront(nil)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    probe.invalidate()
+                    results.append(["reopen": cycle, "page": appState.selectedMainTab.title,
+                                    "cpu_ms": (mainThreadCPUSeconds() - startCPU) * 1000,
+                                    "worst_stall_ms": worst * 1000,
+                                    "elapsed_ms": (CACurrentMediaTime() - start) * 1000])
+                    reopen(cycle + 1)
+                }
+            }
+        }
         func step(_ position: Int) {
             guard position < plan.count else {
+                if args.contains("--aom-preview-bench-reopen") { reopen(0); return }
                 let data = try? JSONSerialization.data(withJSONObject: results, options: [.prettyPrinted])
                 try? data?.write(to: URL(fileURLWithPath: output))
                 NSApp.terminate(nil)

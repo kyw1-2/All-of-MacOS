@@ -186,6 +186,15 @@ struct FilesPathInfo: Equatable {
         abbreviated = FilesPath.abbreviated(path)
         exists = FileManager.default.fileExists(atPath: path)
     }
+
+    /// No file-system access: what a row shows for a path added since the
+    /// last refresh, until the page reads the real values (5.1 — the page
+    /// body used to call `displayName` on the main thread for these).
+    init(placeholder path: String) {
+        name = path == "/" ? "Macintosh HD" : (path as NSString).lastPathComponent
+        abbreviated = (path as NSString).abbreviatingWithTildeInPath
+        exists = true
+    }
 }
 
 /// A file or folder icon from the Finder, cached by path.

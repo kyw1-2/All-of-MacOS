@@ -35,7 +35,7 @@ private struct SnapSheetHeader: View {
                     .foregroundStyle(AOMColor.text)
                     .accessibilityAddTraits(.isHeader)
                 Spacer()
-                Button("Done", action: done).keyboardShortcut(.defaultAction)
+                Button("Done", action: done).keyboardShortcut(.defaultAction).buttonStyle(AOMPrimaryButtonStyle())
             }
             .padding(.horizontal, AOMSpace.x4)
             .padding(.vertical, AOMSpace.x3)
@@ -115,7 +115,7 @@ struct CustomSnapZonesEditor: View {
                         showsPreview: showsPreview, profileID: profileID)
                     dismiss()
                 }
-                    .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                    .buttonStyle(AOMPrimaryButtonStyle()).keyboardShortcut(.defaultAction).buttonStyle(AOMPrimaryButtonStyle())
                     .disabled(!zones.allSatisfy(\.isValid))
             }
         }
@@ -439,7 +439,7 @@ private struct SnapZoneDetailEditor: View {
                         Button("Top-left") { mode = 0; configure(x: 0,y: 0,width: 0.15,height: 0.15) }
                         Button("Top-right") { mode = 0; configure(x: 0.85,y: 0,width: 0.15,height: 0.15) }
                         Button("Bottom-right") { mode = 0; configure(x: 0.85,y: 0.85,width: 0.15,height: 0.15) }
-                    }.buttonStyle(.bordered).controlSize(.small)
+                    }.buttonStyle(AOMSoftButtonStyle()).controlSize(.small)
                     AOMEditorNote("Release the dragged window inside this area.")
                 }.frame(maxWidth: .infinity)
                 VStack(alignment: .leading, spacing: AOMSpace.x2) {
@@ -453,7 +453,7 @@ private struct SnapZoneDetailEditor: View {
                         Button("Right ½") { mode = 1; configure(x: 0.5,y: 0,width: 0.5,height: 1) }
                         Button("Full") { mode = 1; configure(x: 0,y: 0,width: 1,height: 1) }
                         Button("Center") { mode = 1; configure(x: 0.2,y: 0.13,width: 0.6,height: 0.74) }
-                    }.buttonStyle(.bordered).controlSize(.small)
+                    }.buttonStyle(AOMSoftButtonStyle()).controlSize(.small)
                     AOMEditorNote("The window is resized to this target after release.")
                 }.frame(maxWidth: .infinity)
             }

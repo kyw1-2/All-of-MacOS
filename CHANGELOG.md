@@ -1,3 +1,20 @@
+## [6.0.0] - 2026-11-16
+
+### Changed
+- **Calm redesign.** Tool colours now mark only *which tool*: tinted marks (the glyph on a light wash of its hue) in lists, the palette and headers; glyph-only colour in the sidebar; neutral glyphs on setting rows. The gradient greeting banner, hue-washed cards and saturated squircles are gone. See docs/design-6.0-calm.md.
+- **New buttons.** Every page and Settings button uses AOM's soft button (a quiet fill, no bezel or shadow); main actions and default buttons use the accent-filled primary button.
+- **Contextual action bar.** The bar under each page shows the selected item and what you can do to it: in Automation, Test ⌘↩, Turn On/Off, Duplicate, Pin and Delete; in Clipboard, Copy ⌘↩, Copy as Plain Text, Rename, pinboards and Delete. The Actions panel lists them first.
+- **Automation editor.** A header with the input's mark and a summary line; steps show their mark, number and own switch; name and note fold away; the shortcut to send is one recorder field (click to record, Esc stops, × clears). Filter chips are tabs, and list rows use neutral glyphs.
+- **Workspace.** A plain title with the running state, tools as one grouped list, quick actions as command tiles with their shortcuts.
+- **Menu bar panel.** Clicking the menu bar icon opens a control panel: the master switch, tiles for Drag to Snap, Clipboard, App Audio, Keep Awake and Gesture HUD, an active focus session or muted microphone, six quick actions, then Open, Settings, All Commands and Quit. ⌥-click or right-click opens the full menu as before.
+
+### Fixed
+- **The main window lagged every time it opened.** All visited pages stayed built and were laid out again on every show; the Files page read the file system and the toolbar subtitle walked every page while drawing. At most four pages stay built now, and those reads moved out of drawing. Reopening stalls the main thread about 110–160 ms instead of 225–280 ms in the debug bench (`--aom-preview-bench-reopen`).
+
+### Validation
+- 160 tests passed (new: `CalmRedesignTests`).
+- Light and dark preview screenshots with the real preset: Workspace, Automation (64 automations), Capture, Audio, Text Actions and the menu bar panel.
+
 ## [5.0.0] - 2026-11-16
 
 ### Changed

@@ -1272,7 +1272,7 @@ struct PaletteQuicklinksEditor: View {
                     store.replace(with: draft)
                     dismiss()
                 }
-                .keyboardShortcut(.defaultAction)
+                .keyboardShortcut(.defaultAction).buttonStyle(AOMPrimaryButtonStyle())
                 .aomPrimaryButton()
                 .disabled(!issues.isEmpty)
             }

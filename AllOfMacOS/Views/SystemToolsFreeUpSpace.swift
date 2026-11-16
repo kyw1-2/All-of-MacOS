@@ -17,7 +17,7 @@ struct FreeUpSpaceSheet: View {
                         .foregroundStyle(AOMColor.textSecondary)
                 }
                 Spacer()
-                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction).buttonStyle(AOMPrimaryButtonStyle())
             }
             HStack(alignment: .top, spacing: AOMSpace.x3) {
                 List(selection: Binding(get: { model.cleanupScan }, set: { model.selectCleanup($0 ?? model.cleanupScan) })) {
@@ -73,7 +73,7 @@ struct StartupDiskSheet: View {
                 AOMModuleBadge(symbol: "internaldrive", size: AOMIcon.headerBadge)
                 Text("Startup Disk").font(AOMFont.pageStatus)
                 Spacer()
-                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction).buttonStyle(AOMPrimaryButtonStyle())
             }
             AOMSection {
                 if let disk = monitor.disk {

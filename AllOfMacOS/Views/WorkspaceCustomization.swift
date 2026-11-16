@@ -309,7 +309,7 @@ struct WorkspaceCustomizeSheet: View {
                 .help("Shows every part and puts the quick actions back in their first order")
                 Spacer()
                 Button("Done") { dismiss() }
-                    .keyboardShortcut(.defaultAction)
+                    .keyboardShortcut(.defaultAction).buttonStyle(AOMPrimaryButtonStyle())
             }
             .padding(.horizontal, AOMSpace.x5)
             .padding(.vertical, AOMSpace.x3)

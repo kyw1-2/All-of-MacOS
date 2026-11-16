@@ -1051,7 +1051,7 @@ struct AOMHUDContent: View {
         VStack(spacing: AOMSpace.x2) {
             // 5.0: the HUD wears a mark like Swish's live tooltips — the
             // state's colour on a squircle, readable over any wallpaper.
-            AOMAppIcon(AOMIdentity(symbol: symbol, color: tone?.color ?? AOMBrand.start),
+            AOMAppIcon(AOMIdentity(symbol: symbol, color: tone?.color ?? AOMColor.accent),
                        size: AOMIcon.hudGlyph + AOMSpace.x2)
             Text(title)
                 .font(AOMFont.headline)

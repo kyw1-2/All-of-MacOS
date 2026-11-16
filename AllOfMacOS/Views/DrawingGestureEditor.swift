@@ -137,10 +137,10 @@ struct DrawingPatternComposer: View {
             }
             HStack(spacing: 8) {
                 Button("Record variations") { testing = false; testFeedback = nil }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(AOMSoftButtonStyle())
                     .tint(testing ? .secondary : .accentColor)
                 Button("Test recognition") { testing = true; testFeedback = nil }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(AOMSoftButtonStyle())
                     .tint(testing ? .accentColor : .secondary)
                     .disabled(samples.isEmpty)
                 Spacer()
@@ -224,7 +224,7 @@ struct DrawingSamplesConfiguration: View {
             Button { showingEditor = true } label: {
                 Label("Configure Drawing…", systemImage: "pencil.and.scribble")
                     .frame(maxWidth: .infinity)
-            }.buttonStyle(.borderedProminent)
+            }.buttonStyle(AOMPrimaryButtonStyle())
         }
         .sheet(isPresented: $showingEditor) {
             DrawingEditorSheet(trigger: trigger, save: save)
@@ -261,7 +261,7 @@ private struct DrawingEditorSheet: View {
                 Button("Save Drawing") {
                     save(name, samples, certainty, ignoreDirection)
                     dismiss()
-                }.buttonStyle(.borderedProminent)
+                }.buttonStyle(AOMPrimaryButtonStyle())
                     .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || samples.isEmpty)
             }
         }

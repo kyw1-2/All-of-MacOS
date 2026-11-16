@@ -171,7 +171,7 @@ struct AnnotationBackgroundPanel: View {
                     store.save()
                     namingPreset = nil
                 }
-                .keyboardShortcut(.defaultAction)
+                .keyboardShortcut(.defaultAction).buttonStyle(AOMPrimaryButtonStyle())
                 .disabled(AnnotationBackgroundPresetStore.sanitizedName(presetName) == nil)
             }
         }

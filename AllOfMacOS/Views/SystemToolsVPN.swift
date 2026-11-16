@@ -207,7 +207,7 @@ struct VPNSheet: View {
                 }
                 Spacer()
                 Button("VPN Settings…") { model.openVPNSettings() }
-                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction).buttonStyle(AOMPrimaryButtonStyle())
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: AOMSpace.sectionGap) {

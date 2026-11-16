@@ -540,7 +540,7 @@ struct RecordingExportEditor: View {
                     } label: {
                         Label("Render Edited MP4", systemImage: "film.stack")
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(AOMPrimaryButtonStyle())
                     .disabled(isExporting || !validRange)
                 }
                 AOMSettingRow("Cut sequence", detail: "The ranges above, in order") {

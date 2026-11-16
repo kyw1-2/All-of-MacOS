@@ -248,3 +248,79 @@ enum AOMEditorSize {
     static let groupsEditorIdeal = CGSize(width: 780, height: 580)
     static let groupsList: CGFloat = AOMSize.sidebarIdeal
 }
+
+// MARK: - Shortcut recorder (6.0)
+
+/// One field that records a keyboard shortcut, like Raycast's and System
+/// Settings' recorders: the keys as caps, a placeholder when empty, a red
+/// "press keys" state while recording (Esc or a click stops), and × to clear.
+struct AOMShortcutRecorderField: View {
+    let shortcut: KeyboardShortcut?
+    let recording: Bool
+    let start: () -> Void
+    let stop: () -> Void
+    let clear: () -> Void
+    @State private var hovering = false
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: AOMRadius.well + 1, style: .continuous)
+        HStack(spacing: AOMSpace.x2) {
+            Button(action: recording ? stop : start) {
+                HStack(spacing: AOMSpace.x2) {
+                    Image(systemName: recording ? "record.circle.fill" : "keyboard")
+                        .foregroundStyle(recording ? AOMColor.recording : AOMColor.textSecondary)
+                        .symbolEffect(.pulse, options: .repeating, isActive: recording)
+                    if recording {
+                        Text("Press the keys…")
+                            .font(AOMFont.bodyEmphasis)
+                            .foregroundStyle(AOMColor.dangerText)
+                    } else if let shortcut {
+                        AOMShortcutKeys(shortcut: shortcut)
+                    } else {
+                        Text("Click to record a shortcut")
+                            .foregroundStyle(AOMColor.textSecondary)
+                    }
+                    Spacer(minLength: AOMSpace.x2)
+                    Text(recording ? "Esc to stop" : (shortcut == nil ? "Record" : "Change"))
+                        .font(AOMFont.caption)
+                        .foregroundStyle(AOMColor.textTertiary)
+                }
+                .padding(.horizontal, AOMSpace.x3)
+                .frame(minHeight: 34)
+                .background(recording ? AOMTone.recording.wash(increasedContrast: contrast == .increased)
+                            : (hovering ? AOMColor.surfaceHover : AOMColor.field), in: shape)
+                .overlay {
+                    shape.strokeBorder(recording ? AOMColor.recording : AOMColor.hairline,
+                                       lineWidth: recording ? 1.5 : (contrast == .increased ? 1 : 0.5))
+                }
+                .contentShape(shape)
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering = $0 }
+            .help(recording ? "Stop recording (Esc)" : "Record the shortcut this step sends")
+            .accessibilityLabel(recording ? "Stop recording" : "Record shortcut")
+            .accessibilityValue(shortcut?.displayString ?? "None")
+            if recording {
+                // Esc stops, only while recording (a zero-size key target).
+                Button("Stop Recording", action: stop)
+                    .aomShortcut(.escape, modifiers: [])
+                    .frame(width: 0, height: 0)
+                    .opacity(0)
+                    .accessibilityHidden(true)
+            }
+            if shortcut != nil && !recording {
+                Button(action: clear) {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(AOMColor.textTertiary)
+                        .frame(width: AOMIcon.hitArea, height: AOMIcon.hitArea)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Clear the shortcut")
+                .accessibilityLabel("Clear shortcut")
+            }
+        }
+        .aomAnimation(.quick, value: recording)
+    }
+}

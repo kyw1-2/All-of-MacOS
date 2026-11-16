@@ -217,8 +217,8 @@ struct TutorialOverlayView: View {
             Button(page == Self.pageCount - 1 ? "Get Started" : "Continue") {
                 if page == Self.pageCount - 1 { finish() } else { page += 1 }
             }
-            .buttonStyle(.borderedProminent)
-            .keyboardShortcut(.defaultAction)
+            .buttonStyle(AOMPrimaryButtonStyle())
+            .keyboardShortcut(.defaultAction).buttonStyle(AOMPrimaryButtonStyle())
         }
         // The page's own margin, so Skip and Continue line up with its text.
         .padding(.horizontal, AOMSpace.x6)

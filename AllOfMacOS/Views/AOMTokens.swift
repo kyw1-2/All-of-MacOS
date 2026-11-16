@@ -593,14 +593,16 @@ enum AOMIcon {
     // 5.0 identity marks (AOMAppIcon): a filled glyph on the tool's hue.
     /// Setting rows, sidebar rows and palette rows (System Settings row icon).
     static let identityRow: CGFloat = 20
+    /// Sidebar rows: the glyph alone in the tool's hue (Things).
+    static let sidebarGlyph: CGFloat = 18
     /// The action bar at the bottom of a page.
     static let identityBar: CGFloat = 18
     /// Explore cards and Workspace module tiles.
-    static let identityCard: CGFloat = 34
+    static let identityCard: CGFloat = 30
     /// A page's identity header.
-    static let identityHeader: CGFloat = 40
+    static let identityHeader: CGFloat = 32
     /// Empty states and the Workspace banner.
-    static let identityHero: CGFloat = 52
+    static let identityHero: CGFloat = 44
 }
 
 // MARK: - Dynamic colours

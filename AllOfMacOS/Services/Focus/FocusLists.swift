@@ -113,6 +113,19 @@ enum FocusAppCatalog {
     /// Running regular apps (not AOM, not Finder), sorted by name, for the
     /// Add App menus.
     static func runningChoices() -> [FocusAppRef] {
+        // SwiftUI builds a Menu's items with the view body, so this ran on
+        // every render of every Add App button; a few seconds' cache is
+        // plenty for a list of open apps (5.1).
+        let now = Date()
+        if let cached = choicesCache, now.timeIntervalSince(cached.at) < 5 { return cached.apps }
+        let apps = readRunningChoices()
+        choicesCache = (now, apps)
+        return apps
+    }
+
+    private static var choicesCache: (at: Date, apps: [FocusAppRef])?
+
+    private static func readRunningChoices() -> [FocusAppRef] {
         var seen = Set<String>()
         return NSWorkspace.shared.runningApplications.compactMap { app -> FocusAppRef? in
             guard app.activationPolicy == .regular, let id = app.bundleIdentifier,

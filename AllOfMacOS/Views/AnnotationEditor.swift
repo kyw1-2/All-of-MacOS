@@ -435,7 +435,7 @@ private struct AnnotationEditorView: View {
                     Button("Cancel") { showingSmartHighlight = false }
                         .disabled(smartHighlightBusy)
                     Button("Highlight") { highlightMatchingText() }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(AOMPrimaryButtonStyle())
                         .disabled(smartHighlightBusy ||
                             smartHighlightQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
@@ -554,7 +554,7 @@ private struct AnnotationEditorView: View {
             if let onApply {
                 Button("Apply to Clipboard") {
                     if let image = renderedImage() { onApply(image); markSaved(); status = "Updated clipboard image." }
-                }.buttonStyle(.bordered).controlSize(.large).fixedSize()
+                }.buttonStyle(AOMSoftButtonStyle()).controlSize(.large).fixedSize()
             }
             Button { done() } label: {
                 Text("Done").font(AOMFont.bodyEmphasis)
@@ -2772,8 +2772,8 @@ private struct AnnotationResizeDialog: View {
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button("Resize") { onResize(width, height, flattenAnnotations) }
-                    .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(AOMPrimaryButtonStyle())
+                    .keyboardShortcut(.defaultAction).buttonStyle(AOMPrimaryButtonStyle())
                     .disabled(!dimensionsValid)
             }
         }

@@ -40,22 +40,27 @@ struct ActionCardView: View {
 
     private var header: some View {
         HStack(spacing: AOMSpace.x2) {
-            // Step number, centred under the arrows that join the cards.
-            Text("\(index)")
-                .font(AOMFont.callout.monospacedDigit())
-                .foregroundStyle(AOMColor.textSecondary)
-                .frame(width: AOMIcon.row)
+            // 6.0: the step's mark with its number in a corner badge, the
+            // way Shortcuts numbers nothing and Raycast marks every command.
+            AOMAppIcon(AOMIdentity(symbol: action.actionType.iconName,
+                                   color: action.isEnabled ? AOMModule.automation.hue : AOMBrand.graphite),
+                       size: 26, active: action.isEnabled)
+                .overlay(alignment: .bottomTrailing) {
+                    Text("\(index)")
+                        .font(.system(size: 9, weight: .bold).monospacedDigit())
+                        .foregroundStyle(AOMColor.textSecondary)
+                        .padding(.horizontal, 3)
+                        .frame(minWidth: 14, minHeight: 14)
+                        .background(AOMColor.surface, in: Capsule())
+                        .overlay { Capsule().strokeBorder(AOMColor.hairline, lineWidth: 0.5) }
+                        .offset(x: 5, y: 4)
+                }
+                .padding(.trailing, AOMSpace.x0_5)
                 .accessibilityLabel("Step \(index)")
 
             if isElse {
                 AOMStatusPill("Else", tone: .neutral, symbol: "arrow.triangle.branch")
             }
-
-            Image(systemName: action.actionType.iconName)
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(AOMColor.textSecondary)
-                .frame(width: AOMIcon.row)
-                .accessibilityHidden(true)
 
             // The name; its parameter value rides at the trailing edge.
             Text(action.displayName)
@@ -75,9 +80,13 @@ struct ActionCardView: View {
                     .help(detail)
             }
 
-            if !action.isEnabled {
-                AOMStatusPill("Off", tone: .neutral)
-            }
+            // The step's own switch (it was a row inside the options).
+            Toggle("Enabled", isOn: Binding(get: { action.isEnabled }, set: { _ in onToggleEnable() }))
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .labelsHidden()
+                .help(action.isEnabled ? "Turn this step off" : "Turn this step on")
+                .accessibilityLabel("Step \(index) enabled")
 
             Menu {
                 Button("Change Action…", action: onChangeAction)
@@ -118,8 +127,8 @@ struct ActionCardView: View {
             .accessibilityLabel(isExpanded ? "Collapse action options" : "Expand action options")
         }
         .padding(.horizontal, AOMSpace.rowInset)
-        .padding(.vertical, AOMSpace.x1)
-        .frame(minHeight: AOMSize.rowStandard)
+        .padding(.vertical, AOMSpace.x1 + AOMSpace.x0_5)
+        .frame(minHeight: AOMSize.rowDetail)
         .contentShape(Rectangle())
         .onTapGesture { onToggleExpand() }
     }

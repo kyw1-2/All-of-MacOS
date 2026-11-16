@@ -642,7 +642,7 @@ struct ModernWindowSnappingView: View {
                     Spacer(minLength: AOMSpace.x2)
                     if let fix = item.fix {
                         Button("Open…") { TrackpadReadiness.open(fix) }
-                            .buttonStyle(.bordered)
+                            .buttonStyle(AOMSoftButtonStyle())
                             .help("Open the System Settings pane that fixes this")
                             .accessibilityLabel("Open settings for \(item.title)")
                     }

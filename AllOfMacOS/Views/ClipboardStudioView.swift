@@ -164,7 +164,7 @@ struct ClipboardStudioView: View {
                         AOMEmptyState(state.title, systemImage: state.systemImage, message: state.message) { storageActions(state) }
                     } else if store.entries.isEmpty {
                         AOMEmptyState(state.title, systemImage: state.systemImage, message: state.message) {
-                            if store.paused { Button("Resume History") { store.resume() }.buttonStyle(.borderedProminent) }
+                            if store.paused { Button("Resume History") { store.resume() }.buttonStyle(AOMPrimaryButtonStyle()) }
                         }
                     } else if !search.query.isEmpty {
                         ContentUnavailableView.search(text: search.query)
@@ -240,6 +240,37 @@ struct ClipboardStudioView: View {
             Button("Cancel", role: .cancel) {}
         } message: { Text("The unreadable file is renamed and kept; AOM then starts a new history file.") }
         .aomToast(toast)
+        // 6.0: the selected item and what can be done to it, in the action bar.
+        .aomBarContext(id: clipboardBarKey) { clipboardBarContext() }
+    }
+
+    /// What the bar's clipboard context depends on: the item and its pins.
+    private var clipboardBarKey: String {
+        guard let id = selectedEntryID, let entry = store.entries.first(where: { $0.id == id }) else { return "" }
+        return id.uuidString + entry.pinboardIDs.map(\.uuidString).sorted().joined() + entry.title
+    }
+
+    private func clipboardBarContext() -> AOMBarContext? {
+        guard let id = selectedEntryID, let entry = store.entries.first(where: { $0.id == id }) else { return nil }
+        let hue = AOMModule.clipboard.hue
+        var actions = [
+            AOMBarAction(id: "clip.copy", title: "Copy", identity: AOMIdentity(symbol: "doc.on.doc", color: hue),
+                         run: { copy(entry) }, key: SwiftUI.KeyboardShortcut(.return, modifiers: .command)),
+            AOMBarAction(id: "clip.plain", title: "Copy as Plain Text", identity: AOMIdentity(symbol: "textformat", color: hue),
+                         run: { copy(entry, plainText: true) }),
+            AOMBarAction(id: "clip.rename", title: "Rename", identity: AOMIdentity(symbol: "pencil", color: hue),
+                         run: { beginRename(entry) })
+        ]
+        for board in store.boards.prefix(4) {
+            let pinned = entry.pinboardIDs.contains(board.id)
+            actions.append(AOMBarAction(id: "clip.pin.\(board.id)", title: pinned ? "Unpin from \(board.name)" : "Pin to \(board.name)",
+                                        identity: AOMIdentity(symbol: pinned ? "pin.slash" : "pin", color: hue),
+                                        run: { togglePin(entry, board) }))
+        }
+        actions.append(AOMBarAction(id: "clip.delete", title: "Delete", identity: AOMIdentity(symbol: "trash", color: AOMColor.danger),
+                                    run: { delete(entry, in: filteredEntries) }))
+        let title = entry.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return AOMBarContext(title: title.isEmpty ? "Selected item" : String(title.prefix(60)), actions: actions)
     }
 
     /// The retry or recovery for a storage problem, on the same screen that
@@ -249,11 +280,11 @@ struct ClipboardStudioView: View {
         switch state {
         case .keychainUnavailable:
             Button("Try Again") { Task { await store.recoverStorage() } }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(AOMPrimaryButtonStyle())
         case .unreadableArchive:
             HStack(spacing: AOMSpace.x2) {
                 Button("Recover Storage…") { showingRecoverConfirmation = true }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(AOMPrimaryButtonStyle())
                 Button("Clipboard Settings…") { showingSettings = true }
             }
         case .loading, .empty:
@@ -519,7 +550,7 @@ struct ClipboardStudioView: View {
             Spacer(minLength: AOMSpace.x2)
             // The section's one prominent action (design-336 b.6).
             Button { copy(entry) } label: { Label("Copy", systemImage: "doc.on.doc") }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(AOMPrimaryButtonStyle())
                 .aomShortcut("c", modifiers: [.command, .shift])
                 .help("Copy (⇧⌘C, or press Return in the list)")
             Menu {
@@ -742,8 +773,8 @@ struct ClipboardStudioView: View {
                         toast.show("Couldn't add the text because history can't be saved right now", tone: .danger)
                     }
                 }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.defaultAction)
+                .buttonStyle(AOMPrimaryButtonStyle())
+                .keyboardShortcut(.defaultAction).buttonStyle(AOMPrimaryButtonStyle())
                 .disabled(newText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
@@ -785,9 +816,9 @@ struct ClipboardStudioView: View {
                     showingNewBoardSheet = false
                     showToast("Created pinboard “\(trimmed)”")
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(AOMPrimaryButtonStyle())
                 .disabled(newBoardName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .keyboardShortcut(.defaultAction)
+                .keyboardShortcut(.defaultAction).buttonStyle(AOMPrimaryButtonStyle())
             }
         }
         .padding(AOMSpace.x5)
