@@ -99,20 +99,21 @@ struct AOMHomeView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
                 // Status and anything that asks for you span the page.
-                HStack(alignment: .center) {
-                    VStack(alignment: .leading, spacing: AOMSpace.x1) {
-                        Text("Your Mac, within reach.").font(AOMFont.workspaceTitle)
-                        Text("Find a tool. Start a task. Make it yours.")
-                            .font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
-                    }
-                    Spacer()
+                WorkspaceBanner(engineOn: appState.globalEnabled,
+                                automations: triggers.filter(\.isEnabled).count) {
                     Picker("Workspace view", selection: $showsOverview) {
                         Text("Explore").tag(false)
                         Text("My Workspace").tag(true)
                     }
                     .pickerStyle(.segmented).labelsHidden().frame(width: AOMSize.workspaceModeWidth)
+                    .controlSize(.regular)
                 }
-                hero(snapshot)
+                // The banner and the sidebar switch already say "running";
+                // the status card returns when something needs you (paused,
+                // a permission, a recording) or in My Workspace.
+                if showsOverview || recording.isRecording || !snapshot.hero.isRunning {
+                    hero(snapshot)
+                }
                 if showsOverview && snapshot.showsSetup {
                     setupCard(snapshot)
                 }
@@ -1086,6 +1087,69 @@ struct AOMHomeView: View {
 // MARK: - Snapshot
 
 /// Everything one render needs, computed once per body.
+/// The Workspace banner's greeting for the time of day.
+enum AOMWorkspaceGreeting {
+    static func text(at date: Date = Date()) -> String {
+        switch Calendar.current.component(.hour, from: date) {
+        case 5..<12: return "Good morning"
+        case 12..<18: return "Good afternoon"
+        case 18..<23: return "Good evening"
+        default: return "Working late"
+        }
+    }
+}
+
+/// The top of Workspace (5.0): the brand mark on a wash of the brand
+/// gradient, a greeting for the time of day and one line of state — the
+/// welcome band of Raycast's and Arc's home views, kept to one row.
+private struct WorkspaceBanner<Trailing: View>: View {
+    let engineOn: Bool
+    let automations: Int
+    @ViewBuilder var trailing: Trailing
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: AOMRadius.panel, style: .continuous)
+        HStack(alignment: .center, spacing: AOMSpace.x4) {
+            AOMAppIcon(AOMMainTab.home.identity, size: AOMIcon.identityHero, active: engineOn)
+            VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
+                Text(AOMWorkspaceGreeting.text()).font(AOMFont.workspaceTitle).foregroundStyle(AOMColor.text)
+                HStack(spacing: AOMSpace.x1 + AOMSpace.x0_5) {
+                    Circle().fill(engineOn ? AOMColor.success : AOMColor.paused)
+                        .frame(width: AOMIcon.dot, height: AOMIcon.dot)
+                    Text(engineOn ? "AOM is running" : "AOM is paused")
+                    Text("·")
+                    Text("\(AOMFeatureGroup.allCases.flatMap(\.tabs).count) tools")
+                    Text("·")
+                    Text(automations == 1 ? "1 automation on" : "\(automations) automations on")
+                }
+                .font(AOMFont.callout)
+                .foregroundStyle(AOMColor.textSecondary)
+                .lineLimit(1)
+            }
+            Spacer(minLength: AOMSpace.x3)
+            trailing
+        }
+        .padding(.horizontal, AOMSpace.x5)
+        .padding(.vertical, AOMSpace.x4)
+        .background {
+            ZStack {
+                AOMColor.surface
+                LinearGradient(colors: [AOMBrand.start.opacity(scheme == .dark ? 0.26 : 0.14),
+                                        AOMBrand.end.opacity(scheme == .dark ? 0.16 : 0.08), .clear],
+                               startPoint: .topLeading, endPoint: .bottomTrailing)
+            }
+            .clipShape(shape)
+        }
+        .overlay {
+            shape.strokeBorder(contrast == .increased ? AOMColor.strongLine : AOMColor.hairline,
+                               lineWidth: contrast == .increased ? 1 : 0.5)
+        }
+        .accessibilityElement(children: .contain)
+    }
+}
+
 private struct WorkspaceSnapshot {
     let hero: WorkspaceHeroState
     /// First-run setup strip (under the status line, not instead of it).
@@ -1136,6 +1200,11 @@ enum WorkspaceHeroState: Equatable {
     case running(on: Int, total: Int, automations: Int, last: Date?)
     case paused(detail: String?)
     case blocked(AOMPermission, count: Int)
+
+    var isRunning: Bool {
+        if case .running = self { return true }
+        return false
+    }
 
     var tone: AOMTone {
         switch self {
@@ -1587,13 +1656,18 @@ private struct WorkspaceQuickAction: View {
     var running = false
     var live = false
     var help: String?
+    /// 5.0: the hue of the module that runs it.
+    var tint: Color = AOMModule.automation.hue
     let action: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var hovering = false
 
     init(_ title: String, symbol: String, active: Bool = true, keys: String? = nil, running: Bool = false,
-         live: Bool = false, help: String? = nil, action: @escaping () -> Void) {
+         live: Bool = false, help: String? = nil, tint: Color = AOMModule.automation.hue,
+         action: @escaping () -> Void) {
         self.title = title
         self.symbol = symbol
+        self.tint = tint
         self.active = active
         self.keys = keys
         self.running = running
@@ -1629,21 +1703,23 @@ private struct WorkspaceQuickAction: View {
         .accessibilityAddTraits(live ? .updatesFrequently : [])
     }
 
-    /// The round glass button: system Liquid Glass on macOS 26+, a frosted
-    /// pane before. A running action (recording, focus) fills with the accent.
+    /// 5.0: the action's mark in its module's hue (Raycast's quick
+    /// actions), lifting under the pointer. A live action (recording, focus)
+    /// turns red and pulses; a running one shows progress.
     private var badge: some View {
         ZStack {
             if running {
                 ProgressView().controlSize(.small)
+                    .frame(width: AOMSize.quickActionButton, height: AOMSize.quickActionButton)
             } else {
-                Image(systemName: symbol)
-                    .font(.system(size: 19, weight: .medium))
-                    .foregroundStyle(live ? Color.white : (active ? AOMColor.text : AOMColor.textTertiary))
+                AOMAppIcon(AOMIdentity(symbol: symbol, color: live ? AOMColor.recording : tint),
+                           size: AOMSize.quickActionButton, active: active)
                     .symbolEffect(.pulse, options: .repeating, isActive: live && !reduceMotion)
+                    .scaleEffect(hovering && active ? 1.06 : 1)
             }
         }
-        .frame(width: AOMSize.quickActionButton, height: AOMSize.quickActionButton)
-        .aomRoundGlass(tint: live ? AOMColor.accent : nil)
+        .onHover { hovering = $0 }
+        .aomAnimation(.quick, value: hovering)
     }
 }
 
@@ -1675,6 +1751,7 @@ private struct WorkspaceQuickActionCell: View {
                              keys: kind.shortcut,
                              live: recording || focusing,
                              help: recording ? "Stops the screen recording" : kind.help,
+                             tint: kind.module.hue,
                              action: action)
             .aomDropTarget(targeted, radius: AOMRadius.card)
             .draggable(kind.rawValue)

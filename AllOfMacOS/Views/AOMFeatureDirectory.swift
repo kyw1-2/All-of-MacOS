@@ -125,7 +125,9 @@ struct AOMFeatureDirectory: View {
                                 }
                             } label: {
                                 HStack {
-                                    Label("\(category.title) Settings", systemImage: category.symbol)
+                                    Label { Text("\(category.title) Settings") } icon: {
+                                        AOMAppIcon(category.identity, size: AOMIcon.identityRow)
+                                    }
                                     Spacer()
                                     Image(systemName: "chevron.right")
                                 }
@@ -165,59 +167,40 @@ private struct AOMFeatureCard: View {
     var body: some View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: AOMSpace.x2) {
-                HStack(spacing: AOMSpace.x2) {
-                    Image(systemName: tab.sidebarSymbol).font(AOMFont.title).foregroundStyle(AOMColor.accent)
-                        .frame(width: AOMSize.directoryIcon, height: AOMSize.directoryIcon)
-                        .background(AOMColor.accent.opacity(0.09), in: RoundedRectangle(cornerRadius: AOMRadius.well))
-                    Text(tab.title).font(AOMFont.headline).foregroundStyle(AOMColor.text)
+                HStack(spacing: AOMSpace.x3) {
+                    AOMAppIcon(tab, size: AOMIcon.identityCard)
+                    Text(tab.title).font(AOMFont.title).foregroundStyle(AOMColor.text)
                     Spacer(minLength: 0)
-                    Image(systemName: "arrow.up.right").font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
+                    Image(systemName: "arrow.right")
+                        .font(AOMFont.caption.weight(.semibold))
+                        .foregroundStyle(hovering ? tab.identity.color : AOMColor.textTertiary)
+                        .offset(x: hovering ? 2 : 0)
                 }
                 Text(tab.subtitle).font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
                     .lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
                     .frame(minHeight: AOMSize.rowStandard, alignment: .top)
             }
             .padding(AOMSpace.x4).frame(maxWidth: .infinity, alignment: .leading)
-            .background(hovering ? AOMColor.surfaceHover : AOMColor.surface, in: RoundedRectangle(cornerRadius: AOMRadius.card))
-            .overlay {
-                RoundedRectangle(cornerRadius: AOMRadius.card)
-                    .strokeBorder(hovering ? AOMColor.accent : (contrast == .increased ? AOMColor.strongLine : AOMColor.hairline), lineWidth: 1)
+            .background {
+                // A wash of the tool's hue from the top-leading corner: the
+                // card says which tool it is before its name is read.
+                ZStack {
+                    AOMColor.surface
+                    LinearGradient(colors: [tab.identity.color.opacity(hovering ? 0.14 : 0.07), .clear],
+                                   startPoint: .topLeading, endPoint: .center)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous))
             }
+            .overlay {
+                RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous)
+                    .strokeBorder(hovering ? tab.identity.color.opacity(0.55)
+                                  : (contrast == .increased ? AOMColor.strongLine : AOMColor.hairline),
+                                  lineWidth: hovering ? 1 : 0.5)
+            }
+            .aomElevation(.raised, enabled: hovering)
             .contentShape(RoundedRectangle(cornerRadius: AOMRadius.card))
         }
         .buttonStyle(.plain).onHover { hovering = $0 }.aomAnimation(.quick, value: hovering)
         .accessibilityLabel("Open \(tab.title)").accessibilityHint(tab.subtitle).help(tab.subtitle)
-    }
-}
-
-
-/// A visible bridge between tools that belong to the same task family.
-private struct AOMRelatedToolsContent: View {
-    let tabs: [AOMMainTab]
-    let open: (AOMMainTab) -> Void
-    var body: some View {
-        HStack(spacing: AOMSpace.x3) {
-            Text("Related tools").font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
-            ForEach(tabs) { tab in
-                Button { open(tab) } label: { Label(tab.title, systemImage: tab.sidebarSymbol) }
-                    .buttonStyle(.borderless).font(AOMFont.callout)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, AOMSpace.pageMargin).padding(.vertical, AOMSpace.x2)
-        .background(AOMColor.surface)
-        .overlay(alignment: .top) { AOMDivider() }
-    }
-}
-
-struct AOMRelatedTools: View {
-    let appState: AppState
-    @ObservedObject private var navigation = AOMNavigation.shared
-    var body: some View {
-        if let group = AOMFeatureGroup.allCases.first(where: { $0.tabs.contains(navigation.selected) }) {
-            AOMRelatedToolsContent(tabs: group.tabs.filter { $0 != navigation.selected }) {
-                appState.selectedMainTab = $0
-            }
-        }
     }
 }

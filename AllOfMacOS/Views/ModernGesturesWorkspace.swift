@@ -848,19 +848,95 @@ struct ModernGesturesWorkspace: View {
 
     // MARK: - Onboarding (no automations in this scope)
 
-    /// Nothing in this scope yet: one title, one New Automation button and the
-    /// five input kinds as a plain menu of names.
+    /// Nothing in this scope yet (5.0): the page's mark, one sentence and the
+    /// five input kinds as cards — BetterTouchTool's trigger categories made
+    /// visible, so the first automation starts from "what do I press?".
     private var onboardingView: some View {
-        AOMEmptyState("No Automations", systemImage: "bolt", message: "") {
-            Button("New Automation") { presentAddTrigger(.trackpad) }
-                .aomShortcut("n")
-            Menu("Add by Input") {
-                ForEach(TriggerCategory.inputCategories) { category in
-                    Button(Self.shortTitle(category)) { presentAddTrigger(category) }
+        ScrollView {
+            VStack(spacing: AOMSpace.x5) {
+                AOMEmptyState("Make your first automation",
+                              systemImage: "bolt.fill",
+                              message: "Pick what you press, swipe or draw. Then choose what it runs — an app, a shortcut, a window move or a script.") {
+                    Button("New Automation") { presentAddTrigger(.trackpad) }
+                        .aomShortcut("n")
                 }
+                .frame(maxHeight: 220)
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: AOMSpace.x3)], spacing: AOMSpace.x3) {
+                    ForEach(TriggerCategory.inputCategories) { category in
+                        AutomationInputCard(category: category, title: Self.shortTitle(category)) {
+                            presentAddTrigger(category)
+                        }
+                    }
+                }
+                .frame(maxWidth: AOMSize.readableWidth)
             }
-            .fixedSize()
+            .padding(AOMSpace.pageMargin)
+            .frame(maxWidth: .infinity)
         }
+    }
+}
+
+/// One input kind on the empty Automation page: its mark, its name and
+/// what it listens to.
+private struct AutomationInputCard: View {
+    let category: TriggerCategory
+    let title: String
+    let action: () -> Void
+    @State private var hovering = false
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    private var detail: String {
+        switch category {
+        case .trackpad: return "Taps, swipes, pinches and clicks"
+        case .keyboard: return "Shortcuts and key sequences"
+        case .normalMouse: return "Buttons on any mouse"
+        case .drawings: return "Shapes you draw with the pointer"
+        case .otherTriggers: return "Schedules, apps, power and sleep"
+        case .all: return ""
+        }
+    }
+
+    private var symbol: String {
+        switch category {
+        case .trackpad: return "hand.point.up.left.fill"
+        case .keyboard: return "keyboard.fill"
+        case .normalMouse: return "computermouse.fill"
+        case .drawings: return "scribble.variable"
+        case .otherTriggers: return "sparkles"
+        case .all: return "square.grid.2x2.fill"
+        }
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: AOMSpace.x3) {
+                AOMRowIcon(symbol: symbol, size: AOMIcon.identityCard - 4)
+                VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
+                    Text(title).font(AOMFont.headline).foregroundStyle(AOMColor.text)
+                    Text(detail).font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
+                        .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "plus")
+                    .font(AOMFont.caption.weight(.semibold))
+                    .foregroundStyle(hovering ? AOMColor.accent : AOMColor.textTertiary)
+            }
+            .padding(AOMSpace.x3)
+            .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
+            .background(hovering ? AOMColor.surfaceHover : AOMColor.surface,
+                        in: RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous)
+                    .strokeBorder(contrast == .increased ? AOMColor.strongLine : AOMColor.hairline, lineWidth: 0.5)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .aomAnimation(.quick, value: hovering)
+        .help("New \(title) automation")
+        .accessibilityLabel("New \(title) automation")
+        .accessibilityHint(detail)
     }
 }
 

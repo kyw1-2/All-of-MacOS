@@ -87,8 +87,11 @@ struct AOMMainShell<Content: View>: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(AOMWorkspaceBackground())
+            // 5.0: the Raycast-style action bar under every page.
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                AOMRelatedTools(appState: appState)
+                AOMActionBar(appState: appState,
+                             paletteKeys: AOMPaletteShortcut.current(appState.currentPreset).displayString,
+                             showingCommandPalette: $showingCommandPalette)
             }
             // The system toolbar title (design-3.3.6 b.11): standard size,
             // with the page's subtitle from `aomToolbarSubtitle`.
@@ -99,11 +102,9 @@ struct AOMMainShell<Content: View>: View {
                 ToolbarItemGroup(placement: .navigation) {
                     AOMHistoryButtons(appState: appState)
                 }
-                ToolbarItem(placement: .primaryAction) {
-                    Button { showingCommandPalette = true } label: {
-                        Label("Search Everything", systemImage: "magnifyingglass")
-                    }.help("Search all tools, settings and commands")
-                }
+                // Search Everything lives in the sidebar and in the action
+                // bar under every page (5.0), so it stays one click away
+                // with the sidebar hidden, without a third toolbar copy.
                 ToolbarItem(placement: .automatic) {
                     Menu {
                         Toggle("Diagnostics Console", isOn: $showLog)
@@ -206,19 +207,24 @@ struct AOMSidebar: View, Equatable {
         // Row height, text and glyph size follow the sidebar size chosen in
         // System Settings › Appearance (HIG Sidebars), so no override here.
         .safeAreaInset(edge: .top, spacing: 0) {
-            AOMSidebarSearchButton(keys: paletteKeys, showingCommandPalette: $showingCommandPalette)
+            VStack(spacing: 0) {
+                AOMSidebarHeader(engineOn: engineOn) { appState.toggleGlobalEnabled() }
+                AOMSidebarSearchButton(keys: paletteKeys, showingCommandPalette: $showingCommandPalette)
+            }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            VStack(spacing: AOMSpace.x2) {
+            VStack(spacing: AOMSpace.x1) {
                 Divider()
                 Button { openSettings() } label: {
-                    HStack {
-                        Label("Settings", systemImage: "gearshape")
+                    HStack(spacing: AOMSpace.x2) {
+                        AOMAppIcon(.neutral("gearshape.fill"), size: AOMIcon.identityRow)
+                        Text("Settings")
                         Spacer()
-                        Text("⌘,").foregroundStyle(AOMColor.textSecondary)
-                    }.padding(AOMSpace.x2).contentShape(Rectangle())
+                        AOMKeycap(text: "⌘,")
+                    }.padding(.horizontal, AOMSpace.x2).padding(.vertical, AOMSpace.x1 + AOMSpace.x0_5)
+                        .contentShape(Rectangle())
                 }.buttonStyle(AOMRowButtonStyle())
-            }.padding(.horizontal, AOMSpace.x3).padding(.bottom, AOMSpace.x2)
+            }.padding(.horizontal, AOMSpace.x2 + AOMSpace.x0_5).padding(.bottom, AOMSpace.x2)
         }
         .accessibilityElement(children: .contain)
     }
@@ -290,10 +296,10 @@ struct AOMSidebar: View, Equatable {
                 statusBadge(for: tab)
             }
         } icon: {
-            // One icon column, so every title starts at the same x.
-            Image(systemName: tab.sidebarSymbol)
-                .foregroundStyle(selected == tab ? Color.white : AOMColor.accent)
-                .frame(width: AOMIcon.row)
+            // 5.0: the tool's identity mark (System Settings, Loop), so a
+            // destination is found by colour and shape before its name.
+            AOMAppIcon(tab, size: AOMIcon.identityRow,
+                       active: tab == .gestures ? engineOn : true)
         }
         .tag(tab)
         .help(tab.shortcutKey.map { "\(tab.title) — ⌘\($0.character)" } ?? tab.title)
@@ -417,6 +423,44 @@ struct AOMHistoryMenuItems: View {
     }
 }
 
+/// The top of the sidebar (5.0): the app's brand mark, its name, whether AOM
+/// is running, and the master switch — the control-centre header of
+/// Bartender, Ice and CleanShot's menus, so Pause is one click from every page.
+private struct AOMSidebarHeader: View {
+    let engineOn: Bool
+    let toggle: () -> Void
+
+    var body: some View {
+        HStack(spacing: AOMSpace.x2 + AOMSpace.x0_5) {
+            AOMAppIcon(AOMMainTab.home.identity, size: 30, active: engineOn)
+            VStack(alignment: .leading, spacing: 0) {
+                Text("All of MacOS")
+                    .font(AOMFont.bodyEmphasis)
+                    .foregroundStyle(AOMColor.text)
+                    .lineLimit(1)
+                HStack(spacing: AOMSpace.x1) {
+                    Circle()
+                        .fill(engineOn ? AOMColor.success : AOMColor.paused)
+                        .frame(width: AOMIcon.dot, height: AOMIcon.dot)
+                    Text(engineOn ? "Running" : "Paused")
+                        .font(AOMFont.caption)
+                        .foregroundStyle(AOMColor.textSecondary)
+                }
+            }
+            Spacer(minLength: AOMSpace.x1)
+            Toggle("AOM", isOn: Binding(get: { engineOn }, set: { if $0 != engineOn { toggle() } }))
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .labelsHidden()
+                .help(engineOn ? "Pause AOM — gestures, shortcuts and automations stop" : "Resume AOM")
+                .accessibilityLabel("AOM running")
+        }
+        .padding(.horizontal, AOMSpace.x2 + AOMSpace.x0_5 + AOMSpace.x1)
+        .padding(.top, AOMSpace.x1)
+        .accessibilityElement(children: .contain)
+    }
+}
+
 /// The way into ⌘K, drawn like the system's sidebar search field: one
 /// standard 28 pt capsule whose fill and label deepen under the pointer,
 /// aligned with the selection inset of the rows below. Its own view, so
@@ -439,7 +483,7 @@ private struct AOMSidebarSearchButton: View {
                 }
                 .foregroundStyle(hovering ? AOMColor.text : AOMColor.textSecondary)
                 .padding(.horizontal, AOMSpace.x2 + AOMSpace.x0_5)
-                .frame(height: AOMSize.rowDetail)
+                .frame(height: AOMSize.rowStandard)
                 .background(hovering ? AOMColor.surfaceHover : AOMColor.surface, in: Capsule())
                 .overlay {
                     Capsule().strokeBorder(contrast == .increased ? AOMColor.strongLine : AOMColor.hairline,

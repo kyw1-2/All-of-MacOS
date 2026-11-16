@@ -216,17 +216,27 @@ struct AOMEmptyState<Actions: View>: View {
         self.actions = actions()
     }
 
+    @Environment(\.aomPageTab) private var pageTab
+
     var body: some View {
         VStack(spacing: AOMSpace.x2) {
-            Image(systemName: systemImage)
-                .font(.system(size: AOMIcon.empty, weight: .regular))
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(AOMColor.textSecondary)
-                .frame(height: AOMIcon.empty)
-                .accessibilityHidden(true)
+            if let pageTab {
+                // 5.0: the empty page shows whose page it is, in its hue.
+                AOMAppIcon(AOMIdentity(symbol: systemImage,
+                                       color: pageTab.identity.isBrand ? AOMBrand.start : pageTab.identity.color),
+                           size: AOMIcon.identityHero)
+                    .padding(.bottom, AOMSpace.x1)
+            } else {
+                Image(systemName: systemImage)
+                    .font(.system(size: AOMIcon.empty, weight: .regular))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(AOMColor.textSecondary)
+                    .frame(height: AOMIcon.empty)
+                    .accessibilityHidden(true)
+            }
             VStack(spacing: AOMSpace.x1) {
                 Text(title)
-                    .font(AOMFont.bodyEmphasis)
+                    .font(pageTab == nil ? AOMFont.bodyEmphasis : AOMFont.title)
                     .foregroundStyle(AOMColor.text)
                     .accessibilityAddTraits(.isHeader)
                 Text(message)

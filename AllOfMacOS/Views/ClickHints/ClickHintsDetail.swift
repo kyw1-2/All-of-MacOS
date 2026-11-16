@@ -40,7 +40,7 @@ struct ClickHintsDetail: View {
     var body: some View {
         AOMPage(maxWidth: AOMSize.readableWidth) {
             AOMPageHeader("Click Hints", subtitle: "Click buttons and links by typing the letters on them",
-                          help: "Press the shortcut and every button, link, field, tab and row in the front window gets a one- or two-letter label. Type a label to click it. Hints read the window through Accessibility, stay out of password fields and excluded apps, and cost nothing while they are off.") {
+                          help: "Press the shortcut and every button, link, field, tab and row in the front window gets a one- or two-letter label. Type a label to click it. Hints read the window through Accessibility, stay out of password fields and excluded apps, and cost nothing while they are off.", identity: false) {
                 Button(tryPending ? "Starting…" : "Try It") { tryIt() }
                     .disabled(tryPending)
                     .help("Shows hints over this window in a moment; Esc hides them")

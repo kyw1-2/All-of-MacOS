@@ -45,6 +45,7 @@ struct AOMPageHost<Page: View>: View {
                     page(tab)
                         .frame(width: size.width, height: size.height)
                         .environment(\.aomPageActivity, navigation.activity(for: tab))
+                        .environment(\.aomPageTab, tab)
                         .opacity(AOMPageHiding.current.opacity(active: active))
                         .offset(x: AOMPageHiding.current.offset(active: active))
                         .allowsHitTesting(active)

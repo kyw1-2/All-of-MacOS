@@ -1049,12 +1049,10 @@ struct AOMHUDContent: View {
 
     var body: some View {
         VStack(spacing: AOMSpace.x2) {
-            Image(systemName: symbol)
-                .font(AOMFont.display)
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(tone?.color ?? AOMColor.text)
-                .frame(width: AOMIcon.hudGlyph, height: AOMIcon.hudGlyph)
-                .accessibilityHidden(true)
+            // 5.0: the HUD wears a mark like Swish's live tooltips — the
+            // state's colour on a squircle, readable over any wallpaper.
+            AOMAppIcon(AOMIdentity(symbol: symbol, color: tone?.color ?? AOMBrand.start),
+                       size: AOMIcon.hudGlyph + AOMSpace.x2)
             Text(title)
                 .font(AOMFont.headline)
                 .foregroundStyle(AOMColor.text)

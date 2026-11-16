@@ -1,3 +1,17 @@
+## [5.0.0] - 2026-11-16
+
+### Changed
+- **Studio: every tool has its own identity.** Each destination now has a fixed mark — a white symbol on a squircle in the tool's colour, like System Settings and Raycast — in the sidebar, page headers, setting rows, empty states, Explore cards, quick actions, the ⌘K palette and the Settings window. Switches and selection keep the system accent; colour never replaces status words. See docs/design-5.0-studio.md.
+- **Action bar under every page.** After Raycast's bottom bar: the page's mark, name and purpose on the left; related tools, an Actions panel (the page's quick actions, Go to, Search, Pause/Resume, Settings — with shortcuts, ↑↓ ↩ Esc) and Search ⌘K on the right. It replaces the Related tools strip; the duplicate toolbar search button is gone.
+- **Sidebar control header.** The AOM mark, Running/Paused and the master switch sit at the top of the sidebar, so Pause is one click from every page. Automation's mark turns grey while AOM is paused.
+- **Workspace.** A banner with a greeting and one line of state replaces the slogan; the "AOM is running" card appears only when something needs you or in My Workspace. Explore cards carry marks with a colour wash and hover lift; quick actions are coloured marks.
+- **Automation starts from the input.** An empty Automation page lists Trackpad, Keyboard, Mouse, Drawing and Other as cards (BetterTouchTool's trigger categories, made visible).
+- **Capture, palette, Settings, HUDs.** Capture modes are capture-coloured marks (Record stays red); palette commands wear their tool's colour; Settings rows use their row colours; HUD glyphs sit on a tone-coloured mark.
+
+### Validation
+- 155 tests passed (new: `StudioIdentityTests` — unique marks and SF Symbols, distinct hues in light and dark, action-bar model, greeting).
+- Main window pages, the palette, the Actions panel and Settings were reviewed in light and dark preview screenshots. Real-hardware behaviour of engines is unchanged by this release.
+
 ## [4.0.0] - 2026-11-15
 
 ### Changed

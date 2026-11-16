@@ -20,8 +20,10 @@ import SwiftUI
 //   window's glass backdrop; anything drawn over other content (a label on a
 //   chart) uses the opaque `overlaySurface`.
 // - Colour has three jobs: the accent marks interaction, semantic colours mark
-//   status (always with a glyph and text), module hues key charts and rings
-//   only. Icons are monochrome SF Symbols; nothing is a coloured badge.
+//   status (always with a glyph and text), and since 5.0 module hues mark
+//   identity — the tool's squircle mark (AOMIdentity.swift) in the sidebar,
+//   page header, action bar, cards, palette, row icons — plus charts and
+//   rings. Controls never take a module hue.
 // - Motion confirms, it never decorates; Reduce Motion turns movement into a
 //   short crossfade.
 
@@ -63,8 +65,9 @@ enum AOMSpace {
     static let rowInset: CGFloat = 10
     /// Above and below a row's text, inside its minimum height.
     static let rowPadding: CGFloat = 3
-    /// Divider inset for rows with a leading 16 pt symbol: 10 + 16 + 8.
-    static let rowSymbolInset = rowInset + AOMIcon.row + x2
+    /// Divider inset for rows with a leading identity mark: 10 + 20 + 10,
+    /// so the hairline starts under the title (System Settings).
+    static let rowSymbolInset = rowInset + AOMIcon.identityRow + rowInset
 
     static let xs = x2
     static let s = x3
@@ -156,6 +159,8 @@ enum AOMSize {
     static let tokenFieldMinHeight: CGFloat = 28
     /// A live log row: one line of Body with its time stamp.
     static let logRow: CGFloat = 24
+    /// The action bar under every page (5.0).
+    static let actionBarHeight: CGFloat = 34
     /// Floating confirmations (toasts) never grow wider than this.
     static let toastMaxWidth: CGFloat = 520
 }
@@ -584,6 +589,18 @@ enum AOMIcon {
     static let listBadge: CGFloat = 20
     /// The glyph frame of a floating HUD (mic mute, focus start).
     static let hudGlyph: CGFloat = 40
+
+    // 5.0 identity marks (AOMAppIcon): a filled glyph on the tool's hue.
+    /// Setting rows, sidebar rows and palette rows (System Settings row icon).
+    static let identityRow: CGFloat = 20
+    /// The action bar at the bottom of a page.
+    static let identityBar: CGFloat = 18
+    /// Explore cards and Workspace module tiles.
+    static let identityCard: CGFloat = 34
+    /// A page's identity header.
+    static let identityHeader: CGFloat = 40
+    /// Empty states and the Workspace banner.
+    static let identityHero: CGFloat = 52
 }
 
 // MARK: - Dynamic colours

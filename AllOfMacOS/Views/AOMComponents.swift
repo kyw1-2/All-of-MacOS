@@ -111,20 +111,29 @@ struct AOMPageHeader<Trailing: View>: View {
     @Environment(\.colorScheme) private var scheme
     @Environment(\.colorSchemeContrast) private var contrast
 
+    /// Draw the page's identity mark (5.0). Sub-headers inside an editor or
+    /// a detail pane pass false, so a page shows its mark once.
+    var identity = true
+    @Environment(\.aomPageTab) private var pageTab
+
     init(_ title: String, subtitle: String? = nil,
-         status: AOMStatus? = nil, help: String? = nil, active: Bool = true,
+         status: AOMStatus? = nil, help: String? = nil, active: Bool = true, identity: Bool = true,
          @ViewBuilder trailing: () -> Trailing = { EmptyView() }) {
         self.title = title
         self.subtitle = subtitle
         self.status = status
         self.help = help
         self.active = active
+        self.identity = identity
         self.trailing = trailing()
     }
 
     var body: some View {
-        HStack(alignment: .center, spacing: AOMSpace.x4) {
-            VStack(alignment: .leading, spacing: AOMSpace.x1) {
+        HStack(alignment: .center, spacing: AOMSpace.x3) {
+            if identity, let pageTab {
+                AOMAppIcon(pageTab, size: AOMIcon.identityHeader, active: active)
+            }
+            VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
                 HStack(spacing: AOMSpace.x2) {
                     Text(title).font(AOMFont.pageTitle).foregroundStyle(AOMColor.text)
                         .fixedSize(horizontal: false, vertical: true)
@@ -299,14 +308,10 @@ struct AOMSettingRow<Control: View>: View {
     }
 
     var body: some View {
-        HStack(alignment: .center, spacing: AOMSpace.x2) {
+        HStack(alignment: .center, spacing: AOMSpace.rowInset) {
             if let symbol {
-                Image(systemName: symbol)
-                    .font(AOMFont.callout)
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(AOMColor.textSecondary)
-                    .frame(width: AOMIcon.row)
-                    .accessibilityHidden(true)
+                // 5.0: a System Settings row icon in the page's hue.
+                AOMRowIcon(symbol: symbol)
             }
             VStack(alignment: .leading, spacing: 1) {
                 HStack(alignment: .center, spacing: AOMSpace.x1) {
@@ -326,7 +331,7 @@ struct AOMSettingRow<Control: View>: View {
                 }
             }
             .layoutPriority(1)
-            Spacer(minLength: AOMSpace.x3)
+            Spacer(minLength: AOMSpace.x2)
             control
                 .labelsHidden()
                 .toggleStyle(AOMRowSwitchStyle())
@@ -543,18 +548,20 @@ struct AOMStatusPill: View {
 
 // MARK: - Module badge and tile
 
-/// A module or item mark: its SF Symbol in a quiet neutral squircle, the
-/// way Finder, Xcode and System Information draw item icons. Colour is not
-/// identity here (it marks interaction and status only), so a page of tiles
-/// reads as one surface instead of a palette. An inactive mark dims its glyph.
+/// A module or item mark (5.0): the module's identity — its filled symbol in
+/// white on the module's hue — or, for a plain symbol, the same mark in the
+/// hue of the page it sits on (graphite outside the main window). An
+/// inactive mark desaturates.
 struct AOMModuleBadge: View {
     let symbol: String
+    var color: Color?
     var size: CGFloat = AOMIcon.tileBadge
     var active = true
-    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.aomPageTab) private var pageTab
 
     init(_ module: AOMModule, size: CGFloat = AOMIcon.tileBadge, active: Bool = true) {
-        self.symbol = module.symbol
+        self.symbol = module.identity.symbol
+        self.color = module.identity.color
         self.size = size
         self.active = active
     }
@@ -566,18 +573,9 @@ struct AOMModuleBadge: View {
     }
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: AOMRadius.squircle(size), style: .continuous)
-        // The glyph keeps the tile proportion (13 pt in a 24 pt squircle) at every size.
-        Image(systemName: symbol)
-            .font(.system(size: (size * AOMIcon.tileGlyph / AOMIcon.tileBadge).rounded(), weight: .medium))
-            .symbolRenderingMode(.monochrome)
-            .foregroundStyle(active ? AOMColor.text : AOMColor.textTertiary)
-            .frame(width: size, height: size)
-            .background(active ? AOMColor.sunken : AOMColor.track, in: shape)
-            .overlay {
-                if contrast == .increased { shape.strokeBorder(AOMColor.strongLine, lineWidth: 1) }
-            }
-            .accessibilityHidden(true)
+        let pageColor = pageTab.map { $0.identity.isBrand ? AOMBrand.start : $0.identity.color }
+        AOMAppIcon(AOMIdentity(symbol: symbol, color: color ?? pageColor ?? AOMBrand.graphite),
+                   size: size, active: active)
     }
 }
 

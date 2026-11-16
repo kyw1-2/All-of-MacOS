@@ -164,19 +164,14 @@ struct HubRowShell<Control: View>: View {
 
     /// e.3, the `AOMSettingRow` geometry, so Settings rows line up with the
     /// Shortcuts and Permissions panes and every other page: a 20 pt
-    /// monochrome symbol (the tint stays in the API but colour has no job
-    /// here), Body title, an optional Caption line under it, the control at
+    /// identity mark in the row's tint (5.0), Body title, an optional Caption line under it, the control at
     /// the trailing edge; 36 pt tall, 48 pt with a description.
     var body: some View {
         HStack(alignment: .center, spacing: AOMSpace.x2) {
             HStack(alignment: .center, spacing: AOMSpace.x2) {
-                Image(systemName: icon)
-                    .font(AOMFont.body)
-                    .imageScale(.large)
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(AOMColor.textSecondary)
-                    .frame(width: AOMIcon.row, height: AOMIcon.row)
-                    .accessibilityHidden(true)
+                // 5.0: System Settings' row icon — the row's own tint as
+                // a squircle behind a white glyph.
+                AOMAppIcon(AOMIdentity(symbol: icon, color: tint), size: AOMIcon.identityRow)
                 // The title over its description, as System Settings draws a
                 // described row (design-336 #74; 3.3.5 put both on one line).
                 VStack(alignment: .leading, spacing: 1) {
@@ -755,9 +750,9 @@ struct SettingsHubView: View {
             List(selection: sidebarSelection) {
                 ForEach(SettingsCategory.allCases) { cat in
                     HStack(spacing: AOMSpace.x2) {
-                        // Outline symbols in one column, like the main window's sidebar.
+                        // 5.0: System Settings' coloured row icons, like the main sidebar.
                         Label { Text(cat.title) } icon: {
-                            Image(systemName: cat.symbol).frame(width: AOMIcon.row)
+                            AOMAppIcon(cat.identity, size: AOMIcon.identityRow)
                         }
                         Spacer(minLength: 0)
                         if cat == .permissions { PermissionSummaryBadge(compact: true, onAccent: false) }

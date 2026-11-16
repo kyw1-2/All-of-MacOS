@@ -149,7 +149,7 @@ struct TextActionsExcludedAppsDetail: View {
     var body: some View {
         AOMPage(maxWidth: AOMSize.readableWidth) {
             AOMPageHeader("Excluded Apps", subtitle: settings.excludedApps.isEmpty ? "The bar can appear in every app"
-                                                                  : "The bar never appears in \(Self.count(settings.excludedApps.count))")
+                                                                  : "The bar never appears in \(Self.count(settings.excludedApps.count))", identity: false)
             AOMSection("Apps", footer: "Password managers start on the list. In every app the bar also stays out of password fields and secure keyboard entry, and while AOM is paused.") {
                 TextActionsAppList(bundleIDs: $settings.excludedApps)
             }
@@ -172,7 +172,7 @@ struct TextActionDetail: View {
 
     var body: some View {
         AOMPage(maxWidth: AOMSize.readableWidth) {
-            AOMPageHeader(id.title, subtitle: id.detail, active: settings.isOn(id)) {
+            AOMPageHeader(id.title, subtitle: id.detail, active: settings.isOn(id), identity: false) {
                 Toggle(id.title, isOn: isOn)
                     .labelsHidden()
                     .toggleStyle(.switch)

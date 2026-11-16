@@ -295,6 +295,23 @@ struct AOMCardLink: View {
 /// round face over a short label (11 pt), its shortcut (10 pt) underneath. The whole tile is the target;
 /// hover shows a quiet well and the press dims, so a row of them reads like
 /// the system screenshot toolbar.
+/// A mode button's face: a squircle mark that lifts under the pointer.
+private struct AOMModeMark: View {
+    let symbol: String
+    let tint: Color?
+    @Environment(\.aomPageTab) private var pageTab
+    @State private var hovering = false
+
+    var body: some View {
+        let page = pageTab.map { $0.identity.isBrand ? AOMBrand.start : $0.identity.color }
+        AOMAppIcon(AOMIdentity(symbol: symbol, color: tint ?? page ?? AOMBrand.graphite),
+                   size: AOMSize.modeButton)
+            .scaleEffect(hovering ? 1.06 : 1)
+            .onHover { hovering = $0 }
+            .aomAnimation(.quick, value: hovering)
+    }
+}
+
 struct AOMModeButton: View {
     let title: String
     let symbol: String
@@ -336,11 +353,9 @@ struct AOMModeButton: View {
                 // The Workspace quick-action face: a round button with the
                 // name and its shortcut under it, no box around.
                 VStack(spacing: AOMSpace.x1) {
-                    Image(systemName: symbol)
-                        .font(AOMFont.body.weight(.medium))
-                        .foregroundStyle(tint)
-                        .frame(width: AOMSize.modeButton, height: AOMSize.modeButton)
-                        .aomRoundGlass()
+                    // 5.0: the mode's mark in the page's hue; a mode with its
+                    // own colour (Record in red) keeps it.
+                    AOMModeMark(symbol: symbol, tint: tint == AOMTheme.text ? nil : tint)
                     Text(title)
                         .font(AOMFont.caption.weight(.medium))
                         .foregroundStyle(AOMTheme.text)

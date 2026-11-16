@@ -1031,11 +1031,11 @@ struct MixerAppRow: View {
     @ViewBuilder private var icon: some View {
         if let image = app.icon {
             Image(nsImage: image).resizable().aspectRatio(contentMode: .fit)
-                .frame(width: AOMIcon.row, height: AOMIcon.row)
+                .frame(width: AOMIcon.identityRow, height: AOMIcon.identityRow)
                 .opacity(app.isPlaying || app.tapped ? 1 : 0.6)
                 .accessibilityHidden(true)
         } else {
-            Image(systemName: "app.dashed").frame(width: AOMIcon.row, height: AOMIcon.row).accessibilityHidden(true)
+            Image(systemName: "app.dashed").frame(width: AOMIcon.identityRow, height: AOMIcon.identityRow).accessibilityHidden(true)
         }
     }
 

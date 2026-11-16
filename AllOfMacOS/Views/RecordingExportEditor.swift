@@ -86,7 +86,7 @@ struct RecordingExportEditor: View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: AOMSpace.x3) {
                 AOMPageHeader("Edit Recording", subtitle: source.lastPathComponent,
-                              help: "Edits are saved as a Studio project beside the movie, and the original recording is never changed. Ranges, zooms and layers stay anchored to the recording's own time, so reordering never moves them.") {
+                              help: "Edits are saved as a Studio project beside the movie, and the original recording is never changed. Ranges, zooms and layers stay anchored to the recording's own time, so reordering never moves them.", identity: false) {
                     Button("Close") { if let onClose { onClose() } else { dismiss() } }
                         .keyboardShortcut(.cancelAction)
                         .disabled(isExporting)

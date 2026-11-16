@@ -68,6 +68,8 @@ struct QuickCommandPalette: View {
         var image: NSImage?
         /// Shown but unavailable (a disabled menu item).
         var isDimmed = false
+        /// 5.0: a destination's own mark (pages, Settings categories).
+        var identity: AOMIdentity?
 
         /// The palette stays a launcher, not a context menu.
         static let secondaryLimit = 3
@@ -473,6 +475,7 @@ struct QuickCommandPalette: View {
                                   shortcut: tab.shortcutKey.map { "⌘\($0.character)" },
                                   primary: PaletteAction(title: "Open") { close(); appState.selectedMainTab = tab })
             item.keywords = tab.discoveryKeywords
+            item.identity = tab.identity
             return item
         }
         items += SettingsCategory.allCases.map { category in
@@ -485,6 +488,7 @@ struct QuickCommandPalette: View {
                             }
                         })
             item.keywords = category.discoveryKeywords
+            item.identity = category.identity
             return item
         }
         items.append(Self.homebrewItem {
@@ -906,14 +910,40 @@ struct QuickCommandPalette: View {
                 .frame(width: PaletteMetrics.rowBadge, height: PaletteMetrics.rowBadge)
                 .accessibilityHidden(true)
         } else {
-            Image(systemName: item.icon)
-                .font(AOMFont.callout.weight(.semibold))
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(selected ? Color.white : AOMColor.textSecondary)
-                .frame(width: PaletteMetrics.rowBadge, height: PaletteMetrics.rowBadge)
-                .background(selected ? Color.white.opacity(0.18) : AOMColor.track,
-                            in: RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous))
-                .accessibilityHidden(true)
+            // 5.0: every row wears a mark — the destination's own, the hue
+            // of the tool a command belongs to, or its section's hue
+            // (Raycast's coloured command icons).
+            AOMAppIcon(item.identity ?? AOMIdentity(symbol: item.icon,
+                                                    color: Self.commandColor(id: item.id) ?? Self.sectionColor(item.section)),
+                       size: PaletteMetrics.rowBadge, active: !item.isDimmed)
+        }
+    }
+
+    /// The tool a command row belongs to, from its id's prefix.
+    static func commandColor(id: String) -> Color? {
+        let prefix = id.split(separator: ".").first.map(String.init) ?? ""
+        switch prefix {
+        case "capture": return AOMModule.capture.hue
+        case "clipboard": return AOMModule.clipboard.hue
+        case "window": return AOMModule.tiling.hue
+        case "audio": return AOMModule.audio.hue
+        case "system": return AOMModule.systemTools.hue
+        case "files": return AOMModule.files.hue
+        default: return nil
+        }
+    }
+
+    /// The hue of a section's rows: the module that owns them, graphite for
+    /// system-wide rows.
+    static func sectionColor(_ section: Section) -> Color {
+        switch section {
+        case .commands: return AOMBrand.start
+        case .automations: return AOMModule.automation.hue
+        case .clipboard: return AOMModule.clipboard.hue
+        case .captures: return AOMModule.capture.hue
+        case .recentFiles, .files: return AOMModule.files.hue
+        case .quicklinks, .bookmarks: return AOMModule.tiling.hue
+        case .calculator, .navigation, .applications, .menuItems, .fallback: return AOMBrand.graphite
         }
     }
 
@@ -1145,7 +1175,7 @@ enum PaletteApplications {
 /// 24 pt rows): a 28 pt badge on a 40 pt row; the calculator's answer row
 /// is taller.
 private enum PaletteMetrics {
-    static let rowBadge: CGFloat = 28
+    static let rowBadge: CGFloat = 24
     static let rowHeight: CGFloat = 40
     static let calculatorHeight: CGFloat = 56
     static let actionPanelWidth: CGFloat = 280
