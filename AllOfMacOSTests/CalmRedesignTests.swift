@@ -8,7 +8,7 @@ final class CalmRedesignTests: XCTestCase {
     typealias Host = AOMPageHost<EmptyView>
 
     func testLivePagesAreCappedAndKeepTheirOrder() {
-        let order: [AOMMainTab] = [.home, .gestures, .snapping, .capture]
+        let order: [AOMMainTab] = [.home, .gestures, .snapping, .capture, .clipboard]
         var visited: [AOMMainTab] = []
         var recent: [AOMMainTab] = []
         for tab in order {
@@ -16,21 +16,21 @@ final class CalmRedesignTests: XCTestCase {
             recent.append(tab)
         }
         XCTAssertEqual(visited, order, "up to the cap nothing is evicted")
-        // A fifth page evicts the least recently selected one (Workspace).
+        // One more page evicts the least recently selected one (Workspace).
         visited = Host.live(selecting: .audio, after: visited, recent: recent)
         recent.append(.audio)
-        XCTAssertEqual(visited, [.gestures, .snapping, .capture, .audio])
+        XCTAssertEqual(visited, [.gestures, .snapping, .capture, .clipboard, .audio])
         // Revisiting a live page changes nothing; the selected page is never evicted.
         XCTAssertEqual(Host.live(selecting: .gestures, after: visited, recent: recent), visited)
         XCTAssertEqual(visited.count, AOMPageRetention.keepAlive)
     }
 
     func testRecentlySelectedPagesSurviveEviction() {
-        let visited: [AOMMainTab] = [.home, .gestures, .snapping, .capture]
+        let visited: [AOMMainTab] = [.home, .gestures, .snapping, .capture, .clipboard]
         // Workspace was selected most recently before Audio: Automation goes.
-        let recent: [AOMMainTab] = [.gestures, .snapping, .capture, .home]
+        let recent: [AOMMainTab] = [.gestures, .snapping, .capture, .clipboard, .home]
         XCTAssertEqual(Host.live(selecting: .audio, after: visited, recent: recent),
-                       [.home, .snapping, .capture, .audio])
+                       [.home, .snapping, .capture, .clipboard, .audio])
     }
 
     @MainActor

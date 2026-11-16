@@ -62,16 +62,16 @@ same machine:
 | | worst stall per reopen | main-thread CPU per reopen |
 |---|---|---|
 | 5.0.0 (all 12 visited pages alive) | 224–277 ms | 255–309 ms |
-| 6.0.0 | 107–163 ms | 139–301 ms |
+| 6.0.0 (five pages alive) | 107–180 ms | 140–380 ms (varied between runs with machine load) |
 
 Causes found by sampling: every live page is laid out again when the window is shown; the Files
 page called `FileManager.displayName` and read icons from its body; the toolbar subtitle was a
 preference re-collected across every live page on each update; Focus' Add App menu enumerated
-running apps on every render. Fixes: at most four pages stay built (`AOMPageRetention.keepAlive`,
+running apps on every render. Fixes: at most five pages stay built (`AOMPageRetention.keepAlive`,
 least recently selected evicted, order preserved); the subtitle is a store the page writes
 (`AOMToolbarSubtitles`); Files shows a placeholder until it has read the real values; the running-apps
 list is cached for 5 s. With only Workspace alive the remaining cost is SwiftUI's own layout and
-rendering (AOM frames are a few samples). Release builds are faster than these debug figures.
+rendering (AOM frames are a few samples). The unbundled release binary measured about the same stall (101–148 ms): the remaining cost is SwiftUI/AppKit layout, not AOM code. A page built from scratch costs 300–450 ms in release, which is why five pages stay built rather than fewer.
 
 ## Verification
 

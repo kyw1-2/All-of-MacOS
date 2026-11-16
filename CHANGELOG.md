@@ -9,7 +9,7 @@
 - **Menu bar panel.** Clicking the menu bar icon opens a control panel: the master switch, tiles for Drag to Snap, Clipboard, App Audio, Keep Awake and Gesture HUD, an active focus session or muted microphone, six quick actions, then Open, Settings, All Commands and Quit. ⌥-click or right-click opens the full menu as before.
 
 ### Fixed
-- **The main window lagged every time it opened.** All visited pages stayed built and were laid out again on every show; the Files page read the file system and the toolbar subtitle walked every page while drawing. At most four pages stay built now, and those reads moved out of drawing. Reopening stalls the main thread about 110–160 ms instead of 225–280 ms in the debug bench (`--aom-preview-bench-reopen`).
+- **The main window lagged every time it opened.** All visited pages stayed built and were laid out again on every show; the Files page read the file system and the toolbar subtitle walked every page while drawing. At most five pages stay built now, and those reads moved out of drawing. Reopening stalls the main thread about 110–180 ms instead of 225–280 ms in the debug bench (`--aom-preview-bench-reopen`); the rest is SwiftUI layout.
 
 ### Validation
 - 160 tests passed (new: `CalmRedesignTests`).

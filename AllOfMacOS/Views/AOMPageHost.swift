@@ -35,8 +35,10 @@ struct AOMPageHost<Page: View>: View {
     /// How many pages stay built (5.1). Every live page is laid out again
     /// whenever the window is shown, made key or resized: with all twelve
     /// alive, reopening the window stalled the main thread about 230 ms
-    /// (debug build) against about 70 ms with one. Four keeps Back/Forward
-    /// and the pages you move between instant and bounds the reopen cost.
+    /// (debug build) against about 70 ms with one. A page built from
+    /// scratch costs 300–450 ms (release), far more than the 10–20 ms each
+    /// live page adds to a reopen, so five stay: Back/Forward and the pages
+    /// you move between stay instant, and the reopen cost is bounded.
     nonisolated static var keepAlive: Int { AOMPageRetention.keepAlive }
 
     /// The live pages after selecting `tab`, given the selection order
@@ -102,7 +104,7 @@ struct AOMPageHost<Page: View>: View {
 
 /// How many main-window pages stay built (see `AOMPageHost.live`).
 enum AOMPageRetention {
-    static let keepAlive = 4
+    static let keepAlive = 5
 }
 
 /// How a page kept alive behind the selected one is hidden. Isolated previews
