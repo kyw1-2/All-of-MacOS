@@ -1344,6 +1344,30 @@ final class AppAudioEngine {
     /// Bounded recovery of just the affected AirPlay receiver. Never flip the
     /// persistent master toggle (or revive it after the user turned it off),
     /// and do not disrupt unrelated local and remote audio outputs.
+    /// The direct path's IO size: `AOMAudioAirPlayDirectIOFrames` (default
+    /// 512, 128–4096), clamped to what the aggregate allows.
+    static let directIOFramesKey = "AOMAudioAirPlayDirectIOFrames"
+
+    static func directIOFrames(defaults: UserDefaults = .standard, range: ClosedRange<Double>? = nil) -> UInt32 {
+        let stored = defaults.object(forKey: directIOFramesKey) as? Int ?? 512
+        var frames = Double(min(max(stored, 128), 4096))
+        if let range { frames = min(range.upperBound, max(range.lowerBound, frames)) }
+        return UInt32(frames)
+    }
+
+    private static func setDirectIOFrames(_ aggregateID: AudioObjectID) {
+        var address = AudioOutputService.address(kAudioDevicePropertyBufferFrameSize)
+        var writable: DarwinBoolean = false
+        guard AudioObjectIsPropertySettable(aggregateID, &address, &writable) == noErr, writable.boolValue else { return }
+        var range: ClosedRange<Double>?
+        if let value = property(aggregateID, selector: kAudioDevicePropertyBufferFrameSizeRange, as: AudioValueRange.self),
+           value.mMinimum.isFinite, value.mMaximum.isFinite, value.mMinimum >= 1, value.mMaximum >= value.mMinimum {
+            range = value.mMinimum...value.mMaximum
+        }
+        var frames = directIOFrames(range: range)
+        _ = AudioObjectSetPropertyData(aggregateID, &address, 0, nil, UInt32(MemoryLayout<UInt32>.size), &frames)
+    }
+
     @discardableResult func restartAppAudioAfterCrackle(uid: String) -> Bool {
         guard isEnabled, Self.airPlayProcessingEnabled, !uid.isEmpty,
               !crackleRestartPending else { return false }
@@ -1576,6 +1600,13 @@ final class AppAudioEngine {
             AudioHardwareDestroyAggregateDevice(aggregateID)
             AudioHardwareDestroyProcessTap(tapID)
         }
+        // 6.2.1 crackle fix: the aggregate ran at the AirPlay device's
+        // default 128-frame IO (2.7 ms per cycle at 48 kHz). In 19 minutes of
+        // Chrome on a HomePod the HAL reported 9 processor overloads, each a
+        // ~420-frame (9 ms) gap — the crackle. AirPlay adds about 2 s of
+        // latency anyway, so a 512-frame cycle (10.7 ms) costs nothing
+        // audible and quadruples the deadline.
+        Self.setDirectIOFrames(aggregateID)
         guard let format = Self.property(tapID, selector: kAudioTapPropertyFormat, as: AudioStreamBasicDescription.self),
               Self.supports(format),
               let rate = Self.property(aggregateID, selector: kAudioDevicePropertyNominalSampleRate, as: Float64.self),

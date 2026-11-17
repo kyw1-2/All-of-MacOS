@@ -1,3 +1,8 @@
+## [6.2.1] - 2026-11-17
+
+### Fixed
+- **Crackling on the HomePod (AirPlay direct path).** The per-app aggregate ran at the AirPlay device's default 128-frame IO (2.7 ms per cycle). In a 19-minute diagnostic of Chrome on a HomePod, the HAL reported 9 processor overloads, each dropping about 420 frames (~9 ms) — one audible crackle each, every one to three minutes. The direct path now asks for 512 frames (10.7 ms per cycle, clamped to the device's range); AirPlay's own ~2 s latency makes the difference inaudible. `defaults write com.kyw.allofmacos AOMAudioAirPlayDirectIOFrames -int 128` restores the old size (128–4096). The event log's "outputStarted" line shows the size in use.
+
 ## [6.2.0] - 2026-11-17
 
 ### Changed

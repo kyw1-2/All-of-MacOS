@@ -214,3 +214,20 @@ final class AirPlayDirectTests: XCTestCase {
         XCTAssertEqual(AirPlayDirectCounters().json["renderCostMeanMicros"] as? Double, 0, "no cycles yet")
     }
 }
+
+/// 6.2.1: the direct path's IO size (crackle fix).
+@available(macOS 14.2, *)
+final class AirPlayDirectIOFramesTests: XCTestCase {
+    func testDefaultIsFiveHundredTwelveAndClamped() {
+        let defaults = UserDefaults(suiteName: "AOMDirectIOFramesTests.\(UUID().uuidString)")!
+        XCTAssertEqual(AppAudioEngine.directIOFrames(defaults: defaults), 512)
+        // The device's allowed range wins.
+        XCTAssertEqual(AppAudioEngine.directIOFrames(defaults: defaults, range: 14...256), 256)
+        defaults.set(64, forKey: AppAudioEngine.directIOFramesKey)
+        XCTAssertEqual(AppAudioEngine.directIOFrames(defaults: defaults), 128)
+        defaults.set(100_000, forKey: AppAudioEngine.directIOFramesKey)
+        XCTAssertEqual(AppAudioEngine.directIOFrames(defaults: defaults), 4096)
+        defaults.set(1024, forKey: AppAudioEngine.directIOFramesKey)
+        XCTAssertEqual(AppAudioEngine.directIOFrames(defaults: defaults, range: 14...4096), 1024)
+    }
+}
