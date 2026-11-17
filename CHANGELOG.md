@@ -1,3 +1,14 @@
+## [6.2.0] - 2026-11-17
+
+### Changed
+- **A new Automation list header.** The tall warning box, the row of scope chips, the row of input chips and the toolbar search are replaced by one composed header, after studying Raycast (a dropdown at the end of the search bar), Finder (search scope beside the query), Apple Mail (category bar: icons, the selected one widens to its name), Linear (view title with a count, quiet filters), Things and Notion (view titles), BetterTouchTool and Keyboard Maestro (apps with their own icons), Shortcuts (counts), Xcode's navigator filter, Spotify's filter pills and GitHub's filter tokens:
+  - "Automations" with the count as the list's title.
+  - One search field ("Search 64 automations", ⌘F) whose right end is the scope: All apps / Every app / an app (with its own icon) / a group, each with its count, plus Edit Activation Groups.
+  - The input kinds as a category bar: icons, and the selected kind widens to its name and count on the automation colour.
+  - A missing permission or a pause is one slim line with its fix (the full sentence in the tooltip).
+- **Automation rows you can read.** A custom list replaces the system one: the input's mark, the full name on up to two lines (never cut), input → what it does on the second line, the keys; the switch appears under the pointer or on the selected row, and "Off" marks a disabled one. The selected row is a raised card with an accent edge instead of a grey block; ↑↓ and Delete still work. The list column is wider by default (380 pt, adjustable 300–480).
+- **The input bar is a segmented track**: every kind shows its glyph and count; the selected one sits on a white plate with its name.
+
 ## [6.1.1] - 2026-11-17
 
 ### Fixed

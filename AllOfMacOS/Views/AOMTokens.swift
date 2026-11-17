@@ -96,8 +96,8 @@ enum AOMSize {
     /// inserted at the top (a new copy, a new automation) are never measured short.
     static let listRowDouble: CGFloat = 42
     /// The Automation list column; the editor takes the rest.
-    static let listColumnRange: ClosedRange<Double> = 270...380
-    static let listColumnIdeal: Double = 312
+    static let listColumnRange: ClosedRange<Double> = 300...480
+    static let listColumnIdeal: Double = 380
     /// Below this the editor can't show an action row without truncating.
     static let editorMinimum: CGFloat = 440
     /// Readable line length for editors and forms.

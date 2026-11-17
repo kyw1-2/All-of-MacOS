@@ -13,13 +13,15 @@ import SwiftUI
 struct ModernGesturesWorkspace: View {
     @EnvironmentObject var appState: AppState
     @AppStorage("AOMAutomationViewMode") private var viewMode = ViewMode.list
-    @AppStorage("AOMAutomationListWidth") private var listWidth: Double = AOMSize.listColumnIdeal
+    /// 6.2: a new key, so the wider default reaches people who had the old one.
+    @AppStorage("AOMAutomationListWidth.v2") private var listWidth: Double = AOMSize.listColumnIdeal
     @AppStorage("AOMAutomationTableWidth") private var tableWidth: Double = 560
     @State private var showingGroupsEditor = false
     @State private var showingBrowseActions = false
     @State private var selectedDeviceCategory: TriggerCategory = .all
     @State private var searchQuery = ""
     @State private var searchPresented = false
+    @FocusState private var listFocused: Bool
     @State private var runStates: [UUID: AOMRunState] = [:]
     @State private var expandedActionIDs: Set<UUID> = []
     @State private var showOptions = false
@@ -134,27 +136,52 @@ struct ModernGesturesWorkspace: View {
         }
     }
 
-    private var scopeBar: some View {
+    /// 6.2 header: title and count, search with the scope at its end, and
+    /// the input kinds as a category bar (AutomationListHeader.swift).
+    private var listHeader: some View {
         let triggers = appState.currentPreset.triggers
-        let everywhere = triggers.filter { $0.activationGroupID == nil && ($0.appBundleID?.isEmpty ?? true) }.count
-        var items: [AOMScopeItem<ScopeTab>] = [
-            AOMScopeItem(id: .all, title: "All", symbol: "square.stack", count: triggers.count),
-            AOMScopeItem(id: .everywhere, title: "Every app", symbol: "globe", count: everywhere)
+        var scopes = [
+            AutomationScopeChoice(kind: .all, title: "All apps", count: triggers.count),
+            AutomationScopeChoice(kind: .everywhere, title: "Every app",
+                                  count: triggers.filter { $0.activationGroupID == nil && ($0.appBundleID?.isEmpty ?? true) }.count)
         ]
         for target in appState.currentPreset.appTargets where !target.isGlobal {
             let count = triggers.filter { $0.activationGroupID == nil && $0.appBundleID == target.bundleID }.count
-            if count > 0 { items.append(AOMScopeItem(id: .app(target.id), title: target.name, symbol: "app", count: count)) }
+            scopes.append(AutomationScopeChoice(kind: .app(target.id), title: target.name, count: count, bundleID: target.bundleID))
         }
         for group in appState.currentPreset.activationGroups {
-            let count = triggers.filter { $0.activationGroupID == group.id }.count
-            if count > 0 { items.append(AOMScopeItem(id: .group(group.id), title: group.name, symbol: "square.stack.3d.up", count: count)) }
+            scopes.append(AutomationScopeChoice(kind: .group(group.id), title: group.name,
+                                                count: triggers.filter { $0.activationGroupID == group.id }.count))
         }
-        return AOMScopeBar(items: items, selection: Binding(get: { scopeTab }, set: { selectScope($0) }),
-                           accessibilityLabel: "Show automations for")
-            .padding(.horizontal, AOMSpace.x2)
-            .padding(.top, AOMSpace.x1)
-            .help("Which automations the list shows. An automation's own Applies to sets where it runs.")
+        let scoped = scopedTriggers
+        let inputs = TriggerCategory.allCases.map { category in
+            AutomationInputChoice(category: category, title: Self.shortTitle(category),
+                                  symbol: category == .all ? "square.grid.2x2.fill" : AddTriggerSheet.railSymbol(category),
+                                  count: category == .all ? scoped.count : scoped.filter { $0.input.category == category }.count)
+        }
+        let kind: AutomationScopeChoice.Kind = {
+            switch scopeTab {
+            case .all: return .all
+            case .everywhere: return .everywhere
+            case .app(let id): return .app(id)
+            case .group(let id): return .group(id)
+            }
+        }()
+        return AutomationListHeader(
+            total: scoped.count, query: $searchQuery, focusRequest: $searchPresented,
+            scopes: scopes, scope: kind,
+            selectScope: { choice in
+                switch choice {
+                case .all: selectScope(.all)
+                case .everywhere: selectScope(.everywhere)
+                case .app(let id): selectScope(.app(id))
+                case .group(let id): selectScope(.group(id))
+                }
+            },
+            inputs: inputs, input: $selectedDeviceCategory,
+            editGroups: { showingGroupsEditor = true })
     }
+
 
     private var rows: [Trigger] {
         let base = filteredTriggers
@@ -201,9 +228,8 @@ struct ModernGesturesWorkspace: View {
         .aomPane()
         .aomToolbarSubtitle(subtitle)
         .aomPageToolbar {
+            // 6.2: the search moved into the list's header, beside its scope.
             toolbarContent
-            // Presenting the search (Edit ▸ Search Automations) focuses it.
-            AOMToolbarSearchItem(text: $searchQuery, prompt: "Search names or actions", focusRequest: $searchPresented)
         }
         // File ▸ New Automation (⌘N) and Edit ▸ Search Automations (⌘F) act on
         // this page while it is selected; the toolbar help promises ⌘N.
@@ -356,8 +382,7 @@ struct ModernGesturesWorkspace: View {
     private var listPane: some View {
         VStack(spacing: 0) {
             AutomationStatusNotice()
-            scopeBar
-            filterBar
+            listHeader
             listSummary
             AOMDivider()
             if rows.isEmpty {
@@ -427,20 +452,6 @@ struct ModernGesturesWorkspace: View {
         .accessibilityElement(children: .combine)
     }
 
-    private var filterBar: some View {
-        let items = TriggerCategory.allCases.map { category -> AOMScopeItem<TriggerCategory> in
-            AOMScopeItem(id: category, title: Self.shortTitle(category),
-                         symbol: category == .all ? nil : category.iconName)
-        }
-        return ScrollView(.horizontal) {
-            AOMScopeBar(items: items, selection: $selectedDeviceCategory, accessibilityLabel: "Input")
-                .padding(.horizontal, AOMSpace.rowInset)
-        }
-        // `.hidden` still draws the scroller when macOS shows scroll bars always.
-        .scrollIndicators(.never)
-        // One chip plus 8 pt above and below it.
-        .frame(height: AOMFeatureSize.chip + AOMSpace.x4)
-    }
 
     private var list: some View {
         let selectedID = appState.selectedTrigger?.id
@@ -454,28 +465,47 @@ struct ModernGesturesWorkspace: View {
             if let id = trigger.appBundleID, !id.isEmpty { return appNames[id] ?? id }
             return nil
         }
-        return List(selection: selection) {
-            ForEach(rows) { trigger in
-                AOMAutomationRow(trigger: trigger, isSelected: selectedID == trigger.id, showsSwitch: true,
-                                 lastRun: stats.lastFired(trigger.input.displayName), showsDetail: true,
-                                 scope: scope(trigger),
-                                 setEnabled: { appState.setTriggerEnabled($0, triggerID: trigger.id) })
-                    .equatable()
-                    .modifier(FiredFlash(triggerID: trigger.id))
-                    .tag(trigger.id)
+        // 6.2: a custom list — readable rows that never cut the name, a
+        // raised selection card, the switch on hover — with ↑↓ and Delete.
+        let current = rows
+        return ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 2) {
+                    ForEach(current) { trigger in
+                        AutomationListRow(trigger: trigger, isSelected: selectedID == trigger.id,
+                                          lastRun: stats.lastFired(trigger.input.displayName),
+                                          scope: scope(trigger),
+                                          setEnabled: { appState.setTriggerEnabled($0, triggerID: trigger.id) })
+                            .equatable()
+                            .modifier(FiredFlash(triggerID: trigger.id))
+                            .id(trigger.id)
+                            .onTapGesture { selection.wrappedValue = trigger.id; listFocused = true }
+                            .contextMenu { triggerMenu(trigger) }
+                    }
+                }
+                .padding(.horizontal, AOMSpace.x2)
+                .padding(.vertical, AOMSpace.x1)
+            }
+            .scrollIndicators(.automatic)
+            .focusable()
+            .focusEffectDisabled()
+            .focused($listFocused)
+            .onKeyPress(.downArrow) { moveSelection(1, in: current, proxy: proxy); return .handled }
+            .onKeyPress(.upArrow) { moveSelection(-1, in: current, proxy: proxy); return .handled }
+            .onChange(of: selectedID) { _, id in
+                if let id { withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id, anchor: nil) } }
             }
         }
-        // One menu for the list instead of a context menu on every row.
-        .contextMenu(forSelectionType: UUID.self) { ids in
-            if let id = ids.first, let trigger = appState.currentPreset.triggers.first(where: { $0.id == id }) {
-                triggerMenu(trigger)
-            }
-        }
-        .listStyle(.inset(alternatesRowBackgrounds: false))
-        .scrollContentBackground(.hidden)
-        .scrollIndicators(.never)
-        .environment(\.defaultMinListRowHeight, AOMSize.listRowDouble)
+        .accessibilityElement(children: .contain)
         .accessibilityLabel("Automations")
+    }
+
+    private func moveSelection(_ step: Int, in list: [Trigger], proxy: ScrollViewProxy) {
+        guard !list.isEmpty else { return }
+        let index = list.firstIndex { $0.id == appState.selectedTrigger?.id } ?? (step > 0 ? -1 : list.count)
+        let next = min(max(index + step, 0), list.count - 1)
+        selection.wrappedValue = list[next].id
+        proxy.scrollTo(list[next].id, anchor: nil)
     }
 
     private var table: some View {

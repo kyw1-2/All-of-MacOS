@@ -16,21 +16,16 @@ struct AutomationStatusNotice: View {
             // Always present, so the polling task runs while no notice shows.
             Color.clear.frame(height: 0)
             if let permission = blocking {
-                // "Accessibility is off." in bold, its consequence underneath:
-                // one bold sentence wraps to four lines in the list column.
+                // 6.2: one slim line; the full sentence is its tooltip.
                 let sentence = permission.attentionSentence
                 let cut = sentence.range(of: ". ")
-                AOMNotice(.warning, cut.map { String(sentence[..<$0.lowerBound]) + "." } ?? sentence,
-                          detail: cut.map { String(sentence[$0.upperBound...]) }) {
-                    Button("Allow…") { _ = permission.openSettings() }
-                }
-                .padding([.horizontal, .top], AOMSpace.x3)
+                AOMStatusStrip(tone: .warning,
+                               text: cut.map { String(sentence[..<$0.lowerBound]) } ?? sentence,
+                               detail: sentence, actionTitle: "Allow…") { _ = permission.openSettings() }
             } else if !appState.globalEnabled || suppressionPaused {
-                AOMNotice(.info, "AOM is paused, so automations don't run.",
-                          detail: suppressionPaused ? suppressionDetail : nil) {
-                    Button("Resume", action: resume)
-                }
-                .padding([.horizontal, .top], AOMSpace.x3)
+                AOMStatusStrip(tone: .neutral, text: "AOM is paused — automations don't run",
+                               detail: suppressionPaused ? suppressionDetail : nil,
+                               actionTitle: "Resume", action: resume)
             }
         }
         // Only while the Automation page is selected and on screen.

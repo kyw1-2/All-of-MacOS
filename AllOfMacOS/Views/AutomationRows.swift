@@ -102,3 +102,111 @@ struct AOMAutomationRow: View, Equatable {
         }
     }
 }
+
+// MARK: - 6.2 list row
+
+/// One automation in the 6.2 list (the owner: rows were cut off, hard to read,
+/// and the selection a grey block). The input's mark, the name on up to two
+/// lines (never cut), what it does on one line, its keys; the switch appears
+/// under the pointer or when selected, "Off" otherwise marks a disabled one.
+/// Selected: a raised card with an accent edge (Things, Linear).
+struct AutomationListRow: View, Equatable {
+    let trigger: Trigger
+    let isSelected: Bool
+    var lastRun: Date?
+    var scope: String?
+    let setEnabled: (Bool) -> Void
+    @State private var hovering = false
+    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.controlActiveState) private var activeState
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.trigger == rhs.trigger && lhs.isSelected == rhs.isSelected
+            && lhs.lastRun == rhs.lastRun && lhs.scope == rhs.scope
+    }
+
+    private var symbol: String { AddTriggerSheet.railSymbol(trigger.input.category) }
+
+    /// What it does, then where and when — never the input again when the
+    /// name already says it.
+    private var detail: String {
+        // The input → what it does (the input is left out when the name is
+        // the input itself, and for shortcuts, whose keys show as caps).
+        var parts = [trigger.aomRowDetail]
+        if let scope, !scope.isEmpty { parts.append(scope) }
+        if let ran = AOMAutomationRow.lastRunText(lastRun) { parts.append(ran) }
+        return parts.filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 9, style: .continuous)
+        let enabled = trigger.isEnabled
+        HStack(alignment: .top, spacing: AOMSpace.x2 + AOMSpace.x0_5) {
+            AOMAppIcon(AOMIdentity(symbol: symbol, color: AOMModule.automation.hue), size: 28, active: enabled)
+                .padding(.top, 1)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x1) {
+                    if trigger.isFavorite {
+                        Image(systemName: "pin.fill")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(AOMModule.automation.hue)
+                            .accessibilityLabel("Pinned")
+                    }
+                    Text(trigger.displayName)
+                        .font(.system(size: 13, weight: isSelected ? .semibold : .medium))
+                        .foregroundStyle(enabled ? AOMColor.text : AOMColor.textSecondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Text(detail)
+                    .font(AOMFont.caption)
+                    .foregroundStyle(AOMColor.textSecondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .trailing, spacing: AOMSpace.x1) {
+                if hovering || isSelected {
+                    Toggle("Enabled", isOn: Binding(get: { enabled }, set: setEnabled))
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.mini)
+                        .accessibilityLabel("Enable \(trigger.displayName)")
+                } else if !enabled {
+                    Text("Off")
+                        .font(AOMFont.caption.weight(.semibold))
+                        .foregroundStyle(AOMColor.textSecondary)
+                        .padding(.horizontal, 6)
+                        .frame(height: 18)
+                        .background(Color.primary.opacity(0.07), in: Capsule())
+                }
+                if case .keyboardShortcut(let shortcut) = trigger.input {
+                    AOMShortcutKeys(shortcut: shortcut)
+                }
+            }
+        }
+        .padding(.horizontal, AOMSpace.x2 + AOMSpace.x0_5)
+        .padding(.vertical, AOMSpace.x2)
+        .background {
+            if isSelected {
+                shape.fill(AOMColor.surface)
+                    .shadow(color: .black.opacity(0.06), radius: 3, y: 1)
+                    .overlay(alignment: .leading) {
+                        Capsule().fill(activeState == .inactive ? AOMColor.textTertiary : AOMColor.accent)
+                            .frame(width: 3)
+                            .padding(.vertical, AOMSpace.x2)
+                    }
+                shape.strokeBorder(contrast == .increased ? AOMColor.strongLine : AOMColor.accent.opacity(0.35),
+                                   lineWidth: contrast == .increased ? 1 : 0.75)
+            } else if hovering {
+                shape.fill(AOMColor.rowHover)
+            }
+        }
+        .contentShape(shape)
+        .onHover { hovering = $0 }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(trigger.displayName)
+        .accessibilityValue("\(enabled ? "On" : "Off"), \(detail)")
+        .accessibilityAddTraits(isSelected ? [.isSelected, .isButton] : .isButton)
+    }
+}

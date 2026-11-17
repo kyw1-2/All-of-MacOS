@@ -45,3 +45,12 @@ Codex's review flagged it (`scopedTriggers`: "All Applications" = global rules o
 for 6.2 as "a new feature". The owner asked for it specifically, so 6.1.1 does it: an "All" view
 (default, stored in `AOMAutomationShowsAll`), visible scope tabs with counts instead of the toolbar
 menu, and a labelled "Applies to" picker in the editor with "Every app" / "Only in <app>".
+
+## 6.2.0 — the list header
+
+The owner found the 6.1.1 tabs still blunt. References for a filter/scope bar: Raycast (search-bar
+dropdown accessory), Finder (search scope), Apple Mail (category bar), Linear (view header and filters),
+Things, Notion (view titles), BetterTouchTool and Keyboard Maestro (app icons for scopes), Shortcuts
+(counts), Xcode (navigator filter), Spotify (filter pills), GitHub (filter tokens). Implemented in
+`AutomationListHeader.swift`: title + count, one search field with the scope as its accessory, a
+Mail-style input bar, and `AOMStatusStrip` for the permission/pause notice.
