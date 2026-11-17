@@ -38,3 +38,10 @@ plans were made in parallel and merged here:
 
 Five live pages, no page-transition animation, hidden pages idle, Calm colour budget (colour marks
 which tool; repeated rows neutral), 13 pt body, system text fields.
+
+## 6.1.1 — "All Applications"
+
+Codex's review flagged it (`scopedTriggers`: "All Applications" = global rules only) and 6.1.0 left it
+for 6.2 as "a new feature". The owner asked for it specifically, so 6.1.1 does it: an "All" view
+(default, stored in `AOMAutomationShowsAll`), visible scope tabs with counts instead of the toolbar
+menu, and a labelled "Applies to" picker in the editor with "Every app" / "Only in <app>".

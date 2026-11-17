@@ -58,9 +58,18 @@ struct ModernGesturesWorkspace: View {
 
     // MARK: Data
 
-    /// Triggers in the current scope (global, one app, or one group).
+    /// 6.1: the list shows every automation by default. "All Applications"
+    /// used to mean "only the ones without an app or group" — app-specific
+    /// and group automations vanished from the list while the label said
+    /// "All". The view filter and the automation's own "Applies to" are now
+    /// two different, labelled things.
+    @AppStorage("AOMAutomationShowsAll") private var showsAllScopes = true
+
+    /// Triggers in the current view: all of them, or those that apply
+    /// everywhere, to one app, or to one group.
     private var scopedTriggers: [Trigger] {
-        appState.currentPreset.triggers.filter { trigger in
+        if showsAllScopes { return appState.currentPreset.triggers }
+        return appState.currentPreset.triggers.filter { trigger in
             if let targetGroupID = appState.selectedActivationGroupID {
                 return trigger.activationGroupID == targetGroupID
             }
@@ -86,9 +95,65 @@ struct ModernGesturesWorkspace: View {
     }
 
     private var scopeTitle: String {
+        if showsAllScopes { return "All automations" }
         if let id = appState.selectedActivationGroupID,
-           let group = appState.currentPreset.activationGroups.first(where: { $0.id == id }) { return group.name }
-        return appState.selectedAppTarget.isGlobal ? "All Applications" : appState.selectedAppTarget.name
+           let group = appState.currentPreset.activationGroups.first(where: { $0.id == id }) { return "Group: " + group.name }
+        return appState.selectedAppTarget.isGlobal ? "Every app only" : "Only in " + appState.selectedAppTarget.name
+    }
+
+    /// The view tabs over the list: All, Every app, then each app and group
+    /// that has automations, with counts.
+    private enum ScopeTab: Hashable {
+        case all, everywhere, app(UUID), group(UUID)
+    }
+
+    private var scopeTab: ScopeTab {
+        if showsAllScopes { return .all }
+        if let id = appState.selectedActivationGroupID { return .group(id) }
+        return appState.selectedAppTarget.isGlobal ? .everywhere : .app(appState.selectedAppTarget.id)
+    }
+
+    private func selectScope(_ tab: ScopeTab) {
+        switch tab {
+        case .all:
+            showsAllScopes = true
+            appState.selectedActivationGroupID = nil
+            appState.selectedAppTarget = .allApps
+        case .everywhere:
+            showsAllScopes = false
+            appState.selectedActivationGroupID = nil
+            appState.selectedAppTarget = .allApps
+        case .app(let id):
+            guard let target = appState.currentPreset.appTargets.first(where: { $0.id == id }) else { return }
+            showsAllScopes = false
+            appState.selectedActivationGroupID = nil
+            appState.selectedAppTarget = target
+        case .group(let id):
+            showsAllScopes = false
+            appState.selectedActivationGroupID = id
+        }
+    }
+
+    private var scopeBar: some View {
+        let triggers = appState.currentPreset.triggers
+        let everywhere = triggers.filter { $0.activationGroupID == nil && ($0.appBundleID?.isEmpty ?? true) }.count
+        var items: [AOMScopeItem<ScopeTab>] = [
+            AOMScopeItem(id: .all, title: "All", symbol: "square.stack", count: triggers.count),
+            AOMScopeItem(id: .everywhere, title: "Every app", symbol: "globe", count: everywhere)
+        ]
+        for target in appState.currentPreset.appTargets where !target.isGlobal {
+            let count = triggers.filter { $0.activationGroupID == nil && $0.appBundleID == target.bundleID }.count
+            if count > 0 { items.append(AOMScopeItem(id: .app(target.id), title: target.name, symbol: "app", count: count)) }
+        }
+        for group in appState.currentPreset.activationGroups {
+            let count = triggers.filter { $0.activationGroupID == group.id }.count
+            if count > 0 { items.append(AOMScopeItem(id: .group(group.id), title: group.name, symbol: "square.stack.3d.up", count: count)) }
+        }
+        return AOMScopeBar(items: items, selection: Binding(get: { scopeTab }, set: { selectScope($0) }),
+                           accessibilityLabel: "Show automations for")
+            .padding(.horizontal, AOMSpace.x2)
+            .padding(.top, AOMSpace.x1)
+            .help("Which automations the list shows. An automation's own Applies to sets where it runs.")
     }
 
     private var rows: [Trigger] {
@@ -194,7 +259,6 @@ struct ModernGesturesWorkspace: View {
 
     @ToolbarContentBuilder private var toolbarContent: some ToolbarContent {
         ToolbarItemGroup(placement: .automatic) {
-            scopeMenu
             Button {
                 showingGroupsEditor = true
             } label: {
@@ -292,6 +356,7 @@ struct ModernGesturesWorkspace: View {
     private var listPane: some View {
         VStack(spacing: 0) {
             AutomationStatusNotice()
+            scopeBar
             filterBar
             listSummary
             AOMDivider()
@@ -553,52 +618,6 @@ struct ModernGesturesWorkspace: View {
         })
     }
 
-    private var scopeMenu: some View {
-        Menu {
-            Picker("Show automations for", selection: Binding<String>(
-                get: {
-                    if let id = appState.selectedActivationGroupID { return "group:" + id.uuidString }
-                    return appState.selectedAppTarget.isGlobal ? "global" : "app:" + appState.selectedAppTarget.id.uuidString
-                },
-                set: { value in
-                    if value == "global" {
-                        appState.selectedActivationGroupID = nil
-                        appState.selectedAppTarget = .allApps
-                    } else if value.hasPrefix("group:"), let id = UUID(uuidString: String(value.dropFirst(6))) {
-                        appState.selectedActivationGroupID = id
-                    } else if value.hasPrefix("app:"),
-                              let target = appState.currentPreset.appTargets.first(where: { "app:" + $0.id.uuidString == value }) {
-                        appState.selectedActivationGroupID = nil
-                        appState.selectedAppTarget = target
-                    }
-                })) {
-                Label("All Applications", systemImage: "globe").tag("global")
-                let apps = appState.currentPreset.appTargets.filter { !$0.isGlobal }
-                if !apps.isEmpty {
-                    Section("Applications") {
-                        ForEach(apps) { target in Text(target.name).tag("app:" + target.id.uuidString) }
-                    }
-                }
-                if !appState.currentPreset.activationGroups.isEmpty {
-                    Section("Activation Groups") {
-                        ForEach(appState.currentPreset.activationGroups) { group in
-                            Text(group.name).tag("group:" + group.id.uuidString)
-                        }
-                    }
-                }
-            }
-            .pickerStyle(.inline)
-            Divider()
-            Button("Edit Activation Groups…") { showingGroupsEditor = true }
-        } label: {
-            Label(scopeTitle, systemImage: appState.selectedActivationGroupID != nil ? "square.stack.3d.up"
-                  : appState.selectedAppTarget.isGlobal ? "globe" : "app")
-                .labelStyle(.titleAndIcon)
-        }
-        .fixedSize()
-        .help("Show automations for one app or activation group")
-    }
-
     // MARK: - Editor
 
     @ViewBuilder private func editorPane(compact: Bool) -> some View {
@@ -728,31 +747,32 @@ struct ModernGesturesWorkspace: View {
                 if value.hasPrefix("group:"), let id = UUID(uuidString: String(value.dropFirst(6))) {
                     latest.activationGroupID = id
                     latest.appBundleID = nil
-                    appState.selectedActivationGroupID = id
+                    if !showsAllScopes { appState.selectedActivationGroupID = id }
                 } else {
                     latest.activationGroupID = nil
                     latest.appBundleID = value == "global" ? nil : String(value.dropFirst(4))
-                    appState.selectedActivationGroupID = nil
-                    appState.selectedAppTarget = value == "global" ? .allApps
-                        : appState.currentPreset.appTargets.first { $0.bundleID == latest.appBundleID } ?? .allApps
+                    if !showsAllScopes {
+                        appState.selectedActivationGroupID = nil
+                        appState.selectedAppTarget = value == "global" ? .allApps
+                            : appState.currentPreset.appTargets.first { $0.bundleID == latest.appBundleID } ?? .allApps
+                    }
                 }
                 appState.updateTrigger(latest)
                 appState.selectedTrigger = latest
             })) {
-            Text("All Applications").tag("global")
+            Text("Every app").tag("global")
             ForEach(appState.currentPreset.appTargets.filter { !$0.isGlobal }) { target in
-                if let bundleID = target.bundleID { Text(target.name).tag("app:" + bundleID) }
+                if let bundleID = target.bundleID { Text("Only in " + target.name).tag("app:" + bundleID) }
             }
             ForEach(appState.currentPreset.activationGroups) { group in
                 Text("Group: " + group.name).tag("group:" + group.id.uuidString)
             }
         } label: {
-            Label("Applies to", systemImage: "app.badge")
+            Text("Applies to")
         }
-        .labelsHidden()
         .pickerStyle(.menu)
         .fixedSize()
-        .help("App-specific automations override groups; groups override All Applications.")
+        .help("Where this automation runs. App-specific automations override groups; groups override Every app.")
     }
 
     /// When: the input as one row in an opaque card; Edit Input opens the

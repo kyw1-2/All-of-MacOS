@@ -1,3 +1,8 @@
+## [6.1.1] - 2026-11-17
+
+### Fixed
+- **Automation's "All Applications" hid most automations.** The list filter labelled "All Applications" showed only automations that run in every app; app-specific and group automations disappeared while the label said "All", and the editor's scope picker showed the same words with a different meaning. The list now shows every automation by default, and the filter is a row of tabs over the list (All, Every app, each app and group, with counts). The editor's picker is labelled "Applies to" with "Every app" / "Only in <app>" / "Group: <name>". The hidden toolbar filter menu is gone; Edit Activation Groups stays in the toolbar and the list's ⋯ menu.
+
 ## [6.1.0] - 2026-11-17
 
 Plans from three reviewers were merged before building: Codex's 6.0 UX review, DeepSeek's Automation alternatives and a page-by-page inventory with a second reference sweep. See docs/design-6.1-plan.md.
