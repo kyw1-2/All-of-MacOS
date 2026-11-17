@@ -1,3 +1,13 @@
+## [6.2.2] - 2026-11-17
+
+### Fixed
+- **Correction to 6.2.1.** macOS's AirPlay output ignores the IO buffer size: setting 512 frames on the device or on an aggregate around it returns success but stays at 128 (measured on this Mac). The 6.2.1 change did nothing and is removed.
+
+### Crackle investigation (no AOM code change)
+- With Chrome on a HomePod, the AirPlay direct path logged HAL processor overloads about once a minute, each a ~9 ms gap — the crackle. AOM's own render cost was 26 µs on average (139 µs worst) per 2.7 ms cycle.
+- Two things on the machine lined up with them: heavy compiles, and the Ulanzi deck's Home page, whose widgets kept running a 5-ping burst every 13 s, a Wi-Fi signal read every 8.5 s, GPU/temperature reads every 4–6 s, an Oracle HTTP check every 5 s and an Oracle RAM graph every second (Ulanzi Studio ~15 % CPU, airportd ~22 %).
+- With those widgets moved off the deck's Home page: 0 overloads in about 8.5 minutes of playback (before: 3 in 4 minutes); Ulanzi Studio 0.9 % CPU, airportd 0 %. See docs/crackle-20261117.md.
+
 ## [6.2.1] - 2026-11-17
 
 ### Fixed
