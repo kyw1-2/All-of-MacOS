@@ -588,13 +588,25 @@ struct AOMLayoutDiagram: View {
             let scaled = CGRect(x: region.minX * inner.width, y: region.minY * inner.height,
                                 width: region.width * inner.width, height: region.height * inner.height)
                 .insetBy(dx: 1, dy: 1)
+            // 6.1: a small display (Rectangle Pro's footprints, Loop's
+            // preview): a menu-bar line, the window in the tiling hue with a
+            // title-bar edge, and the hue at full strength under the pointer.
+            let hue = AOMModule.tiling.hue
             ZStack(alignment: .topLeading) {
                 screen.fill(AOMColor.sunken)
-                screen.strokeBorder(highlighted ? Color.accentColor.opacity(0.6)
+                Rectangle()
+                    .fill(AOMColor.textTertiary.opacity(0.25))
+                    .frame(height: max(1, size.height * 0.05))
+                    .clipShape(screen)
+                screen.strokeBorder(highlighted ? hue.opacity(0.8)
                                                 : (contrast == .increased ? AOMColor.strongLine : AOMColor.hairline),
                                     lineWidth: highlighted || contrast == .increased ? 1 : 0.5)
                 RoundedRectangle(cornerRadius: max(2, size.height * 0.08), style: .continuous)
-                    .fill(Color.accentColor.opacity(highlighted || contrast == .increased ? 0.85 : 0.5))
+                    .fill(hue.opacity(highlighted || contrast == .increased ? 0.9 : 0.45))
+                    .overlay(alignment: .top) {
+                        Rectangle().fill(Color.white.opacity(0.35)).frame(height: max(1, size.height * 0.04))
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: max(2, size.height * 0.08), style: .continuous))
                     .frame(width: max(0, scaled.width), height: max(0, scaled.height))
                     .offset(x: inset + scaled.minX, y: inset + scaled.minY)
                 if arrow {

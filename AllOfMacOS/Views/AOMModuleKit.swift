@@ -682,42 +682,46 @@ struct AOMStatusHeader<Actions: View>: View {
         self.actions = actions()
     }
 
+    // 6.1: a hero card (Flow, Session, Apple's Clock timers): a large ring
+    // in the module's hue around the time — full and quiet when idle, draining
+    // while it runs — the phase above, the detail below, actions trailing.
     var body: some View {
-        HStack(alignment: .center, spacing: AOMSpace.x3) {
-            // The ring only while something is in progress (a Focus
-            // session); otherwise the big figure stands alone.
-            if let progress {
-                ZStack {
-                    AOMProgressRing(progress: progress, tint: active ? module.hue : AOMColor.paused,
-                                    label: "\(title) progress")
-                    Image(systemName: module.symbol)
-                        .font(AOMFont.title)
-                        .foregroundStyle(active ? AOMColor.text : AOMColor.textTertiary)
-                        .symbolEffect(.pulse, options: .repeating, isActive: active && !reduceMotion)
-                        .accessibilityHidden(true)
-                }
-                .frame(width: AOMIcon.statusRing, height: AOMIcon.statusRing)
-            }
-            VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
-                HStack(spacing: AOMSpace.x2) {
-                    Text(title)
-                        .font(AOMFont.headline)
-                        .foregroundStyle(AOMColor.textSecondary)
-                        .lineLimit(1)
-                    if let status { AOMStatusPill(status.text, tone: status.tone, symbol: status.symbol) }
-                }
-                HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x1 + AOMSpace.x0_5) {
+        HStack(alignment: .center, spacing: AOMSpace.x5) {
+            ZStack {
+                Circle()
+                    .stroke(AOMColor.track, lineWidth: 7)
+                Circle()
+                    .trim(from: 0, to: max(0.0001, progress.map { 1 - $0 } ?? 1))
+                    .stroke(active ? module.hue : (progress == nil ? module.hue.opacity(0.35) : AOMColor.paused),
+                            style: StrokeStyle(lineWidth: 7, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                    .animation(reduceMotion ? nil : .linear(duration: 0.9), value: progress)
+                VStack(spacing: 0) {
                     Text(figure)
-                        .font(AOMFont.display)
+                        .font(.system(size: 30, weight: .semibold, design: .rounded).monospacedDigit())
                         .foregroundStyle(active ? AOMColor.text : AOMColor.textSecondary)
                         .contentTransition(reduceMotion ? .opacity : .numericText())
                         .lineLimit(1)
+                        .minimumScaleFactor(0.6)
                     if let unit {
                         Text(unit)
-                            .font(AOMFont.body)
+                            .font(AOMFont.caption)
                             .foregroundStyle(AOMColor.textSecondary)
-                            .lineLimit(1)
                     }
+                }
+                .padding(.horizontal, AOMSpace.x3)
+            }
+            .frame(width: 132, height: 132)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(title), \(figure)\(unit.map { " " + $0 } ?? "")")
+            VStack(alignment: .leading, spacing: AOMSpace.x1) {
+                HStack(spacing: AOMSpace.x2) {
+                    Circle().fill(active ? module.hue : AOMColor.paused).frame(width: 8, height: 8)
+                    Text(title)
+                        .font(AOMFont.title.weight(.semibold))
+                        .foregroundStyle(AOMColor.text)
+                        .lineLimit(1)
+                    if let status { AOMStatusPill(status.text, tone: status.tone, symbol: status.symbol) }
                 }
                 if let detail, !detail.isEmpty {
                     Text(detail)
@@ -726,18 +730,23 @@ struct AOMStatusHeader<Actions: View>: View {
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                HStack(spacing: AOMSpace.x2) { actions }
+                    .controlSize(.large)
+                    .fixedSize()
+                    .padding(.top, AOMSpace.x2)
             }
             .layoutPriority(1)
-            .accessibilityElement(children: .combine)
-            Spacer(minLength: AOMSpace.x3)
-            HStack(spacing: AOMSpace.x2) { actions }
-                .controlSize(.regular)
-                .fixedSize()
+            Spacer(minLength: 0)
         }
-        .frame(minHeight: progress == nil ? nil : AOMIcon.statusRing + AOMSpace.x2)
-        // The same 2 pt optical inset as AOMPageHeader, so the title starts
-        // on the header's text line.
-        .padding(.horizontal, AOMSpace.x0_5)
+        .padding(AOMSpace.x5)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            RoundedRectangle(cornerRadius: AOMRadius.panel, style: .continuous)
+                .fill(AOMColor.surface)
+            RoundedRectangle(cornerRadius: AOMRadius.panel, style: .continuous)
+                .fill(LinearGradient(colors: [module.hue.opacity(active ? 0.08 : 0.04), .clear],
+                                     startPoint: .leading, endPoint: .trailing))
+        }
         .accessibilityElement(children: .contain)
     }
 }

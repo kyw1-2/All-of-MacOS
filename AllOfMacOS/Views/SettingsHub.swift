@@ -416,7 +416,7 @@ enum AdvancedSheet: String, Identifiable {
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .gestures: "Gestures & Triggers"
+        case .gestures: "Automation Inputs"
         case .shortcuts: "Shortcut Recorder"
         case .permissions: "Permissions"
         case .backups: "Backups"

@@ -82,59 +82,64 @@ struct AddTriggerSheet: View {
         }
     }
 
+    // 6.1: two panes — the input kinds as a rail of marks with a line on what
+    // each listens to (BetterTouchTool's trigger categories, System
+    // Settings' sidebar), the chosen kind's picker beside it — instead of a
+    // segmented control over a narrow form.
     var body: some View {
-        VStack(alignment: .leading, spacing: AOMSpace.x4) {
-            // Named like the command that opens it (File › New Automation,
-            // the toolbar's New Automation).
-            Text("New Automation")
-                .font(AOMFont.title)
-                .foregroundStyle(AOMColor.text)
-                .accessibilityAddTraits(.isHeader)
-
-            Picker("Input type", selection: $category) {
-                ForEach(TriggerCategory.inputCategories) { item in
-                    Text(Self.shortTitle(item)).tag(item)
-                        .help(item.rawValue)
+        VStack(spacing: 0) {
+            HStack(alignment: .top, spacing: 0) {
+                inputRail
+                AOMDivider(axis: .vertical)
+                VStack(alignment: .leading, spacing: AOMSpace.x4) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("New \(Self.shortTitle(category)) Automation")
+                            .font(AOMFont.title.weight(.semibold))
+                            .foregroundStyle(AOMColor.text)
+                            .accessibilityAddTraits(.isHeader)
+                        Text(Self.railDetail(category))
+                            .font(AOMFont.callout)
+                            .foregroundStyle(AOMColor.textSecondary)
+                    }
+                    switch category {
+                    case .trackpad:
+                        trackpadPicker
+                    case .keyboard:
+                        Picker("Keyboard input", selection: $keyboardMode) {
+                            Text("Shortcut").tag("shortcut")
+                            Text("Key Sequence").tag("sequence")
+                            Text("Typed String").tag("typed")
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        if keyboardMode == "sequence" { sequenceRecorder }
+                        else if keyboardMode == "typed" { typedStringFields }
+                        else { keyboardRecorder }
+                    case .normalMouse:
+                        mousePicker
+                    case .drawings:
+                        ScrollView(showsIndicators: false) {
+                            DrawingPatternComposer(name: $drawingName, samples: $drawingSamples,
+                                                   certainty: $drawingCertainty,
+                                                   ignoreDirection: $drawingIgnoreDirection)
+                                .padding(AOMSpace.x1)
+                        }.frame(height: AOMEditorSize.drawingComposer)
+                    case .otherTriggers:
+                        otherTriggerPicker
+                    case .all:
+                        EmptyView()
+                    }
+                    Spacer(minLength: 0)
+                    VStack(alignment: .leading, spacing: AOMSpace.x1) {
+                        Text("Name").font(AOMFont.caption.weight(.semibold)).foregroundStyle(AOMColor.textSecondary)
+                        TextField("Optional — titled by its input otherwise", text: $triggerName)
+                            .textFieldStyle(.roundedBorder)
+                            .help("Unnamed automations are titled by their input")
+                    }
                 }
+                .padding(AOMSpace.x5)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .accessibilityLabel("Input type")
-            .onChange(of: category) { _, _ in keyboardMonitor.stopRecording() }
-
-            switch category {
-            case .trackpad:
-                trackpadPicker
-            case .keyboard:
-                Picker("Keyboard input", selection: $keyboardMode) {
-                    Text("Shortcut").tag("shortcut")
-                    Text("Key Sequence").tag("sequence")
-                    Text("Typed String").tag("typed")
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                if keyboardMode == "sequence" { sequenceRecorder }
-                else if keyboardMode == "typed" { typedStringFields }
-                else { keyboardRecorder }
-            case .normalMouse:
-                mousePicker
-            case .drawings:
-                ScrollView(showsIndicators: false) {
-                    DrawingPatternComposer(name: $drawingName, samples: $drawingSamples,
-                                           certainty: $drawingCertainty,
-                                           ignoreDirection: $drawingIgnoreDirection)
-                        .padding(AOMSpace.x1)
-                }.frame(height: AOMEditorSize.drawingComposer)
-            case .otherTriggers:
-                otherTriggerPicker
-            case .all:
-                EmptyView()
-            }
-
-            TextField("Automation name (optional)", text: $triggerName)
-                .textFieldStyle(.roundedBorder)
-                .help("Unnamed automations are titled by their input")
-
             AOMDivider()
             HStack(spacing: AOMSpace.x3) {
                 // Why Add is unavailable, in words (HIG Feedback #109).
@@ -148,13 +153,84 @@ struct AddTriggerSheet: View {
                 Spacer(minLength: AOMSpace.x2)
                 Button("Cancel") { keyboardMonitor.stopRecording(); dismiss() }
                     .keyboardShortcut(.cancelAction)
-                Button("Add") { addTrigger() }
+                Button("Add Automation") { addTrigger() }
                     .keyboardShortcut(.defaultAction).buttonStyle(AOMPrimaryButtonStyle())
                     .disabled(!canAdd)
             }
+            .padding(.horizontal, AOMSpace.x5)
+            .padding(.vertical, AOMSpace.x3)
+            .background(AOMColor.pageBackground)
         }
-        .padding(AOMSpace.x5)
-        .frame(width: category == .drawings ? AOMEditorSize.drawingSheet : AOMEditorSize.triggerSheet)
+        .frame(width: (category == .drawings ? AOMEditorSize.drawingSheet : AOMEditorSize.triggerSheet) + 200)
+    }
+
+    /// The input kinds, one row each: mark, name, what it listens to.
+    private var inputRail: some View {
+        VStack(alignment: .leading, spacing: AOMSpace.x1) {
+            Text("Input").font(AOMFont.caption.weight(.semibold)).foregroundStyle(AOMColor.textSecondary)
+                .padding(.horizontal, AOMSpace.x2).padding(.bottom, AOMSpace.x0_5)
+            ForEach(TriggerCategory.inputCategories) { item in
+                let selected = item == category
+                Button {
+                    if category != item { keyboardMonitor.stopRecording(); category = item }
+                } label: {
+                    HStack(spacing: AOMSpace.x2) {
+                        AOMAppIcon(AOMIdentity(symbol: Self.railSymbol(item), color: AOMModule.automation.hue),
+                                   size: 26)
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text(Self.shortTitle(item)).font(AOMFont.body.weight(.medium))
+                                .foregroundStyle(AOMColor.text)
+                            Text(Self.railDetail(item)).font(AOMFont.caption)
+                                .foregroundStyle(AOMColor.textSecondary).lineLimit(2)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, AOMSpace.x2)
+                    .padding(.vertical, AOMSpace.x1 + AOMSpace.x0_5)
+                    .frame(minHeight: 46)
+                    .background(selected ? AOMColor.surface : Color.clear,
+                                in: RoundedRectangle(cornerRadius: AOMRadius.well + 2, style: .continuous))
+                    .overlay {
+                        if selected {
+                            RoundedRectangle(cornerRadius: AOMRadius.well + 2, style: .continuous)
+                                .strokeBorder(AOMColor.hairline, lineWidth: 0.5)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(item.rawValue)
+                .accessibilityAddTraits(selected ? .isSelected : [])
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(AOMSpace.x3)
+        .frame(width: 200)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(AOMColor.pageBackground)
+    }
+
+    static func railSymbol(_ category: TriggerCategory) -> String {
+        switch category {
+        case .trackpad: return "hand.point.up.left.fill"
+        case .keyboard: return "keyboard.fill"
+        case .normalMouse: return "computermouse.fill"
+        case .drawings: return "scribble.variable"
+        case .otherTriggers: return "sparkles"
+        case .all: return "square.grid.2x2.fill"
+        }
+    }
+
+    static func railDetail(_ category: TriggerCategory) -> String {
+        switch category {
+        case .trackpad: return "Taps, swipes, pinches and clicks"
+        case .keyboard: return "Shortcuts and key sequences"
+        case .normalMouse: return "Buttons on any mouse"
+        case .drawings: return "Shapes you draw with the pointer"
+        case .otherTriggers: return "Schedules, apps, power and sleep"
+        case .all: return ""
+        }
     }
 
     /// What is still missing before Add works; nil when it does.

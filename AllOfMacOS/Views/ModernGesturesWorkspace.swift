@@ -22,8 +22,18 @@ struct ModernGesturesWorkspace: View {
     @State private var searchPresented = false
     @State private var runStates: [UUID: AOMRunState] = [:]
     @State private var expandedActionIDs: Set<UUID> = []
-    @State private var showOptions = true
-    @State private var showInputSettings = true
+    @State private var showOptions = false
+    @State private var showInputSettings = false
+    /// 6.1 (Codex review): what you opened in each automation's editor,
+    /// restored when you come back to it instead of a rule (≤ 6 steps all
+    /// open, 7+ all closed) that flipped between the 6th and 7th step.
+    @State private var editorMemory: [UUID: EditorMemory] = [:]
+
+    private struct EditorMemory {
+        var steps: Set<UUID> = []
+        var input = false
+        var options = false
+    }
     @State private var sortOrder: [KeyPathComparator<Trigger>] = []
     @State private var parentID: UUID?
     @State private var toElse = false
@@ -168,6 +178,9 @@ struct ModernGesturesWorkspace: View {
             }
         }
         .onChange(of: filteredTriggers.map(\.id)) { _, _ in reconcileSelection() }
+        .onChange(of: expandedActionIDs) { _, _ in rememberEditorState() }
+        .onChange(of: showInputSettings) { _, _ in rememberEditorState() }
+        .onChange(of: showOptions) { _, _ in rememberEditorState() }
         .onChange(of: appState.selectedTrigger?.id) { _, _ in
             syncExpandedEditorState()
             applyPreviewEditorHook()
@@ -175,7 +188,8 @@ struct ModernGesturesWorkspace: View {
         .aomPageDeleteCommand { if let trigger = selectedTrigger { delete(trigger) } }
         // 6.0: the selected automation and what can be done to it, in the
         // action bar (Test ⌘↩ is the primary).
-        .aomBarContext(id: BarContextKey(trigger: selectedTrigger)) { barContext() }
+        .aomBarContext(id: BarContextKey(trigger: selectedTrigger,
+                                         running: selectedTrigger.map { runStates[$0.id] == .running } ?? false)) { barContext() }
     }
 
     @ToolbarContentBuilder private var toolbarContent: some ToolbarContent {
@@ -245,19 +259,32 @@ struct ModernGesturesWorkspace: View {
         }
     }
 
+    /// Summary first (6.1): an automation opens with its steps as one-line
+    /// summaries and its input and options folded, unless you had opened
+    /// them before; a single-step automation opens its one step.
     private func syncExpandedEditorState() {
-        showInputSettings = true
-        showOptions = true
-        if let trigger = selectedTrigger {
-            let allRows = ActionTree.rows(trigger.actions)
-            if allRows.count <= 6 {
-                expandedActionIDs = Set(allRows.map(\.id))
-            } else {
-                expandedActionIDs.removeAll()
-            }
-        } else {
+        guard let trigger = selectedTrigger else {
             expandedActionIDs.removeAll()
+            showInputSettings = false
+            showOptions = false
+            return
         }
+        if let memory = editorMemory[trigger.id] {
+            let live = Set(ActionTree.rows(trigger.actions).map(\.id))
+            expandedActionIDs = memory.steps.intersection(live)
+            showInputSettings = memory.input
+            showOptions = memory.options
+        } else {
+            let allRows = ActionTree.rows(trigger.actions)
+            expandedActionIDs = allRows.count == 1 ? Set(allRows.map(\.id)) : []
+            showInputSettings = false
+            showOptions = false
+        }
+    }
+
+    private func rememberEditorState() {
+        guard let id = selectedTrigger?.id else { return }
+        editorMemory[id] = EditorMemory(steps: expandedActionIDs, input: showInputSettings, options: showOptions)
     }
 
     // MARK: - List column
@@ -266,6 +293,7 @@ struct ModernGesturesWorkspace: View {
         VStack(spacing: 0) {
             AutomationStatusNotice()
             filterBar
+            listSummary
             AOMDivider()
             if rows.isEmpty {
                 if searchQuery.isEmpty {
@@ -311,6 +339,29 @@ struct ModernGesturesWorkspace: View {
     /// The input filter as labelled chips. All categories stay visible so
     /// users can discover Trackpad, Keyboard, Mouse, Drawing and Other
     /// triggers at a glance; the chips carry no counts.
+    /// 6.1 (status first): how many are on and how many ran today, above
+    /// the rows — DeepSeek's alternative C, so the list answers "is it
+    /// working?" without a trip to Insights.
+    private var listSummary: some View {
+        let on = rows.filter(\.isEnabled).count
+        let start = Calendar.current.startOfDay(for: Date())
+        let names = Set(rows.map(\.input.displayName))
+        let ranToday = GestureStatistics.shared.events.reduce(into: 0) { count, event in
+            if event.fired, event.timestamp >= start, names.contains(event.gesture) { count += 1 }
+        }
+        return HStack(spacing: AOMSpace.x1 + AOMSpace.x0_5) {
+            Text("\(on) of \(rows.count) on")
+            Text("·").foregroundStyle(AOMColor.textTertiary)
+            Text(ranToday == 1 ? "1 run today" : "\(ranToday) runs today")
+            Spacer(minLength: 0)
+        }
+        .font(AOMFont.caption.monospacedDigit())
+        .foregroundStyle(AOMColor.textSecondary)
+        .padding(.horizontal, AOMSpace.rowInset + AOMSpace.x0_5)
+        .padding(.bottom, AOMSpace.x1 + AOMSpace.x0_5)
+        .accessibilityElement(children: .combine)
+    }
+
     private var filterBar: some View {
         let items = TriggerCategory.allCases.map { category -> AOMScopeItem<TriggerCategory> in
             AOMScopeItem(id: category, title: Self.shortTitle(category),
@@ -328,9 +379,21 @@ struct ModernGesturesWorkspace: View {
 
     private var list: some View {
         let selectedID = appState.selectedTrigger?.id
+        let stats = GestureStatistics.shared
+        let appNames = Dictionary(appState.currentPreset.appTargets.compactMap { target in
+            target.bundleID.map { ($0, target.name) } }, uniquingKeysWith: { first, _ in first })
+        let groupNames = Dictionary(appState.currentPreset.activationGroups.map { ($0.id, $0.name) },
+                                    uniquingKeysWith: { first, _ in first })
+        func scope(_ trigger: Trigger) -> String? {
+            if let group = trigger.activationGroupID { return groupNames[group].map { "Group: " + $0 } }
+            if let id = trigger.appBundleID, !id.isEmpty { return appNames[id] ?? id }
+            return nil
+        }
         return List(selection: selection) {
             ForEach(rows) { trigger in
-                AOMAutomationRow(trigger: trigger, isSelected: selectedID == trigger.id,
+                AOMAutomationRow(trigger: trigger, isSelected: selectedID == trigger.id, showsSwitch: true,
+                                 lastRun: stats.lastFired(trigger.input.displayName), showsDetail: true,
+                                 scope: scope(trigger),
                                  setEnabled: { appState.setTriggerEnabled($0, triggerID: trigger.id) })
                     .equatable()
                     .modifier(FiredFlash(triggerID: trigger.id))
@@ -419,7 +482,11 @@ struct ModernGesturesWorkspace: View {
         var favorite = false
         var runnable = false
         var name = ""
-        init(trigger: Trigger?) {
+        var running = false
+        var steps = 0
+        init(trigger: Trigger?, running: Bool = false) {
+            self.running = running
+            steps = trigger?.actions.count ?? 0
             id = trigger?.id
             enabled = trigger?.isEnabled ?? false
             favorite = trigger?.isFavorite ?? false
@@ -433,7 +500,8 @@ struct ModernGesturesWorkspace: View {
         let hue = AOMModule.automation.hue
         var actions: [AOMBarAction] = []
         if !trigger.actions.isEmpty, ActionTree.problem(trigger.actions) == nil {
-            actions.append(AOMBarAction(id: "auto.test", title: "Test", identity: AOMIdentity(symbol: "play.fill", color: hue),
+            actions.append(AOMBarAction(id: "auto.test", title: runStates[trigger.id] == .running ? "Running…" : "Run",
+                                        identity: AOMIdentity(symbol: "play.fill", color: hue),
                                         run: { test(trigger) }, key: SwiftUI.KeyboardShortcut(.return, modifiers: .command)))
         }
         actions.append(AOMBarAction(id: "auto.toggle", title: trigger.isEnabled ? "Turn Off" : "Turn On",
@@ -638,8 +706,10 @@ struct ModernGesturesWorkspace: View {
     /// "Trackpad · 2 steps · On" under the editor's title.
     private func editorSummary(_ trigger: Trigger) -> String {
         let steps = trigger.actions.count
+        let all = ActionTree.rows(trigger.actions).count
         var parts = [trigger.input.category.rawValue,
                      steps == 1 ? "1 step" : "\(steps) steps"]
+        if all > steps { parts[1] += " (\(all) in all)" }
         parts.append(trigger.isEnabled ? "On" : "Off")
         if trigger.isFavorite { parts.append("Pinned") }
         return parts.joined(separator: " · ")
@@ -717,7 +787,7 @@ struct ModernGesturesWorkspace: View {
                         }
                     }
                     Spacer(minLength: AOMSpace.x2)
-                    Button(showInputSettings ? "Done" : "Edit Input") {
+                    Button(showInputSettings ? "Close" : "Edit Input") {
                         withAnimation(AOMMotion.panel) { showInputSettings.toggle() }
                     }
                     .help(showInputSettings ? "Hide input settings" : "Change the input and its settings")
@@ -746,10 +816,10 @@ struct ModernGesturesWorkspace: View {
                 AOMRunStatusView(state: runState)
                 if !trigger.actions.isEmpty {
                     Button { test(trigger) } label: {
-                        Label("Test", systemImage: "play.fill")
+                        Label("Run", systemImage: "play.fill")
                     }
                     .disabled(runState == .running || ActionTree.problem(trigger.actions) != nil)
-                    .help(ActionTree.problem(trigger.actions) ?? "Run this workflow now")
+                    .help(ActionTree.problem(trigger.actions) ?? "Runs these steps now, for real (⌘↩)")
                 }
             }
             if trigger.valueBinding != nil, ContinuousValueBinding.supports(trigger.input) {
@@ -890,7 +960,12 @@ struct ModernGesturesWorkspace: View {
         if let first = ActionTree.rows(trigger.actions).first { expandedActionIDs = [first.id] }
     }
 
-    private func test(_ trigger: Trigger) {
+    /// Runs the automation's actions for real (not a dry run), with the
+    /// latest saved version of it — the bar's ⌘↩ may hold an older copy —
+    /// and never twice at once.
+    private func test(_ stale: Trigger) {
+        guard runStates[stale.id] != .running else { return }
+        let trigger = appState.currentPreset.triggers.first { $0.id == stale.id } ?? stale
         runStates[trigger.id] = .running
         let name = trigger.displayName
         ActionExecutor.executeActions(trigger.actions, fromTrackpad: trigger.input.category == .trackpad,

@@ -249,7 +249,9 @@ struct ModernWindowSnappingView: View {
     }
 
     private var quickZonesBar: some View {
-        HStack(spacing: AOMSpace.x2) {
+        // 6.1: four tool cards with their live detail (Rectangle Pro's
+        // Layouts, Raycast's command tiles) instead of a row of capsules.
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 190), spacing: AOMSpace.x2)], spacing: AOMSpace.x2) {
             quickZoneButton(
                 title: "Edit Snap Zones",
                 subtitle: "\(appState.effectiveSnapZones.filter(\.isEnabled).count) active zones",
@@ -281,10 +283,10 @@ struct ModernWindowSnappingView: View {
         }
     }
 
-    /// A capsule button (glass on macOS 26) with the subtitle as its tooltip,
-    /// instead of a boxed card per tool.
+    /// A tool card: tinted mark, name and its live detail.
     private func quickZoneButton(title: String, subtitle: String, symbol: String, action: @escaping () -> Void) -> some View {
-        AOMCapsuleLink(title, symbol: symbol, help: "\(title) — \(subtitle)", action: action)
+        AOMToolCard(title: title, detail: subtitle,
+                    identity: AOMIdentity(symbol: symbol, color: AOMModule.tiling.hue), action: action)
     }
 
     // MARK: - Title-bar snap

@@ -24,6 +24,8 @@ struct BrowseActionsSheet: View {
     private let store = ActionPickerStore()
     @State private var section: Section
     @State private var query = ""
+    /// Search every category while typing (on by default, 6.1).
+    @State private var searchAll = true
     @State private var selection: ActionType?
 
     private static let hidden: Set<ActionType> = [.toggleDoNotDisturb]
@@ -55,7 +57,12 @@ struct BrowseActionsSheet: View {
             return store.favorites + store.recents.filter { !store.favorites.contains($0) }
         case .category(let category):
             let types = ActionType.actionsForCategory(category).filter { !Self.hidden.contains($0) }
-            return words.isEmpty ? types : types.filter(matches)
+            if words.isEmpty || !searchAll { return words.isEmpty ? types : types.filter(matches) }
+            // 6.1 (Codex review): while typing, every category is searched;
+            // the chosen category's matches come first.
+            let all = ActionSearch.results(for: query, in: ActionType.allCases.filter { !Self.hidden.contains($0) })
+            let inCategory = all.filter { types.contains($0) }
+            return inCategory + all.filter { !types.contains($0) }
         }
     }
 
@@ -72,7 +79,8 @@ struct BrowseActionsSheet: View {
         }
         .frame(width: AOMEditorSize.actionPicker.width)
         .onAppear { selection = visible.first }
-        .onChange(of: section) { _, _ in query = ""; selection = visible.first }
+        // The query survives a category change (6.1).
+        .onChange(of: section) { _, _ in selection = visible.first }
         .onChange(of: query) { _, _ in selection = visible.first }
     }
 
@@ -138,8 +146,22 @@ struct BrowseActionsSheet: View {
             } else {
                 List(selection: Binding<ActionType?>(get: { selection }, set: { selection = $0 })) {
                     ForEach(visible, id: \.self) { type in
-                        Text(type.rawValue)
-                            .font(AOMFont.body)
+                        // 6.1: mark, name and one line on what it does, so the
+                        // list answers "which one?" without selecting each.
+                        HStack(spacing: AOMSpace.x2 + AOMSpace.x0_5) {
+                            AOMAppIcon(AOMIdentity(symbol: type.iconName, color: AOMModule.automation.hue), size: 26)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(type.rawValue)
+                                    .font(AOMFont.body.weight(.medium))
+                                    .lineLimit(1)
+                                Text(type.description)
+                                    .font(AOMFont.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                            }
+                        }
+                        .padding(.vertical, 2)
                             .tag(type)
                             .contextMenu {
                                 Button(store.isFavorite(type) ? "Remove from Favorites" : "Add to Favorites") {

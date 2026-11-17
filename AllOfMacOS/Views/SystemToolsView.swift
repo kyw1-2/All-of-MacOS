@@ -47,11 +47,11 @@ struct SystemToolsView: View {
             AOMPageHeader("System Tools", subtitle: subtitle)
                 .help(model.lastResult?.message ?? "")
             HStack {
-                Picker("Category", selection: $selectedGroup) {
-                    Text("All Categories").tag(SystemToolGroup?.none)
-                    ForEach(SystemToolGroup.allCases) { group in Text(group.name).tag(Optional(group)) }
-                }
-                .frame(maxWidth: AOMSize.moduleListIdeal)
+                // 6.1: categories as view tabs (Linear, iStat Menus' module
+                // bar) instead of a pop-up, so every group is one click away.
+                AOMScopeBar(items: [AOMScopeItem<SystemToolGroup?>(id: nil, title: "All", symbol: "square.grid.2x2")]
+                            + SystemToolGroup.allCases.map { AOMScopeItem(id: Optional($0), title: $0.name, symbol: $0.symbol) },
+                            selection: $selectedGroup, accessibilityLabel: "Category")
                 Spacer()
                 if selectedGroup != nil || !query.isEmpty {
                     Button("Reset Filters") { selectedGroup = nil; query = "" }

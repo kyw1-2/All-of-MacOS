@@ -3,7 +3,7 @@ import SwiftUI
 // 3.3.3 BTT input editors in the shared row style (`AOMSettingRow`, ⓘ help
 // instead of captions). Wired by integ-automation: the MIDI fields in the
 // new-trigger sheet, the value binding in the trigger's Options, the stage
-// hysteresis in Settings › Gestures & Triggers › Force Click; see
+// hysteresis in Settings › Automation Inputs › Force Click; see
 // work/integration-333/btt-input.md.
 
 /// Filters for a MIDI trigger, covering every channel-voice message. Replaces
@@ -178,7 +178,7 @@ enum BTTInputTriggerKinds {
     }
 }
 
-/// Settings row for the stage hysteresis (Settings › Gestures & Triggers ›
+/// Settings row for the stage hysteresis (Settings › Automation Inputs ›
 /// Force Click). A grouped-form row: label with its ⓘ, then the slider and
 /// its value.
 struct ForceTouchStageSettingsRow: View {

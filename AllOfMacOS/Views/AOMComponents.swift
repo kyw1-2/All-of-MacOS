@@ -818,13 +818,10 @@ struct AOMNotice<Actions: View>: View {
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous)
-        HStack(alignment: .center, spacing: AOMSpace.x2) {
-            Image(systemName: semantic.symbol)
-                .font(AOMFont.callout)
-                .symbolRenderingMode(.monochrome)
-                .foregroundStyle(semantic.color)
-                .frame(width: AOMIcon.row)
-                .accessibilityHidden(true)
+        // 6.1: a card, not a coloured box — the tone lives in the glyph's
+        // tinted plate and a hairline in the tone (Linear's inline banners).
+        HStack(alignment: .center, spacing: AOMSpace.x2 + AOMSpace.x0_5) {
+            AOMAppIcon(AOMIdentity(symbol: semantic.symbol, color: semantic.color), size: 26)
             VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
                 Text(title).font(AOMFont.bodyEmphasis).foregroundStyle(AOMColor.text)
                     .fixedSize(horizontal: false, vertical: true)
@@ -842,9 +839,10 @@ struct AOMNotice<Actions: View>: View {
         // 8 pt above and below a small button, the row inset at the sides.
         .padding(.horizontal, AOMSpace.rowInset)
         .padding(.vertical, AOMSpace.x2)
-        .background(semantic.wash(increasedContrast: contrast == .increased), in: shape)
+        .background(AOMColor.surface, in: shape)
         .overlay {
-            if contrast == .increased { shape.strokeBorder(semantic.color.opacity(0.85), lineWidth: 1) }
+            shape.strokeBorder(semantic.color.opacity(contrast == .increased ? 0.85 : 0.35),
+                               lineWidth: contrast == .increased ? 1 : 0.75)
         }
         .accessibilityElement(children: .contain)
     }
@@ -933,5 +931,51 @@ extension View {
     /// The content pane background (the canvas), edge to edge.
     func aomPane() -> some View {
         background(AOMTheme.pane)
+    }
+}
+
+
+// MARK: - Tool card (6.1)
+
+/// A compact card that opens a tool: tinted mark, name over one line of live
+/// detail, a chevron. Used where a page links to its sub-tools (Window
+/// Tiling's zones, profiles, saved windows).
+struct AOMToolCard: View {
+    let title: String
+    let detail: String
+    let identity: AOMIdentity
+    let action: () -> Void
+    @State private var hovering = false
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous)
+        Button(action: action) {
+            HStack(spacing: AOMSpace.x2 + AOMSpace.x0_5) {
+                AOMAppIcon(identity, size: 28)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title).font(AOMFont.body.weight(.medium)).foregroundStyle(AOMColor.text).lineLimit(1)
+                    Text(detail).font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary).lineLimit(1)
+                }
+                Spacer(minLength: AOMSpace.x1)
+                Image(systemName: "chevron.right")
+                    .font(AOMFont.caption.weight(.semibold))
+                    .foregroundStyle(hovering ? AOMColor.textSecondary : AOMColor.textTertiary)
+            }
+            .padding(.horizontal, AOMSpace.x3)
+            .frame(height: 48)
+            .background(hovering ? AOMColor.surfaceHover : AOMColor.surface, in: shape)
+            .overlay {
+                shape.strokeBorder(contrast == .increased ? AOMColor.strongLine : AOMColor.hairline,
+                                   lineWidth: contrast == .increased ? 1 : 0.5)
+            }
+            .contentShape(shape)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .aomAnimation(.quick, value: hovering)
+        .help("\(title) — \(detail)")
+        .accessibilityLabel(title)
+        .accessibilityValue(detail)
     }
 }

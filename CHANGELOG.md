@@ -1,3 +1,23 @@
+## [6.1.0] - 2026-11-17
+
+Plans from three reviewers were merged before building: Codex's 6.0 UX review, DeepSeek's Automation alternatives and a page-by-page inventory with a second reference sweep. See docs/design-6.1-plan.md.
+
+### Changed
+- **Automation list says what each automation does.** A second line shows input → result, where it applies (an app or group) and when it last ran; over the list, "N of M on · K runs today".
+- **Automation editor opens as a summary.** Input settings and options start folded, and each automation remembers the steps and sections you opened. Before, every step opened for six or fewer steps and none for seven or more. "Done" on the input is now "Close".
+- **Run, not Test.** The button and the bar's ⌘↩ run the steps for real with the latest saved version of the automation; a second run is ignored while one is running, and the bar shows "Running…".
+- **Action search covers every category while you type**, the chosen category's matches first; the query survives a category change; each action shows its mark and one line on what it does.
+- **New Automation sheet.** Two panes: the input kinds as a rail with a mark and what each listens to, the picker for the chosen kind beside it.
+- **Focus.** A hero card with a large ring around the time (Flow, Session), the phase, the plan and Start/Pause/Skip/Stop.
+- **System Tools.** Categories are tabs; tool rows have tinted marks; favourite stars show on hover or when set; quick toggles fill with the accent when on.
+- **Window Tiling.** Edit Snap Zones, Display Profiles, Saved Windows and Window Switcher are tool cards with their live detail; layout footprints draw a small display in the tiling colour.
+- **Notices** are cards with a tinted glyph and a hairline in their tone instead of coloured boxes.
+- One name: the Settings sheet "Gestures & Triggers" is now "Automation Inputs".
+
+### Validation
+- 163 tests passed (new: `AutomationStatusTests`).
+- Light preview screenshots with the real preset: Automation list and editor, New Automation sheet, Focus, System Tools, Window Tiling. Window reopen in the debug bench stays at about 130–145 ms after the first.
+
 ## [6.0.0] - 2026-11-16
 
 ### Changed

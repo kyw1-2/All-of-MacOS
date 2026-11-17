@@ -109,6 +109,12 @@ class GestureStatistics: ObservableObject {
 
     var uniqueGesturesCount: Int { summary.count }
 
+    /// When an input last ran an automation (6.1: Automation rows show it).
+    func lastFired(_ gesture: String) -> Date? {
+        guard let entry = summary[gesture], entry.firedCount > 0 else { return nil }
+        return entry.lastDetected
+    }
+
     private func scheduleSave() {
         guard defaults != nil, scheduledSave == nil else { return }
         // Throttle, rather than restarting a debounce on every gesture: sustained

@@ -65,3 +65,37 @@ final class CalmRedesignTests: XCTestCase {
         XCTAssertEqual(store.values[.files], "B")
     }
 }
+
+/// AOM 6.1: status-first automation rows and the input rail.
+final class AutomationStatusTests: XCTestCase {
+    func testLastRunText() {
+        let now = Date()
+        XCTAssertNil(AOMAutomationRow.lastRunText(nil, now: now))
+        XCTAssertEqual(AOMAutomationRow.lastRunText(now.addingTimeInterval(-20), now: now), "Ran just now")
+        XCTAssertEqual(AOMAutomationRow.lastRunText(now.addingTimeInterval(-180), now: now), "Ran 3 min ago")
+        XCTAssertEqual(AOMAutomationRow.lastRunText(now.addingTimeInterval(-7_200), now: now), "Ran 2 h ago")
+        XCTAssertEqual(AOMAutomationRow.lastRunText(now.addingTimeInterval(-100_000), now: now), "Ran yesterday")
+        XCTAssertEqual(AOMAutomationRow.lastRunText(now.addingTimeInterval(-3 * 86_400), now: now), "Ran 3 days ago")
+    }
+
+    @MainActor
+    func testLastFiredIgnoresDetectionsWithoutARun() {
+        let earlier = Date(timeIntervalSinceNow: -600)
+        let later = Date(timeIntervalSinceNow: -60)
+        let stats = GestureStatistics(testEvents: [
+            GestureEvent(gesture: "4 Finger Tap", timestamp: earlier, fired: true),
+            GestureEvent(gesture: "4 Finger Tap", timestamp: later, fired: false),
+            GestureEvent(gesture: "Unused", timestamp: later, fired: false)
+        ])
+        XCTAssertNotNil(stats.lastFired("4 Finger Tap"))
+        XCTAssertNil(stats.lastFired("Unused"))
+        XCTAssertNil(stats.lastFired("Never seen"))
+    }
+
+    func testEveryInputKindHasARailEntry() {
+        for category in TriggerCategory.inputCategories {
+            XCTAssertFalse(AddTriggerSheet.railDetail(category).isEmpty, "\(category)")
+            XCTAssertNotNil(NSImage(systemSymbolName: AddTriggerSheet.railSymbol(category), accessibilityDescription: nil))
+        }
+    }
+}

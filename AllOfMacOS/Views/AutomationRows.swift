@@ -39,15 +39,44 @@ struct AOMAutomationRow: View, Equatable {
     let trigger: Trigger
     var isSelected = false
     var showsSwitch = true
+    /// 6.1 (status-first rows): when it last ran, from the statistics.
+    var lastRun: Date?
+    /// 6.1: the row says what it does on a second line.
+    var showsDetail = false
+    /// Where it applies when not everywhere ("Finder", "Group: Coding").
+    var scope: String?
     let setEnabled: (Bool) -> Void
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.trigger == rhs.trigger && lhs.isSelected == rhs.isSelected && lhs.showsSwitch == rhs.showsSwitch
+            && lhs.lastRun == rhs.lastRun && lhs.showsDetail == rhs.showsDetail && lhs.scope == rhs.scope
+    }
+
+    /// "Ran 3 min ago", "Ran yesterday" — nil when it never ran.
+    static func lastRunText(_ date: Date?, now: Date = Date()) -> String? {
+        guard let date else { return nil }
+        let seconds = now.timeIntervalSince(date)
+        if seconds < 60 { return "Ran just now" }
+        if seconds < 3600 { return "Ran \(Int(seconds / 60)) min ago" }
+        if seconds < 86_400 { return "Ran \(Int(seconds / 3600)) h ago" }
+        if seconds < 172_800 { return "Ran yesterday" }
+        return "Ran \(Int(seconds / 86_400)) days ago"
+    }
+
+    private var detail: String? {
+        guard showsDetail else { return nil }
+        var parts: [String] = []
+        let does = trigger.aomRowDetail
+        if !does.isEmpty { parts.append(does) }
+        if let scope, !scope.isEmpty { parts.append(scope) }
+        if let ran = Self.lastRunText(lastRun) { parts.append(ran) }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     var body: some View {
-        // Names only: the input glyph and the trailing value say the rest.
-        AOMListRow(trigger.displayName, dimmed: !trigger.isEnabled) {
+        // The name, then what it does and when it last ran; the input glyph
+        // and the trailing keys say the rest.
+        AOMListRow(trigger.displayName, detail: detail, dimmed: !trigger.isEnabled) {
             // A neutral input glyph (6.0): the list is about names, not colour.
             Image(systemName: trigger.input.category.iconName)
                 .help(trigger.input.category.rawValue)

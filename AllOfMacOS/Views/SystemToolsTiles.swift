@@ -46,16 +46,14 @@ struct SystemToolTile: View {
     /// target with the accent ring while an app hovers over it.
     var dropApp: ((URL) -> Void)?
     @State private var dropTargeted = false
+    @State private var hovering = false
 
     var body: some View {
         HStack(spacing: 0) {
             Button(action: run) {
-                HStack(spacing: AOMSpace.x2) {
-                    Image(systemName: info.symbol)
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(AOMColor.textSecondary)
-                        .frame(width: 22, height: 22)
-                        .accessibilityHidden(true)
+                HStack(spacing: AOMSpace.x2 + AOMSpace.x0_5) {
+                    // 6.1: the tool's glyph on a tinted plate in the page hue.
+                    AOMAppIcon(AOMIdentity(symbol: info.symbol, color: AOMModule.systemTools.hue), size: 24)
                     VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
                         Text(info.title)
                             .font(AOMFont.body.weight(.medium))
@@ -102,7 +100,11 @@ struct SystemToolTile: View {
             .buttonStyle(.plain)
             .help(isFavorite ? "Remove from Favorites" : "Add to Favorites")
             .accessibilityLabel("\(isFavorite ? "Unfavorite" : "Favorite") \(info.title)")
+            // Shown while the row is hovered or when it is a favourite
+            // (Raycast's favourite stars), so a page of rows is not a column of stars.
+            .opacity(isFavorite || hovering ? 1 : 0)
         }
+        .onHover { hovering = $0 }
     }
 }
 
@@ -134,7 +136,9 @@ struct SystemToggleTile: View {
         Button(action: run) {
             HStack(spacing: AOMSpace.x3) {
                 ZStack {
-                    Circle().fill(isOn ? AnyShapeStyle(AOMColor.accent) : AnyShapeStyle(AOMColor.track))
+                    // 6.1: Control Center — the glyph's circle fills with the
+                    // accent while on, a quiet plate while off.
+                    Circle().fill(isOn ? AnyShapeStyle(AOMColor.accent.gradient) : AnyShapeStyle(AOMColor.track))
                     if isRunning {
                         ProgressView().controlSize(.small)
                     } else {
