@@ -1,3 +1,11 @@
+## [6.3.3] - 2026-11-18
+
+### Fixed
+- **Crackle when pressing play again on the HomePod.** On the AirPlay direct path a paused app lost its stream after 30 s, and playing again built a new aggregate on the receiver whose first half second overloaded (three ~6 ms gaps at 20:26:23 in `audio-health.json`). A paused app now keeps its stream for five minutes, so resuming within that time starts on the running stream. A silent stream costs one idle IO thread until then; muted apps keep theirs as before.
+
+### Validation
+- 198 unit tests pass (`testDirectSessionsDetachAfterFiveIdleMinutesUnlessMuted` replaces the 30 s case).
+
 ## [6.3.2] - 2026-11-18
 
 Crackle check on the HomePod (AirPlay direct path). `audio-health.json` from 20:05 to 20:27: 8 overloads (each a ~6 ms gap), at three kinds of moment: AOM's own launch (2), the first half second after a session attached on resume (3), and alone during playback (3). Machine at the time: an M1 MacBook Air with a 4K display, WindowServer about 50 %, kernel_task about 27 %, Ulanzi Deck 8–13 %, a 5-minute load average of 9.6, and AOM mirroring a pinned KakaoTalk window at 60 Hz. AOM's own render cost stays far inside the cycle (6.2.2 measurement: 26 µs mean per 2.7 ms), so this release cuts the load AOM adds around the audio path; it does not claim the crackle is gone.
