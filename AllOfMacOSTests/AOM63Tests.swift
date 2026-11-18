@@ -133,3 +133,24 @@ final class MissionControlDeferralTests: XCTestCase {
         XCTAssertFalse(MissionControlOverlayService.otherAppHandlesMissionControl(running: []))
     }
 }
+
+@available(macOS 14.2, *)
+final class AudioLoadTests: XCTestCase {
+    func testLiveSessionsSweepEveryTwoSecondsAndIdleEveryThree() {
+        XCTAssertEqual(AppAudioEngine.sweepInterval(hasSessions: true), 2)
+        XCTAssertEqual(AppAudioEngine.sweepInterval(hasSessions: false), 3)
+        // The watchdog needs more than 5 s of silence: two sweeps still fall inside it.
+        XCTAssertLessThan(AppAudioEngine.sweepInterval(hasSessions: true) * 2, 5)
+    }
+
+    func testOwnerCacheOutlivesManySweeps() {
+        XCTAssertGreaterThanOrEqual(AppAudioEngine.ownerResolutionTTL, 120)
+    }
+
+    func testPinnedWindowsDefaultToThirtyHertz() {
+        XCTAssertEqual(WindowPinningOptions().maximumFPS, 30)
+        XCTAssertEqual(WindowPinningOptions().frameRate(displayRate: 60), 30)
+        var video = WindowPinningOptions(); video.maximumFPS = 0
+        XCTAssertEqual(video.frameRate(displayRate: 120), 120)
+    }
+}

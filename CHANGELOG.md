@@ -1,3 +1,18 @@
+## [6.3.2] - 2026-11-18
+
+Crackle check on the HomePod (AirPlay direct path). `audio-health.json` from 20:05 to 20:27: 8 overloads (each a ~6 ms gap), at three kinds of moment: AOM's own launch (2), the first half second after a session attached on resume (3), and alone during playback (3). Machine at the time: an M1 MacBook Air with a 4K display, WindowServer about 50 %, kernel_task about 27 %, Ulanzi Deck 8–13 %, a 5-minute load average of 9.6, and AOM mirroring a pinned KakaoTalk window at 60 Hz. AOM's own render cost stays far inside the cycle (6.2.2 measurement: 26 µs mean per 2.7 ms), so this release cuts the load AOM adds around the audio path; it does not claim the crackle is gone.
+
+### Performance
+- **Fewer Core Audio reads during playback.** With a session live, the backstop sweep of every process object ran every second (57 ms on average, a few hundred property reads queued in coreaudiod beside the AirPlay IO). It now runs every 2 s; playback and process-list changes still sync at once through their listeners, and the watchdog acts only after 5 s.
+- **App owner cache 30 s → 120 s.** Every cached owner expired together each half minute into a burst of synchronous LaunchServices lookups; PID reuse and late-regular apps still reset it.
+- **Pinned windows mirror at 30 Hz by default** (was 60). Each frame is a ScreenCaptureKit copy plus WindowServer compositing; a pinned chat or document gains nothing from 60 Hz. Settings › Window Tiling › Pinned windows offers 60, 120 or the display rate for video.
+
+### Not changed
+A muted app on the AirPlay direct path (here Terminal) still holds its own stream next to the playing app's. Holding only its muted tap would remove that second stream, but whether a bare `.muted` tap keeps the app silent has to be heard on the HomePod first.
+
+### Validation
+- 198 unit tests pass (new: `AudioLoadTests`).
+
 ## [6.3.1] - 2026-11-18
 
 ### Performance

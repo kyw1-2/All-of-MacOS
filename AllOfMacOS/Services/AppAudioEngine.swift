@@ -406,7 +406,7 @@ final class AppAudioEngine {
             // Sweeping the whole process table every second kept an idle MacBook Air
             // at 3-4% CPU, so idle sweeps run one tick in three.
             let now = ProcessInfo.processInfo.systemUptime
-            guard !self.sessions.isEmpty || now - self.lastSyncAt >= 3 else { return }
+            guard now - self.lastSyncAt >= Self.sweepInterval(hasSessions: !self.sessions.isEmpty) else { return }
             self.scheduleSync()
         }
         // A backstop behind the CoreAudio listeners: 10 % slack lets it
@@ -414,6 +414,13 @@ final class AppAudioEngine {
         timer?.tolerance = 0.1
         if let timer { RunLoop.main.add(timer, forMode: .common) }
     }
+
+    /// Seconds between backstop sweeps. Playback edges and process-list
+    /// changes still sync at once through their CoreAudio listeners, and the
+    /// watchdog acts only after 5 s, so live sessions need no 1 s sweep:
+    /// each one is a few hundred property reads that queue in coreaudiod
+    /// beside the AirPlay IO it is running for us (57 ms on average here).
+    static func sweepInterval(hasSessions: Bool) -> TimeInterval { hasSessions ? 2 : 3 }
 
     func requestSync() { scheduleSync() }
 
@@ -1129,7 +1136,11 @@ final class AppAudioEngine {
     /// and newly regular owners clear the cache, so the TTL is only a backstop.
     /// At 5 s, every expiry re-ran the fallback, which asks LaunchServices once
     /// per running app (`-[NSRunningApplication processIdentifier]`).
-    static let ownerResolutionTTL: TimeInterval = 30
+    /// A helper's owning app does not change while the helper lives; PID
+    /// reuse and apps that turn regular late reset the cache themselves. 120 s
+    /// (30 s until 6.3.2) keeps every cached owner from expiring together
+    /// into a burst of synchronous LaunchServices lookups every half minute.
+    static let ownerResolutionTTL: TimeInterval = 120
 
     /// Sweeps run on the audio control queue and, for a few callers, on main;
     /// the cache is shared under a lock. A reset bumps the generation, so a

@@ -22,7 +22,11 @@ struct WindowPinningOptions: Codable, Equatable {
     }
     var activation: Activation = .hover
     var corner: Corner = .topLeft
-    var maximumFPS = 60 // 0 follows the display's refresh rate.
+    /// 0 follows the display's refresh rate. 30 by default since 6.3.2: a
+    /// pinned chat or document gains nothing from 60 Hz, and every frame is a
+    /// ScreenCaptureKit copy plus WindowServer compositing on the same cores
+    /// that run audio. Video pins can pick 60 or 120 in Settings.
+    var maximumFPS = 30
     var duckOverlappingWindows = true
     var translucentBorder = false
     var showUntitledWindows = true
