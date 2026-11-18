@@ -135,11 +135,14 @@ final class AirPlayDirectTests: XCTestCase {
         XCTAssertEqual(decide(nil, direct: false), .attach, "a queued destination keeps the existing rules")
     }
 
-    func testDirectSessionsDetachAfterThirtyIdleSecondsUnlessMuted() {
-        XCTAssertEqual(decide(.direct, playing: true, idle: 600), .keep)
-        XCTAssertEqual(decide(.direct, idle: 29.9), .keep)
-        XCTAssertEqual(decide(.direct, idle: 30), .detach)
-        XCTAssertEqual(decide(.direct, muted: true, idle: 600), .keep)
+    func testDirectSessionsDetachAfterFiveIdleMinutesUnlessMuted() {
+        XCTAssertEqual(decide(.direct, playing: true, idle: 900), .keep)
+        // A pause shorter than five minutes keeps the stream: pressing play
+        // again must not rebuild the aggregate (its first cycles overloaded).
+        XCTAssertEqual(decide(.direct, idle: 60), .keep)
+        XCTAssertEqual(decide(.direct, idle: 299.9), .keep)
+        XCTAssertEqual(decide(.direct, idle: 300), .detach)
+        XCTAssertEqual(decide(.direct, muted: true, idle: 900), .keep)
         XCTAssertEqual(decide(.queued, direct: false, idle: 600), .keep, "queued sessions keep today's lifetime")
     }
 

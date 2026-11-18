@@ -90,7 +90,12 @@ enum AirPlayDirectPolicy {
         case recreate
     }
 
-    static let idleDetachSeconds: TimeInterval = 30
+    /// 300 s since 6.3.3 (30 s before). Each reattach builds a new aggregate
+    /// on the receiver, and its first half second overloaded (three ~6 ms
+    /// gaps at 20:26:23 on 2026-11-18): the crackle heard when pressing play
+    /// again after a short pause. A paused app now keeps its stream for five
+    /// minutes; a silent one costs one idle IO thread meanwhile.
+    static let idleDetachSeconds: TimeInterval = 300
 
     /// `wantsDirect`: the destination is AirPlay and the direct path is on.
     /// `sameDevice`: a direct session still targets that device's UID and ID.
