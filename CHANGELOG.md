@@ -1,3 +1,14 @@
+## [6.3.1] - 2026-11-18
+
+### Performance
+- **AOM steps aside for Mission Control Plus.** While Mission Control Plus runs, AOM's Mission Control ✕ buttons and keys stop and their poller does not run at all. Before, both apps drew a ✕ on every thumbnail and answered the same keys, and AOM read the Dock's accessibility tree twice a second all day to notice Mission Control opening. Quitting Mission Control Plus brings AOM's back at once; Settings says which one is in charge.
+
+### Reviewed (no change needed)
+An all-day audit of AOM's timers and monitors: the clipboard check (every 0.15 s) costs 2.5 µs per read; the trackpad health check, folder rules, file watchers, secure-input hotkeys, the hold watchdog and Open/Save tracking run only while their feature needs them; the pointer and mouse-move taps exist only for a pointer automation or a drawing gesture. A muted app on the AirPlay direct path keeps its stream on purpose: releasing it would let its next sound through before the tap returns.
+
+### Validation
+- 195 unit tests pass (new: `MissionControlDeferralTests`).
+
 ## [6.3.0] - 2026-11-18
 
 Driven by DeepSeek's binary review of nine utilities (PopClip, Hammerspoon, Maccy, Ice, SwiftBar, Itsycal, Boop, KeyCastr, Mos; Oracle, `/data/work/rea/aom-ux-20261117/`) and an idle profile of the installed 6.2.2.

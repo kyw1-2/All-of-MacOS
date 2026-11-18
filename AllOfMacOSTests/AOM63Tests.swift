@@ -123,3 +123,13 @@ final class KeystrokeLinkTests: XCTestCase {
         XCTAssertNil(AOMCaptureDeepLink.parse(URL(string: "aom://show-keystrokes?mode=all&x=1")!))
     }
 }
+
+final class MissionControlDeferralTests: XCTestCase {
+    func testMissionControlPlusTakesOverTheButtonsAndKeys() {
+        XCTAssertTrue(MissionControlOverlayService.otherAppHandlesMissionControl(
+            running: ["com.apple.finder", "io.fadel.MissionControlPlus", nil]))
+        XCTAssertFalse(MissionControlOverlayService.otherAppHandlesMissionControl(
+            running: ["com.apple.finder", nil, "io.fadel.MissionControlPlusHelper"]))
+        XCTAssertFalse(MissionControlOverlayService.otherAppHandlesMissionControl(running: []))
+    }
+}

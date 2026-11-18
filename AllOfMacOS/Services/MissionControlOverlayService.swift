@@ -83,7 +83,21 @@ final class MissionControlOverlayService: ObservableObject {
     private static let burstDuration: TimeInterval = 4
 
     private var isStarted = false
-    enum Suspension: Hashable { case system, screens, session }
+    enum Suspension: Hashable { case system, screens, session, otherApp }
+
+    /// Mission Control Plus draws the same ✕ buttons and answers the same
+    /// keys. While it runs, AOM's poller stops altogether: two sets of
+    /// buttons and a key acting twice help no one, and the poll read the
+    /// Dock's accessibility tree twice a second all day for nothing.
+    nonisolated static let deferringBundleIDs: Set<String> = ["io.fadel.MissionControlPlus"]
+
+    nonisolated static func otherAppHandlesMissionControl(
+        running: [String?] = NSWorkspace.shared.runningApplications.map(\.bundleIdentifier)) -> Bool {
+        running.contains { $0.map(deferringBundleIDs.contains) ?? false }
+    }
+
+    /// True while Mission Control Plus runs (Settings says so).
+    var defersToOtherApp: Bool { suspensions.contains(.otherApp) }
     private var suspensions: Set<Suspension> = []
     private var lifecycleObservers: [NSObjectProtocol] = []
     private var spaceObserver: NSObjectProtocol?
@@ -100,6 +114,7 @@ final class MissionControlOverlayService: ObservableObject {
         guard !isStarted else { return }
         isStarted = true
         observeLifecycle()
+        observeOtherApps()
         observeMissionControlShows()
         scheduleTimer()
     }
@@ -139,6 +154,23 @@ final class MissionControlOverlayService: ObservableObject {
                     self.scheduleTimer()
                 }
             }
+        }
+    }
+
+    private func observeOtherApps() {
+        if Self.otherAppHandlesMissionControl() { suspensions.insert(.otherApp) }
+        let center = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
+            lifecycleObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+                let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+                guard let id = app?.bundleIdentifier, Self.deferringBundleIDs.contains(id) else { return }
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    let handled = Self.otherAppHandlesMissionControl(
+                        running: NSWorkspace.shared.runningApplications.filter { !$0.isTerminated }.map(\.bundleIdentifier))
+                    if handled != self.suspensions.contains(.otherApp) { self.setSuspended(handled, reason: .otherApp) }
+                }
+            })
         }
     }
 
