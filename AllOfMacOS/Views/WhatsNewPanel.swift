@@ -23,6 +23,15 @@ enum WhatsNew {
     /// Highlights of the current version, bundled so the panel works offline.
     /// Items that alter defaults people already use say so with a note.
     static let items: [Item] = [
+        Item(symbol: "keyboard", title: "Show Keystrokes",
+             detail: "System Tools › Quick Toggles shows the keys you press at the bottom of the screen for demos and recordings, KeyCastr-style: every key, or shortcuts only so typed text stays private. Hidden in password fields; aom://show-keystrokes toggles it from a deck key or an automation.",
+             module: .systemTools),
+        Item(symbol: "leaf", title: "Quieter When Nothing Plays",
+             detail: "With the master EQ or Boost on, apps that were silent for a minute no longer keep a live audio tap: the speakers stop, Core Audio idles and the Mac can sleep on its own again. A muted, quieter or routed app keeps its tap.",
+             module: .audio),
+        Item(symbol: "wrench.and.screwdriver", title: "A Leaner System Tools",
+             detail: "Restart, Shut Down, Log Out, Startup Sound, Verify Startup Disk and Clear Font Caches are gone: the Apple menu, System Settings and Disk Utility do them in one step. Starred copies are dropped.",
+             module: .systemTools, note: "Removed tools"),
         Item(symbol: "sidebar.left", title: "A Redesigned Main Window",
              detail: "A Productivity section in the sidebar with four new pages, list and detail layouts, toasts with Undo, and a Workspace you can customize: hide sections, choose its quick actions and see each tool's live status."),
         Item(symbol: "folder.badge.gearshape", title: "Folder Rules Tidy Your Folders",

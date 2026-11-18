@@ -43,29 +43,6 @@ enum DiskTools {
         }
     }
 
-    // MARK: diskutil verifyVolume
-
-    struct VerifyResult: Equatable {
-        let ok: Bool
-        let summary: String
-    }
-
-    /// `diskutil verifyVolume` prints fsck_apfs progress and ends with
-    /// "The volume … appears to be OK" or an error line; the exit status is
-    /// the final word. Only the last informative line is kept for display.
-    static func parseVerify(_ output: String, status: Int32) -> VerifyResult {
-        let lines = output.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-        let okLine = lines.last { $0.localizedCaseInsensitiveContains("appears to be OK") }
-        let problem = lines.last { $0.hasPrefix("Error") || $0.localizedCaseInsensitiveContains("could not be verified")
-            || $0.localizedCaseInsensitiveContains("needs to be repaired") }
-        if status == 0, problem == nil {
-            return VerifyResult(ok: true, summary: okLine ?? "The startup volume appears to be OK")
-        }
-        return VerifyResult(ok: false, summary: problem ?? lines.last ?? "diskutil exited with status \(status)")
-    }
-
-    static func verifyArguments() -> [String] { ["verifyVolume", "/"] }
-
     // MARK: Time Machine
 
     struct BackupStatus: Equatable {

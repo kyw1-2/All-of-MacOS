@@ -136,6 +136,24 @@ enum AudioPlaybackActivity {
     }
 }
 
+/// Local-output taps that exist only for master effects follow the app's
+/// playback: attached when it plays, released after a silent minute. The
+/// output graph goes 15 s after its last source, so the speakers stop and
+/// the Mac may idle-sleep again. `AOMAudioKeepIdleSessions` keeps them.
+enum AudioEffectsIdlePolicy {
+    static let detachSeconds: TimeInterval = 60
+    static let keepKey = "AOMAudioKeepIdleSessions"
+
+    static func shouldDetach(effectsOnly: Bool, playing: Bool, idleSeconds: TimeInterval,
+                             defaults: UserDefaults = .standard) -> Bool {
+        effectsOnly && !playing && idleSeconds >= detachSeconds && !defaults.bool(forKey: keepKey)
+    }
+
+    static func mayAttach(effectsOnly: Bool, playing: Bool, defaults: UserDefaults = .standard) -> Bool {
+        !effectsOnly || playing || defaults.bool(forKey: keepKey)
+    }
+}
+
 /// Value snapshot for fallback helper ownership. Bundle URLs are resolved once
 /// per sweep, not once per helper times every running app.
 struct AudioOwnerIdentity {
@@ -673,6 +691,19 @@ final class AppAudioEngine {
                 stop(pid: app.pid)
                 continue
             }
+            // A local-output tap held only for master effects (EQ, boost, an
+            // Audio Unit, device EQ) is released after a silent minute. Held
+            // forever, seven idle taps kept the speakers' IO running, which
+            // held coreaudiod at ~13 % CPU and blocked idle sleep.
+            let localRoute = route.map { !snapshot.isAirPlay($0) } ?? true
+            let effectsOnly = localRoute && !wantsDirect && !needsAppSpecificProcessing(app.bundleID)
+            if let session = sessions[app.pid], !session.isDirect,
+               AudioEffectsIdlePolicy.shouldDetach(effectsOnly: effectsOnly, playing: appPlaying,
+                                                   idleSeconds: snapshot.takenAt - session.lastPlayingAt) {
+                GestureLog.shared.logFromAnyThread("Audio session idle: pid \(app.pid) (\(app.bundleID))", level: .noMatch)
+                stop(pid: app.pid)
+                continue
+            }
             if !wantsDirect, Self.airPlayProcessingEnabled, let device = route, snapshot.isAirPlay(device),
                sessions[app.pid] != nil || !ids.isEmpty {
                 let key = "\(device.uid)|\(app.bundleID)"
@@ -767,7 +798,8 @@ final class AppAudioEngine {
             guard ProcessInfo.processInfo.systemUptime >= (retryAfter[app.pid] ?? 0) else { continue }
             // Master effects must not instantiate an aggregate for every
             // non-audio app. Process-list notifications attach new producers.
-            guard !ids.isEmpty, decision == .attach else { continue }
+            guard !ids.isEmpty, decision == .attach,
+                  AudioEffectsIdlePolicy.mayAttach(effectsOnly: effectsOnly, playing: appPlaying) else { continue }
             if attach(pid: app.pid, bundleID: app.bundleID, ids: ids, snapshot: snapshot,
                       gain: Self.storedGain(bundleID: app.bundleID), muted: muted, direct: wantsDirect) {
                 GestureLog.shared.logFromAnyThread("Audio session attached: pid \(app.pid) (\(app.bundleID))", level: .noMatch)
@@ -922,6 +954,19 @@ final class AppAudioEngine {
             SharedOutputRenderer.shared.rebindIfNeeded(devices: AudioOutputService.devices())
         }
         syncActiveProcesses()
+    }
+
+    /// A setting of this app's own (gain, mute, route, boost, overdrive,
+    /// balance, its own EQ): its tap stays while the app is silent, so a
+    /// muted or quieter app never plays a first moment at its native level.
+    private func needsAppSpecificProcessing(_ bundleID: String) -> Bool {
+        let d = UserDefaults.standard
+        return Self.storedGain(bundleID: bundleID) != 1 || d.bool(forKey: "AOMAudioMute_\(bundleID)") ||
+            d.string(forKey: "AOMAudioRoute_\(bundleID)") != nil ||
+            d.bool(forKey: "AOMAudioMagicBoost_\(bundleID)") ||
+            AppAudioPreferences.overdrive(bundleID: bundleID) > 1 ||
+            AppAudioPreferences.balance(bundleID: bundleID) != 0 ||
+            Self.appEQ(bundleID: bundleID).isEnabled
     }
 
     private func needsProcessing(_ bundleID: String, in snapshot: AudioControlSnapshot) -> Bool {

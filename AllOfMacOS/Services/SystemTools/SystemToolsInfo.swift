@@ -48,15 +48,6 @@ enum DisplaySoundState {
 
     static let brightnessPresets: [Int] = [10, 25, 50, 75, 100]
 
-    /// `nvram StartupMute` prints "StartupMute\t%01" when the chime is off;
-    /// a missing variable (non-zero exit) means the chime plays.
-    static func startupChimeOn(nvramOutput: String, status: Int32) -> Bool {
-        guard status == 0 else { return true }
-        return !nvramOutput.contains("%01")
-    }
-
-    static func startupChimeArguments(on: Bool) -> [String] { ["StartupMute=" + (on ? "%00" : "%01")] }
-
     /// A short pill for long device names ("MacBook Air Speakers" → "MacBook Air Spea…").
     static func shortName(_ name: String, limit: Int = 14) -> String {
         name.count > limit ? String(name.prefix(limit - 1)) + "…" : name

@@ -236,6 +236,8 @@ final class SystemToolsModel: ObservableObject {
         next[.lowPower] = SystemToolState(ProcessInfo.processInfo.isLowPowerModeEnabled)
         next[.wifi] = CWWiFiClient.shared().interface().map { SystemToolState($0.powerOn()) } ?? .value("None")
         next[.keyboardClean] = KeyboardCleaningLock.shared.isActive ? .on("Locked") : .off()
+        let keystrokes = KeystrokeOverlay.shared
+        next[.keystrokes] = keystrokes.isActive ? .on(keystrokes.shortcutsOnly ? "Shortcuts" : "All keys") : .off()
         let tweaks: [(SystemToolID, SystemTweak)] = [(.extensions, .showAllExtensions), (.pathbar, .pathBar), (.statusbar, .statusBar),
                                                      (.posixtitle, .fullPathInTitle), (.dockactive, .dockActiveAppsOnly),
                                                      (.dockdelay, .dockInstantAutoHide), (.dockrecents, .dockRecentApps),
@@ -274,9 +276,6 @@ final class SystemToolsModel: ObservableObject {
         Task.detached(priority: .utility) {
             let interval = AOMPerformance.begin("SystemTools.slowRefresh")
             var slow: [SystemToolID: SystemToolState] = [:]
-            if let output = try? SystemToolsCommand.run("/usr/sbin/nvram", ["StartupMute"]) {
-                slow[.startupChime] = SystemToolState(DisplaySoundState.startupChimeOn(nvramOutput: output.stdout, status: output.status))
-            }
             if let output = try? SystemToolsCommand.run(MetalHUD.launchctl.path, MetalHUD.readArguments) {
                 slow[.metalHUD] = SystemToolState(MetalHUD.isOn(getenvOutput: output.stdout))
             }
@@ -425,6 +424,7 @@ final class SystemToolsModel: ObservableObject {
         case .bluetooth: bluetoothMenu()
         case .lowPower: toggleLowPowerMode()
         case .keyboardClean: lockKeyboard()
+        case .keystrokes: keystrokesMenu()
         // Display
         case .resolution: resolutionMenu()
         case .brightness: brightnessMenu()
@@ -436,11 +436,6 @@ final class SystemToolsModel: ObservableObject {
         case .batteryDetails: showBatteryDetails()
         case .sleepTimer: sleepTimerMenu()
         case .awakeWhileApp: awakeWhileAppMenu()
-        case .restart: session(id, .restart, title: "Restart the Mac?", button: "Restart")
-        case .shutDown: session(id, .shutDown, title: "Shut down the Mac?", button: "Shut Down")
-        case .logOut:
-            // The action asks first itself (destructive actions confirm).
-            runAction(id, .logOut, success: nil, failure: "The log-out was cancelled or refused.")
         case .quitAll: quitAllApps()
         // Apps
         case .activity: showActivity()
@@ -455,7 +450,6 @@ final class SystemToolsModel: ObservableObject {
         case .eject: ejectMenu()
         case .timeMachine: timeMachineMenu()
         case .snapshots: showLocalSnapshots()
-        case .verifyDisk: verifyStartupDisk()
         case .installDMG: FolderRulesModule.installDiskImage()
         // Network
         case .networkInfo: showNetworkInfo = true
@@ -483,10 +477,6 @@ final class SystemToolsModel: ObservableObject {
                           message: "Spotlight erases its index of the startup disk and rebuilds it in the background. Search results are incomplete until it finishes, which can take an hour.",
                           button: "Reindex…", commands: [.init(path: "/usr/bin/mdutil", arguments: ["-E", "/"])],
                           success: "Spotlight is rebuilding its index")
-        case .fontCaches:
-            runInBackground(id, { try SystemToolsCommand.runChecked("/usr/bin/atsutil", ["databases", "-removeUser"]) }) { _ in
-                self.succeed(id, "Font caches removed; log out and back in to rebuild them")
-            }
         // Tweaks
         case .extensions: toggleTweak(id, .showAllExtensions, on: "File extensions shown", off: "File extensions as Finder decides")
         case .pathbar: toggleTweak(id, .pathBar, on: "Path bar shown", off: "Path bar hidden")
@@ -499,7 +489,6 @@ final class SystemToolsModel: ObservableObject {
         case .shotshadow: toggleTweak(id, .screenshotShadows, on: "Window screenshots keep their shadow", off: "Window screenshots without shadow")
         case .shotformat: screenshotFormatMenu()
         case .shotfolder: chooseScreenshotFolder()
-        case .startupChime: toggleStartupChime()
         }
     }
 
@@ -557,6 +546,32 @@ final class SystemToolsModel: ObservableObject {
                                failure: "\(name) didn't \(connected ? "disconnect" : "connect"). Make sure it is on and in range.")
             }
             item.state = connected ? .on : .off
+            menu.addItem(item)
+        }
+        popUp(menu)
+    }
+
+    /// All keys or shortcuts only (typed text stays private), or off.
+    private func keystrokesMenu() {
+        let overlay = KeystrokeOverlay.shared
+        let menu = NSMenu()
+        if overlay.isActive {
+            menu.addItem(SystemToolMenuItem(title: "Turn Off Show Keystrokes") {
+                overlay.stop(); self.succeed(.keystrokes, "Keystrokes hidden")
+            })
+            menu.addItem(.separator())
+        }
+        for (title, shortcutsOnly) in [("Show All Keys", false), ("Show Shortcuts Only", true)] {
+            let item = SystemToolMenuItem(title: title) {
+                overlay.stop()
+                if overlay.start(shortcutsOnly: shortcutsOnly) {
+                    self.succeed(.keystrokes, shortcutsOnly ? "Showing shortcuts as you press them" : "Showing keys as you press them")
+                } else {
+                    self.fail(.keystrokes, "Keystrokes Not Shown",
+                              "Allow All of MacOS in System Settings › Privacy & Security › Accessibility. If it is already listed, remove it with − and add it again.")
+                }
+            }
+            if overlay.isActive, overlay.shortcutsOnly == shortcutsOnly { item.state = .on }
             menu.addItem(item)
         }
         popUp(menu)
@@ -756,13 +771,6 @@ final class SystemToolsModel: ObservableObject {
         return alert.runModal() == .alertFirstButtonReturn
     }
 
-    private func session(_ id: SystemToolID, _ command: SystemToolsCommand.SessionCommand, title: String, button: String) {
-        guard confirm(title, "Apps are asked to quit; any app with unsaved changes can still stop it.",
-                      button: button) else { return }
-        runInBackground(id, { try SystemToolsCommand.perform(command) }) { _ in
-            self.lastResult = ToolResult(tool: id, message: "\(button) requested", succeeded: true, date: Date())
-        }
-    }
 
     private func quitAllApps() {
         let own = ProcessInfo.processInfo.processIdentifier
@@ -1205,17 +1213,6 @@ final class SystemToolsModel: ObservableObject {
         }
     }
 
-    func verifyStartupDisk() {
-        guard confirm("Verify the Startup Disk?",
-                      "diskutil checks the startup volume without changing it. It takes a few minutes, and the Mac may pause for a moment while the check starts.",
-                      button: "Verify", destructive: false) else { return }
-        toast = "Verifying the startup disk (a few minutes)…"
-        runInBackground(.verifyDisk, { try SystemToolsCommand.run("/usr/sbin/diskutil", DiskTools.verifyArguments()) }) { output in
-            let result = DiskTools.parseVerify(output.stdout + "\n" + output.stderr, status: output.status)
-            if result.ok { self.succeed(.verifyDisk, result.summary) }
-            else { self.fail(.verifyDisk, "Verification Found a Problem", result.summary + "\n\nTo repair it, use First Aid in Disk Utility (it may need macOS Recovery for the startup disk).") }
-        }
-    }
 
     func showLocalSnapshots() {
         runInBackground(.snapshots, { try SystemToolsCommand.runChecked("/usr/bin/tmutil", ["listlocalsnapshots", "/"]).stdout }) { text in
@@ -1353,15 +1350,6 @@ final class SystemToolsModel: ObservableObject {
         }) { _ in self.succeed(.launchServices, "Open With rebuilt") }
     }
 
-    func toggleStartupChime() {
-        let isOn = slowStates[.startupChime] != .off()
-        administrator(.startupChime, title: isOn ? "Turn Off the Startup Sound?" : "Turn On the Startup Sound?",
-                      message: "The setting is stored in the Mac's firmware (StartupMute) and applies from the next start.",
-                      button: isOn ? "Turn Off…" : "Turn On…",
-                      commands: [.init(path: "/usr/sbin/nvram", arguments: DisplaySoundState.startupChimeArguments(on: !isOn))],
-                      success: isOn ? "Startup sound off" : "Startup sound on")
-        refreshSlowStates()
-    }
 
     // MARK: - Shared pieces
 

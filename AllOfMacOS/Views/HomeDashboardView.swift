@@ -2126,6 +2126,16 @@ extension AOMPermission {
         default: return "\(title) is off. Some actions may not run."
         }
     }
+
+    /// The trap KeyCastr's permission prompt names (2026-11-18 binary
+    /// review): after an update macOS can keep a stale entry that looks on
+    /// but no longer matches the app. Symptom, fix and trap in one place.
+    var recoveryHint: String {
+        "If All of MacOS is already listed and switched on, select it, remove it with −, then add it again with + (macOS can keep an entry from an earlier build)."
+    }
+
+    /// The sentence and the recovery hint, for tooltips and detail lines.
+    var attentionDetail: String { attentionSentence + "\n\n" + recoveryHint }
 }
 
 // MARK: - Capture actions shared by Workspace and Capture

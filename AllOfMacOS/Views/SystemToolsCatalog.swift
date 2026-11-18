@@ -47,24 +47,24 @@ enum SystemToolKind {
 /// and removed tools are handled by `migratedID` and `storedTools`.
 enum SystemToolID: String, CaseIterable, Identifiable {
     // Quick Toggles
-    case darkMode, keepAwake, hideMenuBar, dockAutoHide, hidden, desktop, wifi, bluetooth, lowPower, keyboardClean
+    case darkMode, keepAwake, hideMenuBar, dockAutoHide, hidden, desktop, wifi, bluetooth, lowPower, keyboardClean, keystrokes
     // Display
     case resolution, brightness, metalHUD
     // Power & Session
-    case lockScreen, sleep, sleepDisplays, sleepTimer, awakeWhileApp, batteryDetails, restart, shutDown, logOut, quitAll
+    case lockScreen, sleep, sleepDisplays, sleepTimer, awakeWhileApp, batteryDetails, quitAll
     // Apps
     case activity, forceQuit, relaunchApp, uninstall, loginItems, awakeReasons, resetSavedState
     // Storage
-    case freeUpSpace, eject, timeMachine, snapshots, verifyDisk, installDMG
+    case freeUpSpace, eject, timeMachine, snapshots, installDMG
     // Network
     case networkInfo, speedTest, ping, ports, vpn, dns, renewDHCP
     // Homebrew
     case homebrew
     // Fix It
-    case finder, restartDock, restartMenuBar, launchServices, spotlight, fontCaches
+    case finder, restartDock, restartMenuBar, launchServices, spotlight
     // Tweaks
     case extensions, pathbar, statusbar, posixtitle, showLibrary, dockactive, dockdelay, dockrecents
-    case shotshadow, shotformat, shotfolder, startupChime
+    case shotshadow, shotformat, shotfolder
 
     var id: String { rawValue }
 }
@@ -96,6 +96,11 @@ enum SystemToolMigration {
         // Removed features
         "focus", "wallpaper", "dsstore", "lockFiles", "hideFiles", "copyFinderPath",
         "newTextFile", "terminalHere", "freeMemory",
+        // 6.3.0: the Apple menu and System Settings do these in one step
+        // (restart, shut down, log out, startup sound); Disk Utility's First
+        // Aid repairs what Verify only reported; atsutil font caches no
+        // longer fix anything on current macOS.
+        "restart", "shutDown", "logOut", "startupChime", "verifyDisk", "fontCaches",
         // Moved to the Files page
         "pdfmerge", "pdfcompress", "pdfSplit", "pdfExtract", "pdfRemovePages", "pdfRotate", "pdfReorder",
         "imagesToPDF", "pdfToImages", "pdfProtect", "pdfUnlock", "pdfPageNumbers",
@@ -185,6 +190,7 @@ enum SystemToolCatalog {
         .init(id: .bluetooth, title: "Bluetooth Device", symbol: "airpods", group: .toggles, keywords: ["airpods", "headphones", "connect"], help: "Connects or disconnects a paired Bluetooth device.", kind: .toggle),
         .init(id: .lowPower, title: "Low Power Mode", symbol: "battery.25percent", group: .toggles, keywords: ["energy", "pmset", "battery saver"], help: "Turns Low Power Mode on or off.", kind: .toggle),
         .init(id: .keyboardClean, title: "Lock Keyboard", symbol: "keyboard.badge.ellipsis", group: .toggles, keywords: ["clean", "cleaning", "wipe"], help: "Ignores every key for up to two minutes while you clean the keyboard.", kind: .toggle),
+        .init(id: .keystrokes, title: "Show Keystrokes", symbol: "keyboard", group: .toggles, keywords: ["keycastr", "screencast", "presentation", "demo", "recording", "shortcuts", "hud"], help: "Shows the keys you press at the bottom of the screen, for demos and recordings. Hidden in password fields.", kind: .toggle),
         // Display
         .init(id: .resolution, title: "Resolution", symbol: "arrow.up.left.and.arrow.down.right", group: .display, keywords: ["display", "refresh rate", "hz", "scaled"], help: "Switches a display's resolution or refresh rate.", kind: .sheet),
         .init(id: .brightness, title: "Brightness", symbol: "sun.max", group: .display, keywords: ["display", "dim", "monitorcontrol"], help: "Sets a display's brightness, hardware where the display allows it.", kind: .sheet),
@@ -196,9 +202,6 @@ enum SystemToolCatalog {
         .init(id: .sleepTimer, title: "Sleep Timer", symbol: "timer", group: .power, keywords: ["sleep in", "countdown", "bedtime"], help: "Puts the Mac to sleep after a delay you choose.", kind: .sheet),
         .init(id: .awakeWhileApp, title: "Awake While App Runs", symbol: "app.badge.checkmark", group: .power, keywords: ["keep awake", "prevent sleep", "app"], help: "Keeps the Mac awake until an app you pick quits.", kind: .sheet),
         .init(id: .batteryDetails, title: "Battery Details", symbol: "battery.100percent", group: .power, keywords: ["cycle count", "health", "capacity", "temperature", "condition"], help: "Shows charge, cycle count, condition, capacity and temperature."),
-        .init(id: .restart, title: "Restart…", symbol: "restart", group: .power, keywords: ["reboot", "power"], help: "Asks first, then restarts the Mac."),
-        .init(id: .shutDown, title: "Shut Down…", symbol: "power", group: .power, keywords: ["power off", "turn off"], help: "Asks first, then shuts the Mac down."),
-        .init(id: .logOut, title: "Log Out…", symbol: "rectangle.portrait.and.arrow.right", group: .power, keywords: ["sign out", "session"], help: "Asks first, then logs you out."),
         .init(id: .quitAll, title: "Quit All Apps…", symbol: "xmark.app", group: .power, keywords: ["close", "apps", "clean slate"], help: "Asks every app except Finder and All of MacOS to quit."),
         // Apps
         .init(id: .activity, title: "Activity…", symbol: "gauge.with.dots.needle.33percent", group: .apps, keywords: ["activity monitor", "processes", "cpu", "memory", "ram", "ps"], help: "Lists the busiest processes by CPU or memory, with Quit.", kind: .sheet),
@@ -213,7 +216,6 @@ enum SystemToolCatalog {
         .init(id: .eject, title: "Eject…", symbol: "eject", group: .storage, keywords: ["usb", "drive", "disk image", "unmount", "external"], help: "Ejects a volume you pick, or every external disk.", kind: .sheet),
         .init(id: .timeMachine, title: "Time Machine", symbol: "clock.arrow.2.circlepath", group: .storage, keywords: ["backup", "tmutil", "latest backup"], help: "Shows the backup state and starts one.", kind: .sheet),
         .init(id: .snapshots, title: "Local Snapshots", symbol: "camera.on.rectangle", group: .storage, keywords: ["apfs", "tmutil", "purgeable", "space"], help: "Lists the startup disk's APFS local snapshots."),
-        .init(id: .verifyDisk, title: "Verify Startup Disk", symbol: "checkmark.shield", group: .storage, keywords: ["diskutil", "first aid", "fsck"], help: "Checks the startup volume without changing it."),
         .init(id: .installDMG, title: "Install Disk Image…", symbol: "externaldrive.badge.plus", group: .storage, keywords: ["dmg", "install", "hdiutil", "disk image"], help: "Copies the app inside a disk image into Applications and ejects the image."),
         // Network
         .init(id: .networkInfo, title: "Network Info…", symbol: "network", group: .network, keywords: ["ip", "local", "public", "wifi", "dns", "rssi", "signal"], help: "Shows the local and public address, Wi-Fi details and DNS servers, each copyable.", kind: .sheet),
@@ -231,7 +233,6 @@ enum SystemToolCatalog {
         .init(id: .restartMenuBar, title: "Restart Menu Bar", symbol: "menubar.arrow.up.rectangle", group: .fixIt, keywords: ["systemuiserver", "control center", "stuck"], help: "Restarts SystemUIServer and Control Center."),
         .init(id: .launchServices, title: "Rebuild Open With", symbol: "list.bullet.rectangle", group: .fixIt, keywords: ["launch services", "lsregister", "default app"], help: "Re-registers apps to fix duplicate or missing Open With entries."),
         .init(id: .spotlight, title: "Reindex Spotlight", symbol: "magnifyingglass", group: .fixIt, keywords: ["mdutil", "search", "index"], help: "Rebuilds the Spotlight index of the startup disk."),
-        .init(id: .fontCaches, title: "Clear Font Caches", symbol: "textformat", group: .fixIt, keywords: ["atsutil", "fonts", "garbled"], help: "Removes your account's font caches."),
         // Tweaks
         .init(id: .extensions, title: "File Extensions", symbol: "doc.text", group: .tweaks, keywords: ["finder", "suffix", "show all"], help: "Shows every file name extension in Finder.", kind: .toggle),
         .init(id: .pathbar, title: "Path Bar", symbol: "point.topleft.down.to.point.bottomright.curvepath", group: .tweaks, keywords: ["finder", "breadcrumb"], help: "Shows the path bar at the bottom of Finder windows.", kind: .toggle),
@@ -243,7 +244,6 @@ enum SystemToolCatalog {
         .init(id: .dockrecents, title: "Dock Recents", symbol: "clock.arrow.circlepath", group: .tweaks, keywords: ["dock", "recents", "suggested"], help: "Shows recent and suggested apps in the Dock.", kind: .toggle),
         .init(id: .shotshadow, title: "Screenshot Shadows", symbol: "shadow", group: .tweaks, keywords: ["screenshot", "capture", "disable-shadow"], help: "Keeps or drops the shadow on window screenshots.", kind: .toggle),
         .init(id: .shotformat, title: "Screenshot Format", symbol: "photo", group: .tweaks, keywords: ["png", "jpg", "heic", "pdf", "capture"], help: "Chooses the file format of macOS screenshots.", kind: .sheet),
-        .init(id: .shotfolder, title: "Screenshot Folder", symbol: "folder", group: .tweaks, keywords: ["screenshot folder", "location", "capture"], help: "Chooses where macOS saves screenshots.", kind: .sheet),
-        .init(id: .startupChime, title: "Startup Sound", symbol: "power.circle", group: .tweaks, keywords: ["chime", "boot sound", "startupmute", "nvram"], help: "Turns the startup chime on or off in the firmware.", kind: .toggle)
+        .init(id: .shotfolder, title: "Screenshot Folder", symbol: "folder", group: .tweaks, keywords: ["screenshot folder", "location", "capture"], help: "Chooses where macOS saves screenshots.", kind: .sheet)
     ]
 }

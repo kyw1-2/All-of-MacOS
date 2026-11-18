@@ -78,26 +78,6 @@ enum SystemToolsCommand {
 
     // MARK: - Session and processes
 
-    /// Restart and Shut Down go through System Events, which asks every app
-    /// to quit the normal way (unsaved documents still get their prompt).
-    enum SessionCommand: String { case restart = "restart", shutDown = "shut down" }
-
-    static func sessionScript(_ command: SessionCommand) -> String {
-        "tell application \"System Events\" to \(command.rawValue)"
-    }
-
-    static func perform(_ command: SessionCommand) throws {
-        let output = try run("/usr/bin/osascript", ["-e", sessionScript(command)])
-        guard output.succeeded else {
-            // 3.4.0 audit: say where to allow access (-1743) or that System
-            // Events did not answer, instead of osascript's raw message.
-            if let failure = AppleEventFailure.classify(output: output.stderr) {
-                throw SystemToolError.invalidInput("\(failure.title). \(failure.detail)")
-            }
-            throw SystemToolError.commandFailed(command: "osascript", status: output.status, message: output.stderr)
-        }
-    }
-
     /// The user's own system UI processes that relaunch by themselves when
     /// they quit (Dock, the menu bar). `killall` without -9 lets them save.
     static func restartProcesses(_ names: [String]) throws {

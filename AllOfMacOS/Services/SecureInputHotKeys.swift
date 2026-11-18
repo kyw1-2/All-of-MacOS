@@ -159,22 +159,28 @@ final class SecureInputHotKeys {
             return owner.receive(hotKey.id, isDown: GetEventKind(event) == UInt32(kEventHotKeyPressed))
         }, types.count, &types, Unmanaged.passUnretained(self).toOpaque(), &handler)
         guard status == noErr else { return }
-        refresh()
+        refresh(front: NSWorkspace.shared.frontmostApplication?.processIdentifier)
         // An app switch refreshes at once; the timer now only notices
         // secure input turning on inside the same app (a password field
-        // taking focus), so it runs at 2 Hz instead of 4 Hz.
+        // taking focus), so it runs at 2 Hz instead of 4 Hz. The timer
+        // keeps the front PID the notification gave: reading
+        // `frontmostApplication.processIdentifier` twice a second was a
+        // synchronous LaunchServices round trip each time.
         activation = NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] _ in
-                self?.refresh()
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] note in
+                let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+                self?.refresh(front: app?.processIdentifier ?? NSWorkspace.shared.frontmostApplication?.processIdentifier)
             }
-        let timer = Timer(timeInterval: Self.pollInterval, repeats: true) { [weak self] _ in self?.refresh() }
+        let timer = Timer(timeInterval: Self.pollInterval, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            self.refresh(front: self.frontPID)
+        }
         timer.tolerance = 0.1
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
     }
 
-    private func refresh() {
-        let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier
+    private func refresh(front pid: pid_t?) {
         if pid != frontPID {
             cancel()
             held.removeAll()

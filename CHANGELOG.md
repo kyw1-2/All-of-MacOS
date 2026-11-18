@@ -1,3 +1,27 @@
+## [6.3.0] - 2026-11-18
+
+Driven by DeepSeek's binary review of nine utilities (PopClip, Hammerspoon, Maccy, Ice, SwiftBar, Itsycal, Boop, KeyCastr, Mos; Oracle, `/data/work/rea/aom-ux-20261117/`) and an idle profile of the installed 6.2.2.
+
+### Performance
+- **Silent apps no longer hold a live audio tap.** With the master EQ or Boost on, every app with an audio client (Telegram, KakaoTalk, Terminal, Chrome, Codex, Claude, Ulanzi Studio…) kept a tap for good, even when it never played: on this Mac seven taps rendered silence for hours. That held the built-in speakers' IO open (`pmset -g assertions`: a PreventUserIdleSystemSleep assertion from coreaudiod for AOM, so the Mac could not idle-sleep), kept coreaudiod at about 13 % CPU and AOM at about 2.6 %, and ran AOM's full audio sweep (67 ms on average) every second instead of every third. A tap that exists only for master effects is now released after a silent minute and attached again when the app plays; the output graph goes 15 s later. A muted, quieter, routed, balanced or boosted app, or one with its own EQ, keeps its tap, so it never plays a first moment at its native level. `defaults write com.kyw.allofmacos AOMAudioKeepIdleSessions -bool true` restores the old behaviour. The before figures were measured on 6.2.2 (built-in speakers, nothing playing); the after figure on the speakers is still to be taken, since the Mac was playing to AirPlay during the release check, a path this change leaves alone (the AirPlay direct path already detaches after 30 s). The policy itself is unit tested.
+- **Secure-input hotkeys** keep the front app's PID from the activation notification instead of asking LaunchServices for it twice a second.
+
+### Added
+- **Show Keystrokes** (System Tools › Quick Toggles), after KeyCastr: the keys you press at the bottom of the screen with the pointer, for demos and recordings. Shortcuts and named keys are chips (⇧⌘4, ↩), typed text runs together; "Shortcuts Only" hides typed text. Nothing shows while secure input is on, nothing is stored, the panel is click-through. `aom://show-keystrokes` toggles it; `?mode=all|shortcuts|off` sets it.
+- Permission notices name the stale-entry trap (KeyCastr): if All of MacOS is already listed and on, remove it with − and add it again.
+
+### Removed
+- System Tools: **Restart…, Shut Down…, Log Out…** (the Apple menu, same confirmation), **Startup Sound** (System Settings › Sound), **Verify Startup Disk** (Disk Utility's First Aid also repairs) and **Clear Font Caches** (`atsutil` caches no longer fix anything on current macOS). Starred and recent copies are dropped. Log Out stays available as an automation action.
+
+### Reviewed and already in place
+From DeepSeek's list: fixed-width digits in the menu bar countdown (Itsycal), clipboard polling by `changeCount` (Maccy), erase keeps pinned items and asks first (Maccy's ⇧ rule), status-first automation rows and one term "Automation" (6.1). `TriggerListPanel` stays: it holds the live Add Trigger sheet.
+
+### Validation
+- 194 unit tests pass (new: `AudioEffectsIdlePolicyTests`, `KeystrokeFormatterTests`, `SystemTools63CatalogTests`, `KeystrokeLinkTests`).
+- New opt-in `SystemToolsLiveTests` (`AOM_LIVE_SYSTEM_TESTS=1`): 17 checks run every System Tools reader against this Mac — status strip, toggle and tweak states, pmset, awake reasons, battery details, Keep Awake, sleep timer and Awake While App Runs round trips, Activity, login items, uninstall review, Time Machine and snapshots, Free Up Space scans, DNS, ping, ports, public IP, speed test, VPN and Tailscale, Homebrew lists, the Metal HUD round trip and every command path. All 17 pass on macOS 27.3.
+- All 12 pages render in the preview bench.
+- Installed build: 6.3.0 (2026111801) runs with its AOM Dev signature; keyboard automations fire on it. Show Keystrokes was not checked on screen: synthetic key events from the test shell are dropped without Accessibility, and the Mac was in use.
+
 ## [6.2.2] - 2026-11-17
 
 ### Fixed

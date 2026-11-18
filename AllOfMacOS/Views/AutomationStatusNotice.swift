@@ -21,7 +21,7 @@ struct AutomationStatusNotice: View {
                 let cut = sentence.range(of: ". ")
                 AOMStatusStrip(tone: .warning,
                                text: cut.map { String(sentence[..<$0.lowerBound]) } ?? sentence,
-                               detail: sentence, actionTitle: "Allow…") { _ = permission.openSettings() }
+                               detail: permission.attentionDetail, actionTitle: "Allow…") { _ = permission.openSettings() }
             } else if !appState.globalEnabled || suppressionPaused {
                 AOMStatusStrip(tone: .neutral, text: "AOM is paused — automations don't run",
                                detail: suppressionPaused ? suppressionDetail : nil,
