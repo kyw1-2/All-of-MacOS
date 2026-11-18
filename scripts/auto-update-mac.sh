@@ -81,9 +81,11 @@ decision="$(python3 - "$installed_version" "$installed_build" "$remote_version" 
 import sys
 old_v,old_b,new_v,new_b=sys.argv[1:]
 try:
- old=tuple(int(x) for x in old_v.split("."))
- new=tuple(int(x) for x in new_v.split("."))
- newer=(new+(0,)*(4-len(new))) > (old+(0,)*(4-len(old)))
+ # Pad before comparing: 6.3 and 6.3.0 are the same version, so the build
+ # number decides (Codex F17: 6.3 build 10 vs 6.3.0 build 11 read up-to-date).
+ old=tuple(int(x) for x in old_v.split(".")); old=old+(0,)*(4-len(old))
+ new=tuple(int(x) for x in new_v.split(".")); new=new+(0,)*(4-len(new))
+ newer=new > old
  if new == old and old_b.isdecimal() and new_b.isdecimal():
   newer=int(new_b)>int(old_b)
  print("update" if newer else "up-to-date")

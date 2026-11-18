@@ -21,7 +21,7 @@ final class CaptureCoordinator {
         let valid = Set(records.map(\.id))
         let stored = UserDefaults.standard.stringArray(forKey: Self.closedIDsKey) ?? []
         let restored = QuickAccessPolicy.restoredIDs(stored, present: valid)
-        let byID = Dictionary(uniqueKeysWithValues: records.map { ($0.id, $0) })
+        let byID = Dictionary(records.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         recentlyClosed = restored.compactMap { byID[$0] }
     }
 

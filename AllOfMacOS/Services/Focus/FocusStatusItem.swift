@@ -35,6 +35,7 @@ final class FocusStatusItemController: NSObject, NSMenuDelegate {
               let title = Self.title(timer: timer, now: session.ticker.now) else { remove(); return }
         if item == nil {
             let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+            item.autosaveName = AOMStatusItemName.focus
             item.menu = menu
             item.button?.imagePosition = .imageLeading
             self.item = item

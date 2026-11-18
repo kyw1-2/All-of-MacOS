@@ -75,7 +75,10 @@ enum AOMCaptureDeepLink: Equatable {
 
 
 class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
-    /// The running delegate, for AppleScript commands that reuse URL handling.
+    /// The running delegate. Use this, never a cast of `NSApp.delegate`:
+    /// under `@NSApplicationDelegateAdaptor` NSApp's delegate is SwiftUI's own
+    /// object, so such a cast is nil (Codex audit F05: MCP saves, Focus and
+    /// microphone page links, the clipboard stack's library button).
     @MainActor static weak var current: AppDelegate?
     var statusItem: NSStatusItem?
     /// The 6.0 control panel shown from the menu bar icon.
@@ -206,6 +209,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             // Ruler, microphone mute): each starts only what its saved
             // settings turn on.
             if !PresetManager.isRunningTests { AOMProductivityModules.start() }
+            KeepAwakeRules.shared.start()
             if !PresetManager.isRunningTests {
                 InputRemapService.shared.apply()
                 // After the menu bar and audio settle, so an update never opens on a busy launch.
@@ -331,7 +335,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     case .trigger(let name): ActionExecutor.executeNamedTrigger(name)
                     case .showMenu(let name):
                         if !FloatingMenuController.shared.show(name) {
-                            GestureHUD.shared.show(title: "Menu Not Found", detail: name)
+                            let shared = FloatingMenuStore.shared.isAmbiguous(name)
+                            GestureHUD.shared.show(title: shared ? "Two Menus Share This Name" : "Menu Not Found",
+                                                   detail: shared ? "Rename one of the menus named “\(name)”." : name)
                         }
                     case .editMenus: FloatingMenuController.shared.edit()
                     case .hideMenus: FloatingMenuController.shared.hideAll()
@@ -551,6 +557,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func setupMenuBarIcon() {
         guard statusItem == nil else { return }
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        // Stats' "keep the menu bar items position": a fixed name makes macOS
+        // remember where the user ⌘-dragged each AOM item. Without one the
+        // position is keyed by creation order ("Item-0"), and the Focus and
+        // microphone items, which come and go, shuffled the others.
+        statusItem?.autosaveName = AOMStatusItemName.main
         if let button = statusItem?.button {
             button.action = #selector(statusItemClicked)
             button.target = self

@@ -357,6 +357,21 @@ final class CaptureHistory: ObservableObject {
         directory.appendingPathComponent(id.uuidString).appendingPathExtension("png")
     }
 
+    /// The record's size when it is sane (finite, positive, under 100,000 px
+    /// per side), otherwise the PNG's own pixel size; nil when neither is.
+    nonisolated static func validatedSize(width: Double, height: Double, scale: CGFloat, source: CGImageSource)
+        -> (points: CGSize, pixelWidth: Int, pixelHeight: Int)? {
+        let limit = 100_000.0
+        let pw = width * Double(scale), ph = height * Double(scale)
+        if width.isFinite, height.isFinite, width > 0, height > 0, pw.isFinite, ph.isFinite, pw < limit, ph < limit {
+            return (CGSize(width: width, height: height), Int(pw.rounded()), Int(ph.rounded()))
+        }
+        guard let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let w = properties[kCGImagePropertyPixelWidth] as? Int, let h = properties[kCGImagePropertyPixelHeight] as? Int,
+              w > 0, h > 0 else { return nil }
+        return (CGSize(width: Double(w) / Double(scale), height: Double(h) / Double(scale)), w, h)
+    }
+
     /// Where an unreadable manifest is kept, if one was found at launch.
     private(set) var preservedManifestURL: URL?
 
@@ -375,21 +390,27 @@ final class CaptureHistory: ObservableObject {
         // our managed folder, even if manifest text was corrupted. Only the PNG
         // header is read here: pixels are decoded lazily on demand, so startup
         // no longer loads the whole history into RAM.
-        for record in records {
+        // Codex F13: a manifest from a sync conflict or an older crash can
+        // repeat a UUID or carry non-finite or huge sizes. The first record
+        // of an ID wins (callers build dictionaries keyed by ID), and sizes
+        // that would trap the Int conversion are taken from the PNG instead.
+        var seenIDs = Set<UUID>()
+        for record in records where seenIDs.insert(record.id).inserted {
             let imageFile = imageURL(for: record.id)
             guard FileManager.default.fileExists(atPath: imageFile.path),
                   let source = CGImageSourceCreateWithURL(imageFile as CFURL, nil),
                   CGImageSourceGetCount(source) > 0 else { continue }
             let external = record.externalFilePath.map { URL(fileURLWithPath: $0) }
-            let scale = max(1, CGFloat(record.scale))
+            let scale = record.scale.isFinite ? min(8, max(1, CGFloat(record.scale))) : 1
+            guard let size = Self.validatedSize(width: record.width, height: record.height, scale: scale, source: source) else { continue }
             let entry = CaptureHistoryEntry(
                 id: record.id, kind: record.kind,
                 capturedAt: record.capturedAt, windowTitle: record.windowTitle,
                 fileURL: external,
-                pointSize: CGSize(width: record.width, height: record.height),
+                pointSize: size.points,
                 scale: scale,
-                pixelWidth: Int((record.width * Double(scale)).rounded()),
-                pixelHeight: Int((record.height * Double(scale)).rounded()),
+                pixelWidth: size.pixelWidth,
+                pixelHeight: size.pixelHeight,
                 cacheURL: imageFile)
             entry.isPinned = record.isPinned ?? false
             entry.onResidencyChange = residencyChangeHandler()

@@ -150,10 +150,28 @@ final class FilesRecentFolderStore: ObservableObject {
 enum FilesAtomicWriter {
     private static let queue = DispatchQueue(label: "com.kyw.allofmacos.files.writer", qos: .utility)
 
-    static func write(_ data: Data, to url: URL) {
+    /// The newest data that failed to write, per file (queue-confined).
+    private static var failed: [URL: Data] = [:]
+
+    /// Codex F20: a failed write (disk full, permissions) was dropped
+    /// silently and the list came back older after a relaunch. It is now
+    /// logged and retried once a few seconds later, unless a newer write of
+    /// the same file has succeeded meanwhile.
+    static func write(_ data: Data, to url: URL, retry: Bool = true) {
         queue.async {
-            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try? data.write(to: url, options: .atomic)
+            do {
+                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try data.write(to: url, options: .atomic)
+                failed.removeValue(forKey: url)
+            } catch {
+                failed[url] = data
+                GestureLog.shared.logFromAnyThread("Files: couldn't save \(url.lastPathComponent): \(error.localizedDescription)", level: .error)
+                guard retry else { return }
+                queue.asyncAfter(deadline: .now() + 5) {
+                    guard let pending = failed[url] else { return }
+                    write(pending, to: url, retry: false)
+                }
+            }
         }
     }
 

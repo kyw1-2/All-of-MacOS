@@ -285,18 +285,6 @@ private struct AOMRowButtonBody: View {
             .onHover { hovering = $0 }
     }
 }
-
-/// A whole card as a button: hover shifts the fill, a press dims.
-struct AOMCardTileButtonStyle: ButtonStyle {
-    var style: AOMCardStyle = .paper
-    var radius: CGFloat = AOMTheme.cardRadius
-    var padding: CGFloat? = AOMSpace.cardPadding
-
-    func makeBody(configuration: Configuration) -> some View {
-        AOMCardTileBody(configuration: configuration, style: style, radius: radius, padding: padding)
-    }
-}
-
 private struct AOMCardTileBody: View {
     let configuration: ButtonStyle.Configuration
     let style: AOMCardStyle

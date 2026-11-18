@@ -19,10 +19,13 @@ struct FolderRuleFailure: Error, Equatable {
 /// went, and undo moves it back (the Trash too: Put Back is a move).
 enum FolderRuleUndo: Codable, Equatable {
     /// The item is now at `current`; undo moves it back to `original`.
-    case moveBack(current: String, original: String)
+    /// `identity` (device and inode, 6.4.0) is the item's when the step
+    /// finished: undo leaves a different file at that path alone (Codex
+    /// audit F14). Older records have none and are checked by path only.
+    case moveBack(current: String, original: String, identity: String? = nil)
     /// Optimize Image put the original in the Trash: undo moves the
     /// optimized file to the Trash and the original back.
-    case restoreOriginal(trashed: String, original: String, replacement: String)
+    case restoreOriginal(trashed: String, original: String, replacement: String, identity: String? = nil)
 }
 
 /// One step of one rule run, as the activity log keeps it.
@@ -210,7 +213,8 @@ struct FolderRuleExecutor {
         case .moveToTrash:
             let place = try environment.trash(item)
             return Step(record: FolderRuleStepRecord(action: .moveToTrash, result: .done, summary: "Moved to the Trash",
-                                                     undo: .moveBack(current: place.path, original: item.path)), next: nil)
+                                                     undo: .moveBack(current: place.path, original: item.path,
+                                                                     identity: FolderRulesSafety.identity(place))), next: nil)
         case .compress:
             return try compress(item, trashOriginal: action.trashOriginal)
         case .extract:
@@ -288,7 +292,8 @@ struct FolderRuleExecutor {
         let renamed = target.lastPathComponent == item.lastPathComponent ? "" : " as “\(target.lastPathComponent)”"
         let summary = "\(copies ? "Copied" : "Moved") to \(FolderRulesSafety.display(destination))\(renamed)"
         return Step(record: FolderRuleStepRecord(action: kind, result: .done, summary: summary,
-                                                 undo: copies ? nil : .moveBack(current: target.path, original: item.path)),
+                                                 undo: copies ? nil : .moveBack(current: target.path, original: item.path,
+                                                                                     identity: FolderRulesSafety.identity(target))),
                     next: target, produced: copies ? target : nil)
     }
 
@@ -315,7 +320,8 @@ struct FolderRuleExecutor {
             try fileManager.moveItem(at: item, to: target)
         }
         return Step(record: FolderRuleStepRecord(action: .rename, result: .done, summary: "Renamed to “\(target.lastPathComponent)”",
-                                                 undo: .moveBack(current: target.path, original: item.path)),
+                                                 undo: .moveBack(current: target.path, original: item.path,
+                                                                 identity: FolderRulesSafety.identity(target))),
                     next: target, usedCounter: usedCounter)
     }
 
@@ -354,7 +360,7 @@ struct FolderRuleExecutor {
         var summary = "Compressed to “\(zip.lastPathComponent)”"
         if trashOriginal {
             let place = try environment.trash(item)
-            undo = .moveBack(current: place.path, original: item.path)
+            undo = .moveBack(current: place.path, original: item.path, identity: FolderRulesSafety.identity(place))
             summary += " and moved the original to the Trash"
         }
         return Step(record: FolderRuleStepRecord(action: .compress, result: .done, summary: summary, undo: undo), next: zip, produced: zip)
@@ -391,7 +397,7 @@ struct FolderRuleExecutor {
         var summary = "Extracted “\(extracted.lastPathComponent)”"
         if trashOriginal {
             let place = try environment.trash(item)
-            undo = .moveBack(current: place.path, original: item.path)
+            undo = .moveBack(current: place.path, original: item.path, identity: FolderRulesSafety.identity(place))
             summary += " and moved the archive to the Trash"
         }
         return Step(record: FolderRuleStepRecord(action: .extract, result: .done, summary: summary, undo: undo),
@@ -418,12 +424,48 @@ struct FolderRuleExecutor {
 
     private func reverse(_ undo: FolderRuleUndo) throws {
         switch undo {
-        case .moveBack(let current, let original):
-            try moveBack(URL(fileURLWithPath: current), to: URL(fileURLWithPath: original))
-        case .restoreOriginal(let trashed, let original, let replacement):
+        case .moveBack(let current, let original, let identity):
+            let currentURL = URL(fileURLWithPath: current)
+            try checkIdentity(currentURL, identity)
+            try moveBack(currentURL, to: URL(fileURLWithPath: original))
+        case .restoreOriginal(let trashed, let original, let replacement, let identity):
+            // Check everything the original's return needs before touching
+            // the optimized file (Codex audit F01: it went to the Trash and
+            // then the missing original failed the undo, losing both).
+            let trashedURL = URL(fileURLWithPath: trashed), originalURL = URL(fileURLWithPath: original)
             let replacementURL = URL(fileURLWithPath: replacement)
-            if FolderRulesSafety.exists(replacement) { _ = try environment.trash(replacementURL) }
-            try moveBack(URL(fileURLWithPath: trashed), to: URL(fileURLWithPath: original))
+            try checkCanMoveBack(trashedURL, to: originalURL)
+            var parked: URL?
+            if FolderRulesSafety.exists(replacement) {
+                try checkIdentity(replacementURL, identity)
+                parked = try environment.trash(replacementURL)
+            }
+            do {
+                try moveBack(trashedURL, to: originalURL)
+            } catch {
+                // Put the optimized file back where it was.
+                if let parked, FolderRulesSafety.exists(parked.path), !FolderRulesSafety.exists(replacement) {
+                    try? fileManager.moveItem(at: parked, to: replacementURL)
+                }
+                throw error
+            }
+        }
+    }
+
+    /// A different file now at the recorded path is not the step's result.
+    private func checkIdentity(_ url: URL, _ identity: String?) throws {
+        guard let identity, FolderRulesSafety.exists(url.path), FolderRulesSafety.identity(url) != identity else { return }
+        throw FolderRuleFailure("“\(url.lastPathComponent)” in \(FolderRulesSafety.display(url.deletingLastPathComponent())) is a different file now, so it was left alone.")
+    }
+
+    private func checkCanMoveBack(_ current: URL, to original: URL) throws {
+        guard FolderRulesSafety.exists(current.path) else {
+            throw FolderRuleFailure("“\(current.lastPathComponent)” is no longer at \(FolderRulesSafety.display(current.deletingLastPathComponent())).")
+        }
+        let folder = original.deletingLastPathComponent()
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: folder.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+            throw FolderRuleFailure("The folder “\(FolderRulesSafety.display(folder))” is gone, so “\(original.lastPathComponent)” can't go back.")
         }
     }
 
@@ -451,6 +493,14 @@ struct FolderRuleExecutor {
 
 /// Small file-system checks shared by the engine, the executor and the views.
 enum FolderRulesSafety {
+    /// Device and inode: the same item across moves on its volume and into
+    /// its Trash. nil when the path is gone.
+    static func identity(_ url: URL) -> String? {
+        var status = stat()
+        guard lstat(url.path, &status) == 0 else { return nil }
+        return "\(status.st_dev):\(status.st_ino)"
+    }
+
     /// Exists without following a final symbolic link.
     static func exists(_ path: String) -> Bool {
         var status = stat()

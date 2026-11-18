@@ -81,3 +81,12 @@ enum AOMMenuBarIcon {
         }
     }
 }
+
+/// Each AOM menu bar item's autosave name: macOS keeps the position the user
+/// gave it under this name across launches (Stats' keep_menubar_positions).
+enum AOMStatusItemName {
+    static let main = "com.kyw.allofmacos.status.main"
+    static let focus = "com.kyw.allofmacos.status.focus"
+    static let microphone = "com.kyw.allofmacos.status.microphone"
+    static let all = [main, focus, microphone]
+}

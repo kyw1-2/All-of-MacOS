@@ -72,8 +72,10 @@ enum FilesProcess {
         }
         out.fileHandleForReading.readabilityHandler = nil
         err.fileHandleForReading.readabilityHandler = nil
-        collected.appendOut(out.fileHandleForReading.readDataToEndOfFile())
-        collected.appendErr(err.fileHandleForReading.readDataToEndOfFile())
+        // Not readDataToEndOfFile (Codex F15): a child that kept the pipe
+        // open would hold this call after the tool itself had exited.
+        collected.appendOut(out.fileHandleForReading.drainWithoutWaiting())
+        collected.appendErr(err.fileHandleForReading.drainWithoutWaiting())
         return Output(status: process.terminationStatus, stdout: collected.stdout, stderr: collected.stderr, timedOut: timedOut)
     }
 

@@ -261,7 +261,9 @@ ALLOFMACOS_SCRATCH_PATH="$HOME/.cache/aom-build" ALLOFMACOS_SKIP_AUTO_RELEASE=1 
 codesign --verify --deep --strict "build/All of MacOS.app"
 ```
 
-Optional core regression checks (6 files covering input, audio queues, backup/restore, encrypted history and automation access): `scripts/run-tests.sh -j 2`.
+Regression tests: `scripts/run-tests.sh -j 2` (SwiftPM). The opt-in checks that run every System Tools reader on this Mac: `AOM_LIVE_SYSTEM_TESTS=1 scripts/run-tests.sh --filter SystemToolsLiveTests`.
+
+Xcode: open `Package.swift`, or generate a project from `project.yml` with [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`xcodegen generate`). The generated `AllOfMacOS.xcodeproj` is not tracked: a committed copy fell 417 sources behind and no longer built (Codex audit F06). Releases and CI build with SwiftPM through `build-and-sign.sh`; `bundle.sh` now calls it.
 
 Create a local Keychain Access **Self Signed Root / Code Signing** identity named `AOM Dev` before a local release build. CI can use `ALLOFMACOS_SIGN_ID=-` to build an ad-hoc signed artifact for private testing only; it must never be confused with the local stable-signed DMG.
 

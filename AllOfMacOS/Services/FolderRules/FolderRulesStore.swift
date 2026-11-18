@@ -125,21 +125,46 @@ final class FolderRulesStore: Sendable {
         var config: FolderRulesConfig
         /// False on first launch (no rules.json yet).
         var existed: Bool
-        /// Where an unreadable rules.json was set aside.
+        /// Where an unreadable or partly damaged rules.json was kept.
         var setAside: URL?
+        /// rules.json is there but could not be read or kept: nothing may
+        /// be saved over it (Codex audit F03). Says why.
+        var savesBlocked: String?
     }
 
+    /// Missing, unreadable, whole and partly damaged files are four cases
+    /// (Codex audit F03): only a missing file starts fresh. A damaged file
+    /// is copied aside before anything can save over it; when the file can't
+    /// be read or kept, saving is blocked instead of writing defaults.
     func loadConfig(defaults: () -> FolderRulesConfig) -> LoadedConfig {
-        guard let data = try? Data(contentsOf: configURL) else {
+        let files = FileManager.default
+        guard files.fileExists(atPath: configURL.path) else {
             return LoadedConfig(config: defaults(), existed: false, setAside: nil)
         }
-        if let config = try? Self.decoder().decode(FolderRulesConfig.self, from: data) {
-            return LoadedConfig(config: config, existed: true, setAside: nil)
+        guard let data = try? Data(contentsOf: configURL) else {
+            return LoadedConfig(config: defaults(), existed: true, setAside: nil,
+                                savesBlocked: "rules.json is there but couldn't be read, so Folder Rules won't save over it. Check its permissions, then reopen All of MacOS.")
         }
         let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        if let config = try? Self.decoder().decode(FolderRulesConfig.self, from: data) {
+            guard config.decodeLosses > 0 else { return LoadedConfig(config: config, existed: true, setAside: nil) }
+            let copy = directory.appendingPathComponent("rules.damaged-\(stamp).json")
+            do {
+                try files.copyItem(at: configURL, to: copy)
+                return LoadedConfig(config: config, existed: true, setAside: copy)
+            } catch {
+                return LoadedConfig(config: config, existed: true, setAside: nil,
+                                    savesBlocked: "Part of rules.json couldn't be read and a copy couldn't be kept, so Folder Rules won't save over it.")
+            }
+        }
         let aside = directory.appendingPathComponent("rules.unreadable-\(stamp).json")
-        try? FileManager.default.moveItem(at: configURL, to: aside)
-        return LoadedConfig(config: defaults(), existed: false, setAside: aside)
+        do {
+            try files.moveItem(at: configURL, to: aside)
+            return LoadedConfig(config: defaults(), existed: false, setAside: aside)
+        } catch {
+            return LoadedConfig(config: defaults(), existed: true, setAside: nil,
+                                savesBlocked: "rules.json couldn't be read or set aside, so Folder Rules won't save over it.")
+        }
     }
 
     func save(_ config: FolderRulesConfig) throws {

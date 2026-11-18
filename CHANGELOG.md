@@ -1,3 +1,21 @@
+## [6.4.0] - 2026-11-19
+
+DeepSeek's second binary round (SoundSource, Pearcleaner, LinearMouse, Shottr, Stats, Alfred, KeepingYouAwake, BetterTouchTool, Raycast, CleanShot X) and Codex's whole-app audit (`AOM-6.3.3-감사보고서.html`). Item-by-item decisions: docs/aom-6.4-plan.md.
+
+### Added
+- **⌘K learns from use** (Alfred knowledge, Raycast frecency): the row picked for a query comes first next time; equal matches order by use; an empty palette opens with Suggestions; "Forget This Suggestion" in the row menu.
+- **Keep Awake rules** (KeepingYouAwake, Amphetamine): stay awake while an external display is connected; let the Mac sleep below 10/20/30/50 % battery; switching user ends Keep Awake.
+- **Free Up Space › Removed Apps** (Pearcleaner): Library data of apps no longer installed, grouped by app, nothing preselected; launch agents count only when their program is gone.
+- **Hide apps from the mixer** (SoundSource); search still finds them, Show All lists them under Hidden.
+- **Menu bar items keep their position** (Stats): fixed autosave names.
+- Scrolling capture explains what can break it (CleanShot X).
+
+### Fixed (Codex audit)
+- F04 Enable/Disable Trigger actions changed nothing. F05 MCP saves and Focus/microphone/clipboard links failed through the SwiftUI delegate. F01/F14 Folder Rules undo could lose the optimized file or move a different file. F02/F03 one damaged rule emptied all rules; an unreadable rules.json was overwritten with defaults. F06 stale Xcode project untracked (generate with XcodeGen). F07 MCP listed only enabled triggers. F08 aomctl sent spaces as "+". F09 duplicate floating-menu names. F10 bundle.sh built an incomplete app. F11 Cut Sequence rendered Studio layers. F12 closing during export. F13 capture history duplicate IDs and sizes. F15 helper timeouts could hang. F16 Open URL broke tel:/sms:/app schemes. F17 auto-update version compare. F18–F23 test, performance and dead-code items; D01–D04 in this release's own changes.
+
+### Validation
+- 234 unit tests and 18 live System Tools checks pass; all 12 pages render in the preview bench.
+
 ## [6.3.3] - 2026-11-18
 
 ### Fixed

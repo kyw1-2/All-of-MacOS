@@ -60,7 +60,7 @@ struct ClipboardStackView: View {
                     Button("Open Clipboard Library") {
                         // The stack panel floats outside the main window's
                         // environment, so reuse the menu bar's switch path.
-                        let delegate = NSApp.delegate as? AppDelegate
+                        let delegate = AppDelegate.current
                         delegate?.appState?.selectedMainTab = .clipboard
                         delegate?.showMainWindow()
                     }

@@ -154,6 +154,11 @@ class AppState: ObservableObject {
         shortcutObservers.append(NotificationCenter.default.addObserver(forName: .aomSettingChanged, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.refreshTrackpadLayersIfNeeded() }
         })
+        shortcutObservers.append(NotificationCenter.default.addObserver(forName: .aomSetTriggerEnabled, object: nil, queue: .main) { [weak self] note in
+            guard let selector = note.userInfo?["selector"] as? String,
+                  let enabled = note.userInfo?["enabled"] as? Bool else { return }
+            MainActor.assumeIsolated { _ = self?.applyTriggerSelector(selector, enabled: enabled) }
+        })
         DispatchQueue.main.async {
             self.permissionWatchdog.start()
             self.startMonitoring()
@@ -328,6 +333,25 @@ class AppState: ObservableObject {
               trigger.isEnabled != enabled else { return }
         trigger.isEnabled = enabled
         updateTrigger(trigger)
+    }
+
+    /// Enable Trigger / Disable Trigger actions: every trigger the selector
+    /// names (a UUID, or a name). Until 6.4.0 nothing listened for the
+    /// action's request, so it reported success and changed nothing (Codex
+    /// audit 2026-11-18). The editor's selection is left alone. Returns how
+    /// many triggers changed.
+    @discardableResult
+    func applyTriggerSelector(_ selector: String, enabled: Bool) -> Int {
+        var changed = 0
+        for var trigger in currentPreset.triggers
+        where trigger.isEnabled != enabled && TriggerSelector.matches(selector, trigger: trigger) {
+            trigger.isEnabled = enabled
+            currentPreset.updateTrigger(trigger)
+            if selectedTrigger?.id == trigger.id { selectedTrigger = trigger }
+            changed += 1
+        }
+        if changed > 0 { save() }
+        return changed
     }
 
     // MARK: - Action Management

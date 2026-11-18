@@ -40,7 +40,7 @@ enum AutomationMCP {
             return name
         }
         func state() throws -> AppState {
-            guard let state = (NSApplication.shared.delegate as? AppDelegate)?.appState else {
+            guard let state = AppDelegate.current?.appState else {
                 throw ClipboardMCPHandler.ToolError("The main app is not ready.")
             }
             return state
@@ -49,7 +49,12 @@ enum AutomationMCP {
         case "automation_catalog":
             return ["actions": ActionType.allCases.map { ["name": $0.rawValue, "category": $0.category.rawValue] }]
         case "automation_list_triggers":
-            let triggers = ActionExecutor.registeredTriggers.filter { if case .namedTrigger = $0.input { return true }; return false }
+            // The saved preset, not the executor's registration (Codex F07):
+            // that holds only enabled triggers and empties while automation
+            // is switched off, so disabled triggers (MCP saves them disabled)
+            // never showed. Each trigger carries its isEnabled.
+            let source = AppDelegate.current?.appState?.currentPreset.triggers ?? ActionExecutor.registeredTriggers
+            let triggers = source.filter { if case .namedTrigger = $0.input { return true }; return false }
             return ["triggers": redactingSecrets(try object(triggers))]
         case "automation_save_named_trigger":
             let name = try requiredName()

@@ -30,6 +30,29 @@ class ActionExecutor {
     private static var activationGroups: [ActivationGroup] = []
     private static var holds: [UUID: HoldRepeater] = [:]
 
+    /// Open URL's target (Codex F16): a value with a scheme keeps it — https,
+    /// mailto:, tel:, sms:, facetime:, an app's own scheme — and a bare web
+    /// address ("apple.com", "localhost:8080/x") gets https://. Empty is nil.
+    static func openURLTarget(_ value: String) -> URL? {
+        let raw = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return nil }
+        if let colon = raw.firstIndex(of: ":") {
+            let scheme = raw[..<colon]
+            let rest = raw[raw.index(after: colon)...]
+            // "apple.com:8080" or "localhost:8080" is a host and port, not a
+            // scheme; "sms:010" and "raycast://x" are schemes.
+            let port = rest.prefix(while: { $0 != "/" })
+            let looksLikePort = !port.isEmpty && port.allSatisfy(\.isNumber)
+                && (scheme.contains(".") || scheme.lowercased() == "localhost")
+            if !looksLikePort, let first = scheme.first, first.isLetter,
+               scheme.allSatisfy({ $0.isLetter || $0.isNumber || "+-.".contains($0) }),
+               let url = URL(string: raw), url.scheme != nil {
+                return url
+            }
+        }
+        return URL(string: "https://" + raw)
+    }
+
     static func registerTriggers(_ triggers: [Trigger], groups: [ActivationGroup] = []) {
         let next = triggers.filter(\.isEnabled)
         inactiveTriggerIDs.formUnion(registeredTriggers.map(\.id))
@@ -38,8 +61,11 @@ class ActionExecutor {
         let groupsChanged = activationGroups != groups
         // Registration changes invalidate delayed starts and ordinary sequences,
         // not only repeat-while-held loops.
-        let knownIDs = Set(registeredTriggers.map(\.id)).union(next.map(\.id))
-        for id in knownIDs where groupsChanged || registeredTriggers.first(where: { $0.id == id }) != next.first(where: { $0.id == id }) {
+        // One dictionary per side (Codex F19): the two linear searches per
+        // ID made every save O(n²), up to 2,000 triggers after a BTT import.
+        let before = Dictionary(registeredTriggers.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let after = Dictionary(next.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        for id in Set(before.keys).union(after.keys) where groupsChanged || before[id] != after[id] {
             cancelSequence(id)
         }
         activationGroups = groups
@@ -371,10 +397,7 @@ class ActionExecutor {
             return
         }
         if action.actionType == .openURL {
-            // "apple.com" is a web address too; only a missing value fails.
-            let raw = (action.parameters.url ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            let text = raw.contains("://") || raw.hasPrefix("mailto:") || raw.isEmpty ? raw : "https://" + raw
-            guard let url = URL(string: text), url.scheme != nil else { completion(false); return }
+            guard let url = Self.openURLTarget(action.parameters.url ?? "") else { completion(false); return }
             completion(NSWorkspace.shared.open(url)); return
         }
         if [.quitApplication, .hideApplication, .toggleApplication].contains(action.actionType) {
@@ -600,14 +623,8 @@ class ActionExecutor {
             MainActor.assumeIsolated {
                 KeepAwakeService.shared.toggle(minutes: minutes, keepDisplay: keepDisplay)
             }
-        case .showWindowSwitcher:
-            MainActor.assumeIsolated { WindowSwitcherController.shared.show() }
-        case .setAppVolume, .toggleAppMute, .setAppAudioOutput, .toggleMuteAllApps:
-            break // Handled above with completion reporting.
-        case .muteFrontAppAudio:
-            MainActor.assumeIsolated {
-                AppAudioMixerService.shared.toggleMuteFront()
-            }
+        case .showWindowSwitcher, .setAppVolume, .toggleAppMute, .setAppAudioOutput, .toggleMuteAllApps, .muteFrontAppAudio:
+            break // Handled above with completion reporting (Codex F21: copies here never ran).
         case .showAudioMixer:
             MainActor.assumeIsolated { AppAudioMixerService.shared.showPanel() }
         case .lockScreen:
@@ -633,13 +650,9 @@ class ActionExecutor {
         case .brightnessDown:
             result = sendMediaKey(keyCode: NX_KEYTYPE_BRIGHTNESS_DOWN)
 
-        // Script execution is completed asynchronously through ScriptRunnerClient above.
-        case .runAppleScript, .runShellScript:
+        // Scripts and Open URL finish above, with completion reporting.
+        case .runAppleScript, .runShellScript, .openURL:
             break
-        case .openURL:
-            if let urlString = action.parameters.url, let url = URL(string: urlString) {
-                NSWorkspace.shared.open(url)
-            }
 
         // Media Controls
         case .playPause:

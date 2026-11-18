@@ -418,6 +418,7 @@ final class MicMuteController: ObservableObject {
 
     private func makeStatusItem() -> NSStatusItem {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        item.autosaveName = AOMStatusItemName.microphone
         let image = NSImage(systemSymbolName: "mic.slash.fill", accessibilityDescription: "Microphone muted")
         image?.isTemplate = true
         item.button?.image = image
@@ -435,7 +436,7 @@ final class MicMuteController: ObservableObject {
 
     /// The Audio page, where `MicMuteSection` lives.
     static func openSettings() {
-        guard let delegate = NSApp.delegate as? AppDelegate else { return }
+        guard let delegate = AppDelegate.current else { return }
         delegate.appState?.selectedMainTab = .audio
         delegate.showMainWindow()
     }

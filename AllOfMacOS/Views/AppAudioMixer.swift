@@ -52,6 +52,10 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
     /// Favourites stay at the top of the list in the order they were added
     /// (SoundSource), even while silent.
     @Published private(set) var favorites: [String] = UserDefaults.standard.stringArray(forKey: "AOMAudioFavorites") ?? []
+    /// SoundSource's hidden sources: apps the user never wants in the list
+    /// (a chat app's notification sounds). Search still finds them, and
+    /// Show All lists them under "Hidden". Their audio is untouched.
+    @Published private(set) var hiddenApps: [String] = UserDefaults.standard.stringArray(forKey: "AOMAudioHiddenApps") ?? []
     /// Also list running apps that have not played audio recently.
     @Published var showAllApps: Bool = UserDefaults.standard.bool(forKey: "AOMAudioShowAllApps") {
         didSet { UserDefaults.standard.set(showAllApps, forKey: "AOMAudioShowAllApps") }
@@ -183,10 +187,50 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
     func toggleFavorite(_ bundleID: String) {
         guard !bundleID.isEmpty else { return }
         if let index = favorites.firstIndex(of: bundleID) { favorites.remove(at: index) }
-        else { favorites.append(bundleID) }
+        else {
+            favorites.append(bundleID)
+            // A favourite is meant to be seen (Codex D04): starring a hidden app shows it again.
+            if let hidden = hiddenApps.firstIndex(of: bundleID) {
+                hiddenApps.remove(at: hidden)
+                UserDefaults.standard.set(hiddenApps, forKey: "AOMAudioHiddenApps")
+            }
+        }
         UserDefaults.standard.set(favorites, forKey: "AOMAudioFavorites")
         if #available(macOS 14.2, *), isFavorite(bundleID) { AppAudioEngine.shared.addCustomApp(bundleID: bundleID) }
         refresh()
+    }
+
+    func isHidden(_ bundleID: String) -> Bool { hiddenApps.contains(bundleID) }
+
+    /// Hiding also takes the app out of Favorites: a starred row that never shows makes no sense.
+    func toggleHidden(_ bundleID: String) {
+        guard !bundleID.isEmpty else { return }
+        if let index = hiddenApps.firstIndex(of: bundleID) {
+            hiddenApps.remove(at: index)
+        } else {
+            hiddenApps.append(bundleID)
+            if isFavorite(bundleID) { toggleFavorite(bundleID) }
+        }
+        UserDefaults.standard.set(hiddenApps, forKey: "AOMAudioHiddenApps")
+    }
+
+    /// Running hidden apps, listed only with Show All (or a search).
+    func hiddenListed(matching query: String = "") -> [AppAudioState] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard showAllApps || !trimmed.isEmpty else { return [] }
+        return Self.partitionHidden(apps, hidden: Set(hiddenApps), query: trimmed).hidden
+    }
+
+    /// Splits apps into the shown pool and the hidden ones. A search shows
+    /// matching hidden apps in the pool too, so nothing is unreachable.
+    nonisolated static func partitionHidden(_ apps: [AppAudioState], hidden: Set<String>, query: String)
+        -> (shown: [AppAudioState], hidden: [AppAudioState]) {
+        let matching = query.isEmpty ? apps : apps.filter {
+            $0.name.localizedCaseInsensitiveContains(query) || $0.bundleID.localizedCaseInsensitiveContains(query)
+        }
+        let hiddenRows = matching.filter { hidden.contains($0.bundleID) }
+        let shown = query.isEmpty ? matching.filter { !hidden.contains($0.bundleID) } : matching
+        return (shown, query.isEmpty ? hiddenRows : [])
     }
 
     func moveFavorite(from source: IndexSet, to destination: Int) {
@@ -210,9 +254,7 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
     /// then — only when asked — everything else that is running.
     func listedApps(matching query: String = "") -> (favorites: [AppAudioState], active: [AppAudioState], other: [AppAudioState]) {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let pool = trimmed.isEmpty ? apps : apps.filter {
-            $0.name.localizedCaseInsensitiveContains(trimmed) || $0.bundleID.localizedCaseInsensitiveContains(trimmed)
-        }
+        let pool = Self.partitionHidden(apps, hidden: Set(hiddenApps), query: trimmed).shown
         var seen = Set<String>()
         var favoriteRows: [AppAudioState] = []
         for bundleID in favorites {
@@ -703,7 +745,8 @@ private struct AppAudioMixerView: View {
             }
             .padding(.horizontal, AOMSpace.x3)
             .padding(.vertical, AOMSpace.x2)
-            if service.apps.isEmpty || (lists.favorites.isEmpty && lists.active.isEmpty && lists.other.isEmpty) {
+            if service.apps.isEmpty || (lists.favorites.isEmpty && lists.active.isEmpty && lists.other.isEmpty
+                                            && service.hiddenListed(matching: filter).isEmpty) {
                 AOMEmptyState(!service.isSupported ? "Per-app audio isn't available"
                                 : filter.isEmpty ? "No app is playing audio" : "No app matches “\(filter)”",
                               systemImage: "waveform",
@@ -715,6 +758,7 @@ private struct AppAudioMixerView: View {
                         group("Favorites", lists.favorites)
                         group(lists.favorites.isEmpty ? nil : "Recently Active", lists.active)
                         group("Other Apps", lists.other)
+                        group("Hidden", service.hiddenListed(matching: filter))
                     }
                 }
             }
@@ -1212,6 +1256,9 @@ struct MixerAppRow: View {
         Menu("Timed Mute") { timedMuteItems }
         Button(service.isFavorite(app.bundleID) ? "Remove from Favorites" : "Add to Favorites") {
             service.toggleFavorite(app.bundleID)
+        }
+        Button(service.isHidden(app.bundleID) ? "Show in List" : "Hide from List") {
+            service.toggleHidden(app.bundleID)
         }
         Divider()
         Button("Reset Effects") { resetEffects() }

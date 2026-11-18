@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Storage's one sheet: a sidebar of the scans (Folder Sizes, Large Files, Old
-/// Downloads, Duplicates, Xcode Junk, Caches, Trash) and the chosen scan's
+/// Downloads, Duplicates, Removed Apps, Xcode Junk, Caches, Trash) and the chosen scan's
 /// preview, so nothing leaves the sheet to run a scan.
 struct FreeUpSpaceSheet: View {
     @ObservedObject var model: SystemToolsModel

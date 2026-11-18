@@ -68,7 +68,7 @@ enum FilesModule {
 
     /// Opens the Files page in the main window.
     static func openPage() {
-        guard let delegate = AppDelegate.current ?? (NSApp.delegate as? AppDelegate) else { return }
+        guard let delegate = AppDelegate.current else { return }
         delegate.appState?.selectedMainTab = .files
         delegate.showMainWindow()
     }

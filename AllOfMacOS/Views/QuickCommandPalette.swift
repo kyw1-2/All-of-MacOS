@@ -32,6 +32,8 @@ struct QuickCommandPalette: View {
     @State private var editingQuicklinks = false
     @State private var editingLinkRouter = false
     @State private var hoveredID: String?
+    /// Bumped when a suggestion is forgotten, so the list redraws.
+    @State private var refreshToken = 0
     @FocusState private var isFieldFocused: Bool
 
     struct PaletteAction {
@@ -56,6 +58,9 @@ struct QuickCommandPalette: View {
         let subtitle: String
         let icon: String
         let section: Section
+        /// Listed under Suggestions (an empty palette's most used rows),
+        /// keeping its own section's colour.
+        var isSuggestion = false
         var shortcut: String?
         let primary: PaletteAction
         /// ⌘↩ runs the first; all of them are in the Actions panel (⌘K).
@@ -147,21 +152,39 @@ struct QuickCommandPalette: View {
             return nil
         }
 
-        static func results(for items: [PaletteItem], query: String) -> [PaletteItem] {
+        /// `knowledge`: what ⌘K learnt from use. With an empty query up to
+        /// five most-used rows move into Suggestions; while searching the
+        /// row picked for this exact query comes first (Alfred), and rows of
+        /// the same match quality order by use (Raycast).
+        static func results(for items: [PaletteItem], query: String,
+                            knowledge: PaletteKnowledge = PaletteKnowledge(), now: Date = Date()) -> [PaletteItem] {
             let trimmed = trimmedQuery(query)
             let ranked = items.filter { $0.placement == .ranked }
             guard !trimmed.isEmpty else {
-                return Section.allCases.flatMap { section in ranked.filter { $0.section == section } }
+                let suggested = knowledge.suggestions(among: ranked.map(\.id), limit: 5, now: now)
+                let suggestions = suggested.compactMap { id -> PaletteItem? in
+                    guard var item = ranked.first(where: { $0.id == id }) else { return nil }
+                    item.isSuggestion = true
+                    return item
+                }
+                let rest = ranked.filter { !suggested.contains($0.id) }
+                return suggestions + Section.allCases.flatMap { section in rest.filter { $0.section == section } }
             }
             // Fuzzy matches (rank 4) are ordered by how well they match:
             // "pms" puts Paste and Match Style before Pick Color from Screen.
-            let ordered = ranked.compactMap { item -> (item: PaletteItem, rank: Int, closeness: Int)? in
+            let pick = knowledge.pick(for: trimmed)
+            var ordered = ranked.compactMap { item -> (item: PaletteItem, rank: Int, closeness: Int, use: Double)? in
                 guard let level = Self.rank(of: item, matching: trimmed) else { return nil }
-                return (item: item, rank: level, closeness: level == 4 ? -(PaletteFuzzy.score(trimmed, item.title) ?? 0) : 0)
+                return (item: item, rank: level, closeness: level == 4 ? -(PaletteFuzzy.score(trimmed, item.title) ?? 0) : 0,
+                        use: -knowledge.decayedScore(item.id, now: now))
             }
                 .enumerated()
-                .sorted { ($0.element.rank, $0.element.closeness, $0.offset) < ($1.element.rank, $1.element.closeness, $1.offset) }
+                .sorted { ($0.element.rank, $0.element.closeness, $0.element.use, $0.offset)
+                    < ($1.element.rank, $1.element.closeness, $1.element.use, $1.offset) }
                 .map(\.element.item)
+            if let pick, let index = ordered.firstIndex(where: { $0.id == pick }), index > 0 {
+                ordered.insert(ordered.remove(at: index), at: 0)
+            }
             return items.filter { $0.placement == .pinned } + ordered + items.filter { $0.placement == .fallback }
         }
 
@@ -611,7 +634,16 @@ struct QuickCommandPalette: View {
 
     /// Searching ranks one flat list; menus, bookmarks and files are capped
     /// by their own searches before they get here.
-    private var results: [PaletteItem] { PaletteSearch.results(for: allItems, query: query) }
+    private var results: [PaletteItem] {
+        PaletteSearch.results(for: allItems, query: query, knowledge: PaletteKnowledgeStore.shared.knowledge)
+    }
+
+    /// Runs one of a row's actions and lets ⌘K learn the pick.
+    private func perform(_ action: PaletteAction?, of item: PaletteItem) {
+        guard let action else { return }
+        PaletteKnowledgeStore.shared.record(itemID: item.id, query: query)
+        action.run()
+    }
 
     private func sectionTitle(_ section: Section) -> String {
         switch section {
@@ -624,6 +656,7 @@ struct QuickCommandPalette: View {
     // MARK: Body
 
     var body: some View {
+        let _ = refreshToken
         let items = results
         let selected = items.first { $0.id == selectedID } ?? items.first
         ZStack {
@@ -683,12 +716,12 @@ struct QuickCommandPalette: View {
             if showsActions {
                 let action = PaletteSearch.action(at: actionIndex, of: item)
                 showsActions = false
-                action?.run()
+                perform(action, of: item)
             } else if press.modifiers.contains(.command) {
                 // ⌘↩ keeps running the first secondary, as before.
-                item.secondaries.first?.run()
+                perform(item.secondaries.first, of: item)
             } else {
-                item.primary.run()
+                perform(item.primary, of: item)
             }
             return .handled
         }
@@ -829,7 +862,7 @@ struct QuickCommandPalette: View {
                     ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                         if showsHeader(at: index, in: items) {
                             // Sentence case, no tracking (c.2).
-                            Text(item.placement == .fallback ? "Search with" : sectionTitle(item.section))
+                            Text(item.placement == .fallback ? "Search with" : item.isSuggestion ? "Suggestions" : sectionTitle(item.section))
                                 .font(AOMFont.caption.weight(.semibold))
                                 .foregroundStyle(AOMColor.textSecondary)
                                 .padding(.horizontal, AOMSpace.x2)
@@ -854,7 +887,10 @@ struct QuickCommandPalette: View {
     private func showsHeader(at index: Int, in items: [PaletteItem]) -> Bool {
         let item = items[index]
         let previous = index > 0 ? items[index - 1] : nil
-        if !isSearching { return previous?.section != item.section }
+        if !isSearching {
+            guard let previous else { return true }
+            return previous.isSuggestion != item.isSuggestion || (!item.isSuggestion && previous.section != item.section)
+        }
         if item.placement == .fallback { return previous?.placement != .fallback }
         return false
     }
@@ -862,7 +898,7 @@ struct QuickCommandPalette: View {
     private func row(_ item: PaletteItem, selected: Bool) -> some View {
         Button {
             selectedID = item.id
-            item.primary.run()
+            perform(item.primary, of: item)
         } label: {
             Group {
                 if item.section == .calculator {
@@ -879,7 +915,11 @@ struct QuickCommandPalette: View {
         .onHover { hovering in hoveredID = hovering ? item.id : (hoveredID == item.id ? nil : hoveredID) }
         .contextMenu {
             ForEach(Array(item.actions.enumerated()), id: \.offset) { _, action in
-                Button(action.title) { action.run() }
+                Button(action.title) { perform(action, of: item) }
+            }
+            if PaletteKnowledgeStore.shared.knowledge.decayedScore(item.id, now: Date()) > 0 {
+                Divider()
+                Button("Forget This Suggestion") { PaletteKnowledgeStore.shared.forget(item.id); refreshToken += 1 }
             }
         }
         .accessibilityElement(children: .ignore)
@@ -1066,7 +1106,7 @@ struct QuickCommandPalette: View {
                 let isCurrent = index == actionIndex
                 Button {
                     showsActions = false
-                    action.run()
+                    perform(action, of: item)
                 } label: {
                     HStack(spacing: AOMSpace.x2) {
                         Image(systemName: action.symbol ?? (index == 0 ? "return" : "bolt"))

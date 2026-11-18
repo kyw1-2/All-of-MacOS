@@ -230,7 +230,8 @@ enum FolderRulesImageOptimizer {
         let summary = "Optimized\(formatNote): \(details.joined(separator: ", ")); the original is in the Trash"
         return FolderRuleExecutor.Step(record: FolderRuleStepRecord(action: .optimizeImage, result: .done, summary: summary,
                                                                     undo: .restoreOriginal(trashed: trashed.path, original: item.path,
-                                                                                           replacement: target.path)),
+                                                                                           replacement: target.path,
+                                                                                           identity: FolderRulesSafety.identity(target))),
                                        next: target, produced: target)
     }
 

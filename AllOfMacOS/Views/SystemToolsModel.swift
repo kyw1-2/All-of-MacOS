@@ -227,7 +227,7 @@ final class SystemToolsModel: ObservableObject {
         let style = preferences.value("AppleInterfaceStyle", domain: CFPreferenceStore.globalDomain) as? String
         next[.darkMode] = SystemToolState(style?.caseInsensitiveCompare("Dark") == .orderedSame)
         let awake = KeepAwakeService.shared
-        next[.keepAwake] = awake.isActive ? .on(awake.endsAt.map { "Until " + $0.formatted(date: .omitted, time: .shortened) } ?? "On") : .off()
+        next[.keepAwake] = awake.isActive ? .on(awake.origin == .externalDisplay ? "Display connected" : awake.endsAt.map { "Until " + $0.formatted(date: .omitted, time: .shortened) } ?? "On") : .off()
         let finder = UserDefaults(suiteName: SystemTweak.finder)
         next[.hidden] = SystemToolState(MacMagicSystemToolService.finderFlag("AppleShowAllFiles", in: finder, default: false))
         next[.desktop] = SystemToolState(MacMagicSystemToolService.finderFlag("CreateDesktop", in: finder, default: true))
@@ -518,6 +518,28 @@ final class SystemToolsModel: ObservableObject {
             }
             if !keepDisplay { menu.addItem(.separator()) }
         }
+        // Amphetamine's triggers and KeepingYouAwake's conditions.
+        let rules = KeepAwakeRules.shared
+        menu.addItem(.separator())
+        menu.addItem(headerItem("Automatically"))
+        let display = SystemToolMenuItem(title: "While an External Display Is Connected") {
+            rules.whileExternalDisplay.toggle()
+            self.succeed(.keepAwake, rules.whileExternalDisplay ? "Stays awake while a display is connected" : "External display rule off")
+        }
+        display.state = rules.whileExternalDisplay ? .on : .off
+        menu.addItem(display)
+        let battery = NSMenuItem(title: "Let the Mac Sleep on Low Battery", action: nil, keyEquivalent: "")
+        let floors = NSMenu()
+        for floor in [0] + KeepAwakeRules.batteryFloors {
+            let item = SystemToolMenuItem(title: floor == 0 ? "Never" : "Below \(floor)%") {
+                rules.batteryFloor = floor
+                self.succeed(.keepAwake, floor == 0 ? "Keeps awake at any battery level" : "Turns off below \(floor)% battery")
+            }
+            item.state = rules.batteryFloor == floor ? .on : .off
+            floors.addItem(item)
+        }
+        battery.submenu = floors
+        menu.addItem(battery)
         popUp(menu)
     }
 
@@ -962,7 +984,7 @@ final class SystemToolsModel: ObservableObject {
     /// The one Free Up Space sheet's scans: each entry was its own tool in
     /// 3.4.x and keeps its own confirmation-free preview.
     enum CleanupScan: String, CaseIterable, Identifiable {
-        case folderSizes, largeFiles, oldDownloads, duplicates, devJunk, cache, trash
+        case folderSizes, largeFiles, oldDownloads, duplicates, orphans, devJunk, cache, trash
         var id: String { rawValue }
 
         var title: String {
@@ -971,6 +993,7 @@ final class SystemToolsModel: ObservableObject {
             case .largeFiles: return "Large Files"
             case .oldDownloads: return "Old Downloads"
             case .duplicates: return "Duplicates"
+            case .orphans: return "Removed Apps"
             case .devJunk: return "Xcode Junk"
             case .cache: return "Caches"
             case .trash: return "Trash"
@@ -983,6 +1006,7 @@ final class SystemToolsModel: ObservableObject {
             case .largeFiles: return "externaldrive.badge.exclamationmark"
             case .oldDownloads: return "arrow.down.circle"
             case .duplicates: return "square.on.square"
+            case .orphans: return "app.dashed"
             case .devJunk: return "hammer"
             case .cache: return "paintbrush"
             case .trash: return "trash"
@@ -995,6 +1019,7 @@ final class SystemToolsModel: ObservableObject {
             case .largeFiles: return "Finds files over a size you choose in a folder."
             case .oldDownloads: return "Lists Downloads items untouched for a while."
             case .duplicates: return "Finds identical files by size and SHA-256."
+            case .orphans: return "Finds data in your Library left by apps that are no longer on this Mac. Nothing is checked until you choose."
             case .devJunk: return "Lists rebuildable Xcode data; archives are never listed."
             case .cache: return "Deletes the contents of ~/Library/Caches."
             case .trash: return "Permanently deletes everything in the Trash."
@@ -1016,6 +1041,7 @@ final class SystemToolsModel: ObservableObject {
         case .largeFiles: scanLargeFiles()
         case .oldDownloads: scanOldDownloads()
         case .duplicates: scanDuplicates()
+        case .orphans: scanOrphans()
         case .devJunk: scanDeveloperJunk()
         case .cache: clearCaches()
         case .trash: confirmEmptyTrash()
@@ -1103,6 +1129,29 @@ final class SystemToolsModel: ObservableObject {
             self.cleanupReview = CleanupReview(title: "\(result.groups) Sets of Duplicates in \(folder.lastPathComponent)",
                                                detail: "Same size and SHA-256. In each set the oldest copy is unchecked and stays; checked copies (\(SystemStatus.size(result.wasted))) move to the Trash.",
                                                candidates: result.items, selected: result.preselected)
+        }
+    }
+
+    /// Pearcleaner's orphaned files: ~/Library data of apps that are no
+    /// longer on this Mac. Bundle IDs can belong to helpers and frameworks
+    /// too, so nothing starts checked.
+    private func scanOrphans() {
+        let library = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library")
+        toast = "Looking for data of removed apps…"
+        runInBackground(.freeUpSpace, { () -> (items: [CleanupCandidate], hints: [String: String]) in
+            let items = CleanupTools.orphanedFiles(library: library, installed: CleanupTools.isInstalledOrRunning)
+            return (items, Dictionary(uniqueKeysWithValues: items.map { ($0.id, CleanupTools.orphanHint(for: $0.url)) }))
+        }) { result in
+            guard !result.items.isEmpty else { self.succeed(.freeUpSpace, "No data of removed apps found"); return }
+            let total = result.items.reduce(0) { $0 + $1.size }
+            let apps = Set(result.items.map(\.note)).count
+            self.cleanupTool = .freeUpSpace
+            var review = CleanupReview(title: "Data of \(apps) Removed App\(apps == 1 ? "" : "s")",
+                                       detail: "\(SystemStatus.size(total)) in your Library is named after apps that are no longer installed, grouped by app. Nothing is checked: a helper or a framework can share an app's ID, so check only what you recognise.",
+                                       candidates: result.items, selected: [])
+            review.groupsByNote = true
+            review.hints = result.hints
+            self.cleanupReview = review
         }
     }
 

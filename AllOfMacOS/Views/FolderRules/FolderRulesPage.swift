@@ -211,9 +211,15 @@ struct FolderRulesNotices: View {
                 Button("Open Privacy Settings") { FolderRulesPrivacy.openFilesAndFolders() }
             }
         }
-        if let setAside = engine.setAside {
-            AOMNotice(.warning, "The rules file couldn't be read",
-                      detail: "It was kept as \(setAside.lastPathComponent) in \(FolderRulesSafety.display(setAside.deletingLastPathComponent())), and Folder Rules started fresh.") {
+        if let blocked = engine.savesBlocked {
+            AOMNotice(.error, "Folder Rules can’t save", detail: blocked) {
+                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([FolderRulesStore().configURL]) }
+            }
+        } else if let setAside = engine.setAside {
+            AOMNotice(.warning, engine.loadLosses > 0 ? "Part of the rules file couldn't be read" : "The rules file couldn't be read",
+                      detail: engine.loadLosses > 0
+                        ? "\(engine.loadLosses) damaged \(engine.loadLosses == 1 ? "entry was" : "entries were") skipped, and rules missing a condition or action were turned off. The original was kept as \(setAside.lastPathComponent)."
+                        : "It was kept as \(setAside.lastPathComponent) in \(FolderRulesSafety.display(setAside.deletingLastPathComponent())), and Folder Rules started fresh.") {
                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([setAside]) }
             }
         }

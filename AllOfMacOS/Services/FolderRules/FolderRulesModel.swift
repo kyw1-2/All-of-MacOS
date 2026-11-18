@@ -15,6 +15,9 @@ struct FolderRulesConfig: Codable, Equatable {
     var isEnabled = false
     var folders: [FolderRuleFolder] = []
     var rules: [FolderRule] = []
+    /// Entries the last decode skipped or rules it turned off because part
+    /// of them could not be read. Never written back.
+    var decodeLosses = 0
 
     init(isEnabled: Bool = false, folders: [FolderRuleFolder] = [], rules: [FolderRule] = []) {
         self.isEnabled = isEnabled
@@ -28,8 +31,13 @@ struct FolderRulesConfig: Codable, Equatable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         version = try c.decodeIfPresent(Int.self, forKey: .version) ?? Self.currentVersion
         isEnabled = try c.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? false
-        folders = (try? c.decodeIfPresent([FolderRuleFolder].self, forKey: .folders)) ?? []
-        rules = (try? c.decodeIfPresent([FolderRule].self, forKey: .rules)) ?? []
+        // Element by element (Codex audit F02): one malformed rule used to
+        // empty the whole list, and the next save wrote that empty list.
+        let folderList = (try? c.decodeIfPresent(LossyArray<FolderRuleFolder>.self, forKey: .folders)) ?? LossyArray()
+        let ruleList = (try? c.decodeIfPresent(LossyArray<FolderRule>.self, forKey: .rules)) ?? LossyArray()
+        folders = folderList.elements
+        rules = ruleList.elements
+        decodeLosses = folderList.dropped + ruleList.dropped + rules.filter(\.isDamaged).count
     }
 
     func rules(in folderID: UUID) -> [FolderRule] { rules.filter { $0.folderID == folderID } }
@@ -82,6 +90,10 @@ struct FolderRule: Codable, Equatable, Identifiable {
     var runWithoutAsking = false
     /// The template this rule was made from, if any.
     var templateID: String?
+    /// A condition or action of this rule could not be read: it was
+    /// dropped and the rule turned off, because a rule missing a condition
+    /// matches more than it was written to. Never written back.
+    var isDamaged = false
 
     init(id: UUID = UUID(), folderID: UUID, name: String, isEnabled: Bool = false, match: FolderRuleMatch = .all,
          conditions: [FolderRuleCondition] = [], actions: [FolderRuleAction] = [],
@@ -109,11 +121,17 @@ struct FolderRule: Codable, Equatable, Identifiable {
         name = try c.decodeIfPresent(String.self, forKey: .name) ?? "Rule"
         isEnabled = try c.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? false
         match = (try? c.decodeIfPresent(FolderRuleMatch.self, forKey: .match)) ?? .all
-        conditions = (try? c.decodeIfPresent([FolderRuleCondition].self, forKey: .conditions)) ?? []
-        actions = (try? c.decodeIfPresent([FolderRuleAction].self, forKey: .actions)) ?? []
+        let conditionList = (try? c.decodeIfPresent(LossyArray<FolderRuleCondition>.self, forKey: .conditions)) ?? LossyArray()
+        let actionList = (try? c.decodeIfPresent(LossyArray<FolderRuleAction>.self, forKey: .actions)) ?? LossyArray()
+        conditions = conditionList.elements
+        actions = actionList.elements
         includeSubfolders = try c.decodeIfPresent(Bool.self, forKey: .includeSubfolders) ?? false
         runWithoutAsking = try c.decodeIfPresent(Bool.self, forKey: .runWithoutAsking) ?? false
         templateID = try c.decodeIfPresent(String.self, forKey: .templateID)
+        if conditionList.dropped + actionList.dropped > 0 {
+            isDamaged = true
+            isEnabled = false
+        }
     }
 
     /// What changes whether an item matches. Hazel re-checks items a rule
@@ -646,4 +664,28 @@ struct FolderRuleAction: Codable, Equatable, Identifiable {
                   image: (try? c.decodeIfPresent(FolderRuleImageOptions.self, forKey: .image)) ?? FolderRuleImageOptions(),
                   install: (try? c.decodeIfPresent(FolderRuleInstallOptions.self, forKey: .install)) ?? FolderRuleInstallOptions())
     }
+}
+
+/// Decodes an array one element at a time: an element that fails is
+/// skipped and counted, and its neighbours survive.
+struct LossyArray<Element: Decodable>: Decodable {
+    private(set) var elements: [Element] = []
+    private(set) var dropped = 0
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        var container = try decoder.unkeyedContainer()
+        while !container.isAtEnd {
+            if let element = try? container.decode(Element.self) {
+                elements.append(element)
+            } else {
+                // Step over the bad element; nothing in it is read.
+                _ = try? container.decode(SkippedElement.self)
+                dropped += 1
+            }
+        }
+    }
+
+    private struct SkippedElement: Decodable { init(from decoder: Decoder) throws {} }
 }

@@ -1,61 +1,13 @@
 #!/usr/bin/env bash
+# Kept for old habits and notes that still call ./bundle.sh. It used to
+# assemble its own bundle at the same path as build-and-sign.sh, without the
+# script runner XPC service, the AppleScript dictionary, the aomctl CLI or the
+# app icon (Codex audit F10), so shell and AppleScript actions failed in that
+# build. There is one assembly now: build-and-sign.sh.
 set -euo pipefail
-
-# SwiftUI macros (@State, @Preview) ship only in the Xcode toolchain; the
-# Command Line Tools toolchain has no libSwiftUIMacros, so a CLT-selected
-# environment fails to compile the Views layer. Prefer Xcode when it is
-# installed, without overriding a DEVELOPER_DIR the caller already chose.
-if [ -z "${DEVELOPER_DIR:-}" ] && [ -d /Applications/Xcode.app/Contents/Developer ]; then
-    export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+cd "$(dirname "$0")"
+if [ "${1:-release}" != "release" ]; then
+    echo "bundle.sh builds release only; for a debug run use 'swift run AllOfMacOS'." >&2
+    exit 2
 fi
-
-CONFIG="${1:-release}"
-APP_NAME="All of MacOS"
-BUNDLE_ID="com.kyw.allofmacos"
-BUNDLE_DIR="build/${APP_NAME}.app"
-
-echo "→ Building ${CONFIG}…"
-swift build -c "$CONFIG" --product AllOfMacOS
-
-BIN_PATH="$(swift build -c "$CONFIG" --product AllOfMacOS --show-bin-path)"
-EXEC_PATH="$BIN_PATH/AllOfMacOS"
-test -f "$EXEC_PATH" || { echo "Binary not found at $EXEC_PATH"; exit 1; }
-
-echo "→ Assembling ${BUNDLE_DIR}…"
-rm -rf "$BUNDLE_DIR"
-mkdir -p "$BUNDLE_DIR/Contents/MacOS"
-mkdir -p "$BUNDLE_DIR/Contents/Resources"
-
-cp AllOfMacOS/App/Info.plist "$BUNDLE_DIR/Contents/Info.plist"
-cp AllOfMacOS/AllOfMacOS.entitlements "$BUNDLE_DIR/Contents/Resources/AllOfMacOS.entitlements"
-cp "$EXEC_PATH" "$BUNDLE_DIR/Contents/MacOS/AllOfMacOS"
-# Record the real build SDK (SwiftPM writes the deployment target), so
-# macOS 26+ draws the current system design instead of the compatibility one.
-SDK_VERSION="$(xcrun --sdk macosx --show-sdk-version 2>/dev/null || true)"
-if [ -n "$SDK_VERSION" ]; then
-    xcrun vtool -set-build-version macos 14.0 "$SDK_VERSION" -replace \
-        -output "$BUNDLE_DIR/Contents/MacOS/AllOfMacOS.sdk" "$BUNDLE_DIR/Contents/MacOS/AllOfMacOS" 2>/dev/null
-    mv "$BUNDLE_DIR/Contents/MacOS/AllOfMacOS.sdk" "$BUNDLE_DIR/Contents/MacOS/AllOfMacOS"
-fi
-
-echo "→ Signing with explicitly configured All of MacOS identity…"
-SIGN_FLAG="${ALLOFMACOS_SIGN_ID:-AOM Dev}"
-if [ "$SIGN_FLAG" != "AOM Dev" ] && [ "$SIGN_FLAG" != "-" ]; then
-    echo "ERROR: Expected AOM Dev (local) or - (CI test only)." >&2
-    exit 1
-fi
-
-bash HardwareHelper/build-helper.sh "$BUNDLE_DIR/Contents" "$SIGN_FLAG"
-
-bash scripts/bundle-webp.sh "$BUNDLE_DIR/Contents" "$SIGN_FLAG"
-bash scripts/bundle-annotation-preview.sh "$BUNDLE_DIR/Contents" "$SIGN_FLAG"
-mkdir -p "$BUNDLE_DIR/Contents/Resources/Ulanzi"
-ditto "Extensions/Ulanzi/com.ulanzi.aom.ulanziPlugin" \
-    "$BUNDLE_DIR/Contents/Resources/Ulanzi/com.ulanzi.aom.ulanziPlugin"
-
-codesign --force --deep --sign "$SIGN_FLAG" \
-    --identifier "$BUNDLE_ID" \
-    --entitlements "$BUNDLE_DIR/Contents/Resources/AllOfMacOS.entitlements" \
-    "$BUNDLE_DIR" 2>&1 | head -5
-
-echo "→ Done. App bundle created at $BUNDLE_DIR"
+exec ./build-and-sign.sh

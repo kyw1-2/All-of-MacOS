@@ -77,7 +77,6 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
     private var localClickMonitor: Any?
     private var keyMonitor: Any?
     private var localKeyMonitor: Any?
-    private var keyImage: CIImage?
     private let ciContext = CIContext()
     private let recordingQueue = DispatchQueue(label: "com.kyw.allofmacos.screen-recording", qos: .userInitiated)
     private let audioQueue = DispatchQueue(label: "com.kyw.allofmacos.screen-recording-audio", qos: .userInitiated)
@@ -331,7 +330,6 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
             pauseStarted = nil; isPaused = false; acceptAudioAfter = CMClockGetTime(CMClockGetHostTimeClock())
         } else {
             pauseStarted = CMClockGetTime(CMClockGetHostTimeClock()); isPaused = true
-            keyImage = nil
         }
     }
 
@@ -633,7 +631,7 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
 
     private func showKey(_ event: NSEvent) {
         guard isRecording, !isPaused else { return }
-        guard !IsSecureEventInputEnabled() else { keyImage = nil; return }
+        guard !IsSecureEventInputEnabled() else { return }
         // By default only shortcuts and navigation keys are shown, so ordinary
         // typed text is not copied into the overlay; "All Keys" opts in.
         // Password fields (Secure Input) are always excluded above.
@@ -728,7 +726,7 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
     }
 
     private func stopOverlays() {
-        camera?.stop(); camera = nil; cameraImage = nil; keyImage = nil
+        camera?.stop(); camera = nil; cameraImage = nil
         if let clickMonitor { NSEvent.removeMonitor(clickMonitor); self.clickMonitor = nil }
         if let localClickMonitor { NSEvent.removeMonitor(localClickMonitor); self.localClickMonitor = nil }
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor); self.keyMonitor = nil }

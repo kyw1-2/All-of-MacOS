@@ -7,7 +7,7 @@ from pathlib import Path
 import socket
 import subprocess
 import sys
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 
 def rpc(name, arguments):
@@ -50,7 +50,9 @@ def main():
     args = parser.parse_args()
     if args.command in ("run-trigger", "show-menu", "edit-menus", "hide-menus", "clipboard"):
         host = {"run-trigger": "trigger", "clipboard": "open-clipboard"}.get(args.command, args.command)
-        query = "?" + urlencode({"name": args.name}) if hasattr(args, "name") else ""
+        # %20, not "+": URLComponents keeps "+" literally, so "Meeting prep"
+        # arrived as "Meeting+prep" (Codex F08).
+        query = "?" + urlencode({"name": args.name}, quote_via=quote) if hasattr(args, "name") else ""
         subprocess.run(["/usr/bin/open", "-g", "aom://" + host + query], check=True)
         print("Request sent to All of MacOS.")
         return

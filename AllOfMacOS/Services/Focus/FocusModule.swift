@@ -196,7 +196,7 @@ enum FocusModule {
 
     /// Shows the main window on the Focus page.
     static func openPage() {
-        guard let delegate = NSApp.delegate as? AppDelegate else { return }
+        guard let delegate = AppDelegate.current else { return }
         delegate.appState?.selectedMainTab = .focus
         delegate.showMainWindow()
     }

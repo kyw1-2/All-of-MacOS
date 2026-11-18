@@ -276,3 +276,115 @@ enum CleanupTools {
         }.filter { $0.size > 0 }.sorted { $0.size > $1.size }
     }
 }
+
+// MARK: - Leftovers of removed apps (Pearcleaner's orphaned files)
+
+extension CleanupTools {
+    /// Top-level domains a reverse-DNS bundle ID starts with. A folder named
+    /// "Notes" or "Google" is never read as an ID.
+    static let bundleIDRoots: Set<String> = ["com", "org", "net", "io", "app", "co", "me", "de", "jp", "kr", "ru",
+                                             "dev", "us", "uk", "ai", "tv", "eu", "fr", "cc", "pl", "info", "ch", "nl", "se"]
+
+    /// Never listed: macOS's own data and AOM's.
+    static let orphanIgnoredPrefixes = ["com.apple.", "com.kyw.allofmacos"]
+
+    /// The bundle ID an entry in ~/Library is named after, without a file
+    /// extension, a "group." prefix or a ten-character team prefix; nil when
+    /// the name is not a reverse-DNS ID of at least three parts.
+    static func bundleIDCandidate(in entry: String) -> String? {
+        var name = entry
+        for suffix in [".plist", ".savedstate", ".binarycookies"] where name.lowercased().hasSuffix(suffix) {
+            name = String(name.dropLast(suffix.count))
+        }
+        var parts = name.split(separator: ".", omittingEmptySubsequences: false).map(String.init)
+        if parts.first?.lowercased() == "group" { parts.removeFirst() }
+        if let first = parts.first, first.count == 10, first.allSatisfy({ $0.isUppercase || $0.isNumber }),
+           first.contains(where: \.isNumber) { parts.removeFirst() }
+        guard parts.count >= 3, bundleIDRoots.contains(parts[0].lowercased()),
+              parts.allSatisfy({ part in !part.isEmpty && part.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" } })
+        else { return nil }
+        return parts.joined(separator: ".")
+    }
+
+    /// True when the ID, or an ID it extends ("com.foo.app.helper" →
+    /// "com.foo.app"), names something installed or running.
+    static func isKnownBundleID(_ id: String, installed: (String) -> Bool) -> Bool {
+        var parts = id.split(separator: ".")
+        while parts.count >= 3 {
+            if installed(parts.joined(separator: ".")) { return true }
+            parts.removeLast()
+        }
+        return false
+    }
+
+    /// Entries in the uninstaller's ~/Library folders named after a bundle
+    /// ID that no installed or running app has: what a removed app left.
+    /// Entries changed in the last `minimumAgeDays` are skipped (something
+    /// still writes there).
+    static func orphanedFiles(library: URL, now: Date = Date(), minimumAgeDays: Int = 7,
+                              installed: (String) -> Bool) -> [CleanupCandidate] {
+        var found: [CleanupCandidate] = []
+        var seen = Set<String>()
+        var verdicts: [String: Bool] = [:]
+        for location in LeftoverMatcher.locations {
+            let folder = library.appendingPathComponent(location.path, isDirectory: true)
+            guard let names = try? FileManager.default.contentsOfDirectory(atPath: folder.path) else { continue }
+            for entry in names.sorted() where !entry.hasPrefix(".") {
+                guard let id = bundleIDCandidate(in: entry),
+                      !orphanIgnoredPrefixes.contains(where: { id.lowercased().hasPrefix($0) }) else { continue }
+                let url = folder.appendingPathComponent(entry)
+                // A launch agent is a script or tool as often as an app's
+                // helper (a tunnel, a sync job): it is orphaned only when
+                // the program it starts is gone, whatever its label says.
+                if location.path == "LaunchAgents" {
+                    guard launchAgentProgramIsMissing(url) else { continue }
+                } else {
+                    let known = verdicts[id] ?? isKnownBundleID(id, installed: installed)
+                    verdicts[id] = known
+                    guard !known else { continue }
+                }
+                guard seen.insert(url.standardizedFileURL.path).inserted else { continue }
+                let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+                let days = modified.map { Int(now.timeIntervalSince($0) / 86_400) }
+                if let days, days < minimumAgeDays { continue }
+                found.append(CleanupCandidate(url: url, size: allocatedSize(url), note: id))
+            }
+        }
+        // Pearcleaner lists by app: the heaviest app first, its files by size.
+        let totals = Dictionary(grouping: found, by: \.note).mapValues { $0.reduce(0) { $0 + $1.size } }
+        return found.sorted { (totals[$0.note] ?? 0, $0.size) > (totals[$1.note] ?? 0, $1.size) }
+    }
+
+    /// True when a launch agent's plist names a program that no longer
+    /// exists. An unreadable plist, or one without a program path, counts as
+    /// present: never offer to remove what cannot be checked.
+    static func launchAgentProgramIsMissing(_ plist: URL) -> Bool {
+        guard let data = try? Data(contentsOf: plist),
+              let object = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else {
+            return false
+        }
+        let program = (object["Program"] as? String) ?? (object["ProgramArguments"] as? [String])?.first
+        guard let program, program.hasPrefix("/") || program.hasPrefix("~") else { return false }
+        let path = (program as NSString).expandingTildeInPath
+        return !FileManager.default.fileExists(atPath: path)
+    }
+
+    /// A removed app's file's second line: where it is and how long it has
+    /// been untouched.
+    static func orphanHint(for url: URL, now: Date = Date()) -> String {
+        let place = url.deletingLastPathComponent().path
+            .replacingOccurrences(of: FileManager.default.homeDirectoryForCurrentUser.path, with: "~")
+        guard let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate else {
+            return place
+        }
+        let days = Int(now.timeIntervalSince(modified) / 86_400)
+        return place + " · unchanged for " + (days >= 365 ? "\(days / 365) yr" : "\(days) days")
+    }
+
+    /// LaunchServices plus running processes: what "installed" means for
+    /// the orphan scan. Called once per distinct ID.
+    static func isInstalledOrRunning(_ id: String) -> Bool {
+        if NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) != nil { return true }
+        return !NSRunningApplication.runningApplications(withBundleIdentifier: id).isEmpty
+    }
+}

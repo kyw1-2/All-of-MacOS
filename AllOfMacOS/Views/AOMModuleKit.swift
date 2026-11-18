@@ -16,7 +16,6 @@ import UniformTypeIdentifiers
 //   AOMTokenField / AOMTokenPill   tokens (extensions, app names, words) as removable pills
 //   AOMPathRow             a folder or file: Finder icon, name, path, Choose…, drop target
 //   AOMStatusHeader        a module's big live figure (timer, count) with ring and actions
-//   AOMProgressRing        determinate ring, Reduce Motion aware
 //   AOMLogRow / AOMLogSection  live activity rows, newest first, with an empty state
 //   AOMProgressRow         a determinate task with label, value and Cancel
 //   AOMInlineEmpty         a one-line empty state inside a card
@@ -623,33 +622,6 @@ struct AOMTokenField: View {
 }
 
 // MARK: - Status header
-
-/// A determinate ring (Activity rings, Screen Time limits, Flighty's
-/// progress): the track in the hue at 18%, the progress in the hue, round
-/// caps. Changes animate with the standard curve, or crossfade under Reduce
-/// Motion.
-struct AOMProgressRing: View {
-    let progress: Double
-    var tint: Color = AOMColor.accent
-    var lineWidth: CGFloat = AOMSpace.x1
-    var label: String = "Progress"
-
-    var body: some View {
-        let clamped = min(1, max(0, progress))
-        ZStack {
-            Circle().stroke(tint.opacity(0.18), lineWidth: lineWidth)
-            Circle()
-                .trim(from: 0, to: clamped)
-                .stroke(tint, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-        }
-        .aomAnimation(.standard, value: clamped)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(label)
-        .accessibilityValue("\(Int((clamped * 100).rounded())) percent")
-    }
-}
-
 /// The large live header of a module page (a Focus session, today's tidied
 /// files): the glyph inside an optional 48 pt progress ring, a title (13 pt
 /// medium), the one live figure in Display (22 pt, monospaced digits, numeric

@@ -44,7 +44,15 @@ struct FloatingMenuDefinition: Codable, Hashable, Identifiable {
     static let itemKinds = ["button", "clock", "variable", "slider"]
     enum MenuError: LocalizedError {
         case invalid
-        var errorDescription: String? { "Use a name, 1–6 columns, up to 100 unique items, and valid actions. Item kind must be button, clock, variable, or slider; a slider needs a valid value target and ranges." }
+        case duplicateName(String)
+        var errorDescription: String? {
+            switch self {
+            case .invalid:
+                return "Use a name, 1–6 columns, up to 100 unique items, and valid actions. Item kind must be button, clock, variable, or slider; a slider needs a valid value target and ranges."
+            case .duplicateName(let name):
+                return "Another menu is already named “\(name)”. Automations open menus by name, so each needs its own."
+            }
+        }
     }
 }
 
@@ -61,8 +69,19 @@ final class FloatingMenuStore: ObservableObject {
             menus = Array(decoded.filter { (try? $0.validate()) != nil && ids.insert($0.id).inserted }.prefix(100))
         } else { menus = [] }
     }
+    /// Names compare trimmed and case-insensitively, as `find` does.
+    static func sameName(_ a: String, _ b: String) -> Bool {
+        a.trimmingCharacters(in: .whitespacesAndNewlines)
+            .caseInsensitiveCompare(b.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
+    }
+
     func save(_ menu: FloatingMenuDefinition) throws {
         try menu.validate()
+        // Codex F09: two menus with one name made "show menu by name" open
+        // whichever came first.
+        if menus.contains(where: { $0.id != menu.id && Self.sameName($0.name, menu.name) }) {
+            throw FloatingMenuDefinition.MenuError.duplicateName(menu.name)
+        }
         var next = menus
         if let i = next.firstIndex(where: { $0.id == menu.id }) { next[i] = menu }
         else { guard next.count < 100 else { throw FloatingMenuDefinition.MenuError.invalid }; next.append(menu) }
@@ -71,9 +90,26 @@ final class FloatingMenuStore: ObservableObject {
         defaults.set(data, forKey: key); menus = next
     }
     func remove(_ id: UUID) { menus.removeAll { $0.id == id }; defaults.set(try? JSONEncoder().encode(menus), forKey: key) }
+    /// By ID, or by a name only one menu has. Menus saved before 6.4.0 may
+    /// share a name; such a name finds nothing (`isAmbiguous` says why), so
+    /// an automation never opens the wrong one.
     func find(_ nameOrID: String) -> FloatingMenuDefinition? {
-        menus.first { $0.id.uuidString == nameOrID || $0.name == nameOrID }
+        if let byID = menus.first(where: { $0.id.uuidString.caseInsensitiveCompare(nameOrID) == .orderedSame }) { return byID }
+        let named = menus.filter { Self.sameName($0.name, nameOrID) }
+        return named.count == 1 ? named[0] : nil
     }
+
+    func isAmbiguous(_ name: String) -> Bool { menus.filter { Self.sameName($0.name, name) }.count > 1 }
+
+    /// `base`, or `base 2`, `base 3`… : the first name no other menu has.
+    func uniqueName(_ base: String, excluding id: UUID? = nil) -> String {
+        let taken = menus.filter { $0.id != id }.map(\.name)
+        guard taken.contains(where: { Self.sameName($0, base) }) else { return base }
+        var number = 2
+        while taken.contains(where: { Self.sameName($0, "\(base) \(number)") }) { number += 1 }
+        return "\(base) \(number)"
+    }
+
 }
 
 final class FloatingMenuController {
@@ -195,7 +231,7 @@ struct FloatingMenuEditor: View {
     /// A new menu nobody has touched yet (its item ids are random, so it is
     /// compared by content).
     private var isPristineNew: Bool {
-        stored == nil && draft.name == FloatingMenuDefinition().name && draft.columns == 2 && !draft.staysOpen
+        stored == nil && draft.name == store.uniqueName(FloatingMenuDefinition().name, excluding: draft.id) && draft.columns == 2 && !draft.staysOpen
             && draft.items.count == 1 && draft.items[0].title == FloatingMenuItem().title && draft.items[0].actions.isEmpty
     }
 
@@ -464,6 +500,7 @@ struct FloatingMenuEditor: View {
             selectedMenuID = id
         } else {
             draft = FloatingMenuDefinition()
+            draft.name = store.uniqueName(draft.name)
             selectedMenuID = nil
         }
         error = ""
@@ -472,7 +509,7 @@ struct FloatingMenuEditor: View {
     private func duplicate(_ menu: FloatingMenuDefinition) {
         var copy = menu
         copy.id = UUID()
-        copy.name = menu.name + " Copy"
+        copy.name = store.uniqueName(menu.name + " Copy")
         copy.items = menu.items.map { var item = $0; item.id = UUID(); return item }
         do {
             try store.save(copy)

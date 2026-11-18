@@ -740,9 +740,12 @@ struct RecordingExportEditor: View {
                         muteAudio: muted, quality: selectedQuality,
                         studio: studio, clips: selected)
                 } else {
+                    // Cut sequence: the ranges only, without Studio layers
+                    // (Codex F11: it rendered the same effects as Edited MP4).
                     exported = try await RecordingExportService.render(
                         source: source, start: begin, end: finish,
-                        muteAudio: muted, quality: selectedQuality, studio: studio, clips: selected)
+                        muteAudio: muted, quality: selectedQuality, studio: Self.plainCut,
+                        outputSuffix: "Cut", clips: selected)
                 }
                 resultURL = exported
                 report("Saved \(exported.lastPathComponent). The original recording was not modified.", tone: .success)
@@ -751,7 +754,17 @@ struct RecordingExportEditor: View {
             }
             isExporting = false
             Self.exporting.remove(source)
+            RecordingExportEditorController.shared.exportFinished(source)
         }
+    }
+
+    /// Studio settings that draw nothing on top of the recording.
+    static var plainCut: AOMStudioSettings {
+        var plain = AOMStudioSettings()
+        plain.showCamera = false
+        plain.showKeystrokes = false
+        plain.showClickRipples = false
+        return plain
     }
 
     private func restoreSourcePreview() {
@@ -834,6 +847,14 @@ struct RecordingExportEditor: View {
 final class RecordingExportEditorController: NSObject, NSWindowDelegate {
     static let shared = RecordingExportEditorController()
     private var windows: [URL: NSWindow] = [:]
+    /// Windows the user asked to close while they exported (Codex F12).
+    private var closeWhenDone: Set<URL> = []
+
+    /// Closes the window if the user tried to while its export ran.
+    func exportFinished(_ source: URL) {
+        guard closeWhenDone.remove(source) != nil, let window = windows[source] else { return }
+        window.close()
+    }
 
     func open(source: URL) {
         let source = AOMStudioSourceLink.resolve(source)
@@ -864,7 +885,7 @@ final class RecordingExportEditorController: NSObject, NSWindowDelegate {
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         guard let source = windows.first(where: { $0.value === sender })?.key,
               RecordingExportEditor.exporting.contains(source) else { return true }
-        NSSound.beep()
+        closeWhenDone.insert(source)
         GestureHUD.shared.show(title: "Exporting", detail: "The window closes once the export finishes")
         return false
     }

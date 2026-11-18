@@ -158,7 +158,7 @@ struct AudioWorkspaceView: View {
 
     private var applicationsCard: some View {
         let lists = service.listedApps(matching: searchText)
-        let total = lists.favorites.count + lists.active.count + lists.other.count
+        let total = lists.favorites.count + lists.active.count + lists.other.count + service.hiddenListed(matching: searchText).count
         return AOMSectionCard("Applications", symbol: "square.grid.2x2", detail: total > 0 ? "\(total)" : nil, contentPadding: 0,
                               accessory: {
             HStack(spacing: AOMSpace.x2) {
@@ -188,6 +188,7 @@ struct AudioWorkspaceView: View {
                     section("Favorites", lists.favorites)
                     section(lists.favorites.isEmpty ? nil : "Playing & adjusted", lists.active)
                     section("Other running apps", lists.other)
+                    section("Hidden", service.hiddenListed(matching: searchText))
                 }
             }
         }
@@ -846,6 +847,11 @@ private struct ApplicationAudioRow: View {
         Button(service.isFavorite(app.bundleID) ? "Remove from Favorites" : "Add to Favorites",
                systemImage: service.isFavorite(app.bundleID) ? "star.slash" : "star") {
             service.toggleFavorite(app.bundleID)
+        }
+        Button(service.isHidden(app.bundleID) ? "Show in List" : "Hide from List",
+               systemImage: service.isHidden(app.bundleID) ? "eye" : "eye.slash") {
+            service.toggleHidden(app.bundleID)
+            toast.show(service.isHidden(app.bundleID) ? "\(app.name) hidden; Show All lists it under Hidden" : "\(app.name) shown", tone: .info)
         }
         Menu("Timed Mute") { timedMuteItems }
         Divider()

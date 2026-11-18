@@ -165,6 +165,18 @@ private final class ScrollSessionPanel: NSPanel {
 
 private struct ScrollSessionView: View {
     @ObservedObject var session: ScrollingCaptureSession
+    @State private var showsLimits = false
+
+    /// CleanShot X tells people up front what breaks a scrolling capture
+    /// ("the following conditions may break the scrolling capture").
+    static let limits = [
+        "Headers, toolbars or chat bars that stay put while the page moves",
+        "Video, animation or a blinking cursor inside the area",
+        "Content that loads while you scroll (infinite feeds, lazy images)",
+        "Scrolling fast, or back up the way you came",
+        "Smooth-scrolling apps that jump by large steps"
+    ]
+
     var body: some View {
         VStack(spacing: 12) {
             HStack {
@@ -188,8 +200,29 @@ private struct ScrollSessionView: View {
             }.frame(maxHeight: .infinity)
             Text("\(Int(session.pixelSize.width)) × \(Int(session.pixelSize.height)) px · \(session.frameCount) frames")
                 .font(.system(.subheadline, design: .monospaced)).foregroundStyle(.secondary)
-            Text(session.message).font(.system(.callout)).frame(maxWidth: .infinity, alignment: .leading)
-                .fixedSize(horizontal: false, vertical: true)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(session.message).font(.system(.callout)).frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button { showsLimits.toggle() } label: { Image(systemName: "info.circle") }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .help("What can break a scrolling capture")
+                    .accessibilityLabel("What can break a scrolling capture")
+                    .popover(isPresented: $showsLimits, arrowEdge: .trailing) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("These can break a scrolling capture").font(.headline)
+                            ForEach(Self.limits, id: \.self) { line in
+                                Label(line, systemImage: "exclamationmark.triangle")
+                                    .font(.callout)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Text("Select only the part that scrolls, and scroll slowly in one direction.")
+                                .font(.callout).foregroundStyle(.secondary)
+                        }
+                        .padding(14)
+                        .frame(width: 320)
+                    }
+            }
             Toggle("Auto Scroll", isOn: $session.automatic).toggleStyle(.switch)
             HStack {
                 Button("Cancel", action: session.cancel)

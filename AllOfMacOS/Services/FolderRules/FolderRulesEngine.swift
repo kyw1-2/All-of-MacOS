@@ -42,6 +42,10 @@ final class FolderRulesEngine: ObservableObject {
     @Published private(set) var stoppedRules: [UUID: String] = [:]
     /// Set when rules.json couldn't be read and was set aside.
     @Published private(set) var setAside: URL?
+    /// Why rules.json must not be written this session (see `loadConfig`).
+    @Published private(set) var savesBlocked: String?
+    /// Rules or entries the load skipped or turned off.
+    private(set) var loadLosses = 0
     /// The disk image a manual install is working on.
     @Published private(set) var installing: String?
     @Published var message: FolderRulesMessage?
@@ -83,9 +87,11 @@ final class FolderRulesEngine: ObservableObject {
         let loaded = store.loadConfig(defaults: FolderRulesLocations.defaultConfig)
         config = loaded.config
         setAside = loaded.setAside
+        savesBlocked = loaded.savesBlocked
+        loadLosses = loaded.config.decodeLosses
         activity = FolderRulesStore.trimmed(store.loadActivity(), now: environment.now())
         runner = FolderRulesRunner(environment: environment, memory: store.loadMemory())
-        if !loaded.existed { saveConfig(immediately: true) }
+        if !loaded.existed, loaded.savesBlocked == nil { saveConfig(immediately: true) }
         refreshStatus()
     }
 
@@ -633,6 +639,10 @@ final class FolderRulesEngine: ObservableObject {
 
     private func writeConfigNow() {
         configSave = nil
+        if let savesBlocked {
+            message = FolderRulesMessage(text: savesBlocked, tone: .danger)
+            return
+        }
         let snapshot = config
         let store = self.store
         saveQueue.async { [weak self] in
@@ -676,7 +686,11 @@ final class FolderRulesEngine: ObservableObject {
         if let stopped = stoppedRules.first, let rule = config.rules.first(where: { $0.id == stopped.key }) {
             return "Turned off “\(rule.name)”: possible loop"
         }
-        if let setAside { return "rules.json couldn't be read and was kept as \(setAside.lastPathComponent)" }
+        if let savesBlocked { return savesBlocked }
+        if let setAside {
+            return loadLosses > 0 ? "\(loadLosses) damaged \(loadLosses == 1 ? "entry was" : "entries were") skipped; the original was kept as \(setAside.lastPathComponent)"
+                : "rules.json couldn't be read and was kept as \(setAside.lastPathComponent)"
+        }
         return nil
     }
 

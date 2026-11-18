@@ -209,7 +209,7 @@ enum FolderRulesDiskImageInstaller {
         if options.trashDiskImage {
             if let place = try? environment.trash(image) {
                 next = nil
-                undo = .moveBack(current: place.path, original: image.path)
+                undo = .moveBack(current: place.path, original: image.path, identity: FolderRulesSafety.identity(place))
                 summary += "; the disk image is in the Trash"
             } else {
                 summary += "; the disk image couldn't go to the Trash"

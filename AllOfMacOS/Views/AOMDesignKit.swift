@@ -216,43 +216,6 @@ struct AOMSectionCard<Accessory: View, Content: View, Footer: View>: View {
         .accessibilityElement(children: .contain)
     }
 }
-
-/// The trailing link of a section title ("View All ›", "Show All ⌄").
-/// A capsule link to a tool (Window Tiling's Snap Zones, Profiles…): the
-/// 24 pt bordered capsule (glass on macOS 26), its symbol in a fixed
-/// `AOMIcon.inlineGlyph` frame so every capsule in a row has one height
-/// whatever the glyph, and the longer description as its tooltip.
-struct AOMCapsuleLink: View {
-    let title: String
-    let symbol: String
-    var help: String?
-    let action: () -> Void
-
-    init(_ title: String, symbol: String, help: String? = nil, action: @escaping () -> Void) {
-        self.title = title
-        self.symbol = symbol
-        self.help = help
-        self.action = action
-    }
-
-    var body: some View {
-        Button(action: action) {
-            Label {
-                Text(title)
-            } icon: {
-                Image(systemName: symbol)
-                    .frame(width: AOMIcon.row, height: AOMIcon.inlineGlyph)
-            }
-            .padding(.horizontal, AOMSpace.x0_5)
-        }
-        .buttonStyle(AOMSoftButtonStyle())
-        .buttonBorderShape(.capsule)
-        // One regular control high (24 pt), whatever the page's control size.
-        .controlSize(.regular)
-        .help(help ?? title)
-    }
-}
-
 struct AOMCardLink: View {
     let title: String
     /// `chevron.right` for links that open a page (the default),

@@ -923,7 +923,7 @@ struct SettingsHubView: View {
 
     private func startTutorial() {
         let window = NSApp.keyWindow
-        (NSApp.delegate as? AppDelegate)?.showMainWindow()
+        AppDelegate.current?.showMainWindow()
         window?.close()
         appState.showTutorialRequested = true
     }

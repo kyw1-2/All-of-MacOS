@@ -69,10 +69,10 @@ final class SystemToolsLiveTests: XCTestCase {
     }
 
     @MainActor
-    func testKeepAwakeStartsAndStops() {
+    func testKeepAwakeStartsAndStops() throws {
         let awake = KeepAwakeService.shared
-        let wasActive = awake.hasAssertion
-        try? XCTSkipIf(wasActive, "Keep Awake is in use")
+        // Codex F18: `try?` swallowed the skip and the test replaced a live session.
+        try XCTSkipIf(awake.hasAssertion, "Keep Awake is in use")
         awake.start(minutes: 1, keepDisplay: false)
         XCTAssertTrue(awake.isActive)
         XCTAssertNotNil(awake.endsAt)
@@ -155,6 +155,18 @@ final class SystemToolsLiveTests: XCTestCase {
         _ = CleanupTools.oldDownloads(in: root, days: 30)
         let library = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library")
         _ = CleanupTools.developerJunk(library: library)
+    }
+
+    func testRemovedAppsScanReadsTheRealLibrary() {
+        let library = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library")
+        let found = CleanupTools.orphanedFiles(library: library, installed: CleanupTools.isInstalledOrRunning)
+        let byApp = Dictionary(grouping: found, by: \.note).mapValues { $0.reduce(0) { $0 + $1.size } }
+        for (id, size) in byApp.sorted(by: { $0.value > $1.value }).prefix(25) {
+            print("ORPHAN \(id) \(SystemStatus.size(size))")
+        }
+        XCTAssertFalse(found.contains { $0.note.hasPrefix("com.apple.") || $0.note.hasPrefix("com.kyw.allofmacos") })
+        // The Mac's own tunnel and sync agents run scripts that exist.
+        XCTAssertFalse(found.contains { $0.url.lastPathComponent == "com.kyw.mac-control-tunnel.plist" })
     }
 
     // MARK: Network
