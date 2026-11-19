@@ -444,7 +444,7 @@ enum SettingsCatalog {
     /// Titles are sentence case like every section title (c.2).
     private static let groups: [String: String] = [
         "launchAtLogin": "Startup", "showMenuBarIcon": "Startup",
-        "appearance": "Appearance", "accentColor": "Appearance",
+        "appearance": "Appearance", "accentColor": "Appearance", "translucentWindow": "Appearance",
         "hud": "Feedback", "hudOpacity": "Feedback",
         "inputSourcesSwitch": "Input sources", "inputSourcesRules": "Input sources",
         "inputSourcesRemember": "Input sources", "inputSourcesFallback": "Input sources",
@@ -487,6 +487,8 @@ enum SettingsCatalog {
             item("launchAtLogin", .general, "Launch at login", "Start automatically at login", ["Start", "로그인", "부팅", "startup"], AnyView(LaunchAtLoginRow())),
             item("showMenuBarIcon", .general, "Menu bar icon", "Keep quick controls in the menu bar", ["메뉴바", "menubar", "아이콘"], AnyView(HubToggleRow(icon: "menubar.rectangle", tint: .purple, title: "Menu bar icon", subtitle: "", key: "showMenuBarIcon", fallback: true))),
             item("appearance", .general, "Appearance", "Match the system or choose a theme", ["테마", "다크", "라이트", "theme"], AnyView(HubChoiceRow(icon: "circle.lefthalf.filled", tint: .indigo, title: "Appearance", subtitle: "", key: "AOMAppearance", fallback: "system", options: [("System", "system"), ("Light", "light"), ("Dark", "dark")], width: 150))),
+            // 6.5: the main window as one glass sheet over the desktop (Raycast).
+            item("translucentWindow", .general, "Translucent window", "Let the desktop show through the main window", ["투명", "반투명", "유리", "glass", "vibrancy", "translucent", "raycast"], AnyView(HubToggleRow(icon: "square.on.square.dashed", tint: .indigo, title: "Translucent window", subtitle: "Off with Reduce Transparency or Increase Contrast", key: AOMTranslucency.defaultsKey, fallback: true))),
             item("accentColor", .general, "Highlight color", "Accent for buttons and selections", ["색", "컬러", "accent"], AnyView(AccentColorRow())),
             item("hud", .general, "On-screen HUD", "Show feedback when actions run", ["hud", "오버레이", "알림"], AnyView(HubToggleRow(icon: "rectangle.on.rectangle", tint: .teal, title: "On-screen HUD", subtitle: "Show feedback when actions run", key: "AOMHUDEnabled", fallback: true))),
             item("hudOpacity", .general, "HUD background", "Background opacity", ["투명도", "opacity"], AnyView(HubSliderRow(icon: "circle.dashed", tint: .teal, title: "HUD background", subtitle: "", key: "AOMHUDBackgroundOpacity", fallback: 0.06, range: 0...0.3, step: 0.01, percent: true))),

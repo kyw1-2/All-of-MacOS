@@ -29,6 +29,7 @@ struct ShortcutsSettingsView: View {
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
                 if showsBanner { headerBanner }
+                LauncherShortcutSettings()
 
                 // Restore sits on the first section's title row, the recorder
                 // tips under the last card; no separate Defaults card.
@@ -243,5 +244,37 @@ struct KeycapBadge: View {
 
     var body: some View {
         AOMKeycap(text: text)
+    }
+}
+
+
+/// 6.5: the key that opens ⌘K from any app (Raycast's launcher hot key).
+struct LauncherShortcutSettings: View {
+    @State private var choice = AOMLauncherShortcut.current
+    @State private var status = GlobalHotKeyManager.shared.status
+
+    private var detail: String {
+        switch status {
+        case .active: return "Opens the ⌘K launcher over any app, without AOM's window."
+        case .off: return "Off: ⌘K works while AOM is in front, and from the menu bar panel."
+        case .failed(let code):
+            return "Another app already uses \(choice.displayString) (\(code)). Pick another key or change it there (Raycast, ChatGPT)."
+        }
+    }
+
+    var body: some View {
+        AOMSection("Launcher", detail: choice.displayString) {
+            HubRowShell(icon: "magnifyingglass", tint: .indigo, title: "Open ⌘K from any app", subtitle: detail) {
+                Picker("", selection: $choice) {
+                    ForEach(AOMLauncherShortcut.allCases) { Text($0.displayString).tag($0) }
+                }
+                .labelsHidden()
+                .frame(width: 140)
+                .accessibilityLabel("Launcher shortcut")
+            }
+        }
+        .onChange(of: choice) { _, value in
+            status = GlobalHotKeyManager.shared.apply(value)
+        }
     }
 }

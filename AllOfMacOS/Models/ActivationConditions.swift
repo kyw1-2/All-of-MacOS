@@ -75,25 +75,54 @@ struct ActivationConditions: Codable, Hashable {
 enum ActivationConditionsContext {
     private static let lock = NSLock()
     private static var cached: (time: TimeInterval, value: ActivationConditions.Snapshot)?
+    private static var refreshing = false
+    private static let refreshQueue = DispatchQueue(label: "com.kyw.allofmacos.activation-context", qos: .utility)
+
+    /// What a call may answer from the cache (pure, for tests): fresh within
+    /// a second; older than that but under `staleLimit`, answered at once
+    /// while a background read replaces it (6.5: the power and window
+    /// queries ran on the event tap's thread every second of typing).
+    enum CacheUse: Equatable { case fresh, stale, miss }
+    static let staleLimit: TimeInterval = 10
+    static func cacheUse(age: TimeInterval?, hasWindows: Bool, needsWindows: Bool) -> CacheUse {
+        guard let age, !needsWindows || hasWindows else { return .miss }
+        if age < 1 { return .fresh }
+        return age < staleLimit ? .stale : .miss
+    }
 
     static func current(needsWindows: Bool) -> ActivationConditions.Snapshot {
         let now = ProcessInfo.processInfo.systemUptime
         lock.lock()
-        if let cached, now - cached.time < 1, !needsWindows || cached.value.bundleIDsWithWindows != nil {
-            var value = cached.value
+        let use = cacheUse(age: cached.map { now - $0.time }, hasWindows: cached?.value.bundleIDsWithWindows != nil,
+                           needsWindows: needsWindows)
+        if use != .miss, var value = cached?.value {
             value.date = Date()
+            let refresh = use == .stale && !refreshing
+            if refresh { refreshing = true }
             lock.unlock()
+            if refresh {
+                let windows = value.bundleIDsWithWindows != nil
+                refreshQueue.async {
+                    let fresh = read(needsWindows: windows)
+                    lock.lock(); cached = (ProcessInfo.processInfo.systemUptime, fresh); refreshing = false; lock.unlock()
+                }
+            }
             return value
         }
         lock.unlock()
+        let snapshot = read(needsWindows: needsWindows)
+        lock.lock()
+        cached = (now, snapshot)
+        lock.unlock()
+        return snapshot
+    }
+
+    private static func read(needsWindows: Bool) -> ActivationConditions.Snapshot {
         var displays: UInt32 = 0
         CGGetActiveDisplayList(0, nil, &displays)
         var snapshot = ActivationConditions.Snapshot(date: Date(), powerSource: powerSource(),
                                                      displayCount: Int(displays), bundleIDsWithWindows: nil)
         if needsWindows { snapshot.bundleIDsWithWindows = windowOwners() }
-        lock.lock()
-        cached = (now, snapshot)
-        lock.unlock()
         return snapshot
     }
 

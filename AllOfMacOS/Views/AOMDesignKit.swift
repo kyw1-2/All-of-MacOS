@@ -283,6 +283,9 @@ struct AOMModeButton: View {
     var help: String?
     var compact: Bool = false
     let action: () -> Void
+    @State private var hovering = false
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(_ title: String, symbol: String, tint: Color = AOMTheme.text, shortcut: String? = nil,
          help: String? = nil, compact: Bool = false, action: @escaping () -> Void) {
@@ -331,12 +334,23 @@ struct AOMModeButton: View {
                         .lineLimit(1)
                         .opacity(shortcut == nil ? 0 : 1)
                 }
-                .padding(.vertical, AOMSpace.x1)
+                .padding(.vertical, AOMSpace.x1 + 2)
                 .frame(maxWidth: .infinity)
+                // 6.5: a glass well that lifts under the pointer (Raycast's
+                // grid items), the page's hue along its edge.
+                .background {
+                    let shape = RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous)
+                    shape.fill(Color.primary.opacity(hovering ? (colorScheme == .dark ? 0.10 : 0.055) : 0))
+                        .overlay(shape.strokeBorder((tint == AOMTheme.text ? AOMColor.accent : tint)
+                            .opacity(hovering ? 0.38 : 0), lineWidth: 1))
+                }
+                .scaleEffect(hovering && !reduceMotion ? 1.03 : 1)
                 .contentShape(Rectangle())
             }
         }
         .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .animation(reduceMotion ? nil : .smooth(duration: 0.16), value: hovering)
         .help(help ?? (shortcut.map { "\(title) (\($0))" } ?? title))
         .accessibilityLabel(title)
         .accessibilityHint(shortcut.map { "Shortcut \($0)" } ?? "")

@@ -33,7 +33,20 @@ class AppState: ObservableObject {
     @Published var showingAddTrigger: Bool = false
     @Published var showingAddAction: Bool = false
     /// The command palette over the main window (View ▸ Search…, sidebar search).
-    @Published var showingCommandPalette = false
+    /// The app's one AppState, for code that runs before (or without) the
+    /// main window (6.5: the delegate only learnt it from the window's .task,
+    /// so the menu bar panel and the launcher had none after a hidden launch).
+    static weak var current: AppState?
+
+    /// Asking for ⌘K opens the launcher panel (6.5); isolated previews keep
+    /// the in-window palette for screenshots (`--aom-preview-palette`).
+    @Published var showingCommandPalette = false {
+        didSet {
+            guard showingCommandPalette, !PresetManager.isUIPreview else { return }
+            showingCommandPalette = false
+            AOMLauncherController.shared.show()
+        }
+    }
     /// The selected page lives in `AOMNavigation`, so a page change does not
     /// re-render every view that observes AppState.
     var selectedMainTab: AOMMainTab {
@@ -114,8 +127,16 @@ class AppState: ObservableObject {
            let number = Int(ProcessInfo.processInfo.arguments[index + 1]), AOMMainTab.allCases.indices.contains(number - 1) {
             selectedMainTab = AOMMainTab.allCases[number - 1]
         }
+        AppState.current = self
         if PresetManager.isUIPreview, ProcessInfo.processInfo.arguments.contains("--aom-preview-palette") {
             showingCommandPalette = true
+        }
+        if PresetManager.isUIPreview, ProcessInfo.processInfo.arguments.contains("--aom-preview-launcher") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { AOMLauncherController.shared.show() }
+        }
+        // The delegate learns this AppState even if the main window never shows.
+        DispatchQueue.main.async { [weak self] in
+            if let self, let delegate = AppDelegate.current, delegate.appState == nil { delegate.appState = self }
         }
         // Schedule monitor start for next runloop iteration (self must be fully initialized first)
         // Skip automatic monitoring when running inside the unit-test host

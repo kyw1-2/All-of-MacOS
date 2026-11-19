@@ -441,11 +441,10 @@ struct AnnotationStyle: Equatable, Codable {
     var textOutlineWidth: CGFloat?
     var textShadow: Bool?
 
+    /// 6.5: through the color library's parser, so an RRGGBBAA value (the
+    /// library's own format) is honoured instead of falling back to the swatch.
     var resolvedColor: NSColor {
-        guard let hex = customColorHex, hex.count == 6, let rgb = UInt32(hex, radix: 16) else { return color.nsColor }
-        return NSColor(srgbRed: CGFloat((rgb >> 16) & 255) / 255,
-                       green: CGFloat((rgb >> 8) & 255) / 255,
-                       blue: CGFloat(rgb & 255) / 255, alpha: 1)
+        customColorHex.flatMap(AnnotationColorLibrary.color(fromHex:)) ?? color.nsColor
     }
 
     func resolvedFont(size: CGFloat) -> NSFont {
@@ -1329,7 +1328,11 @@ struct AnnotationDocument {
     /// Draws the system arrow cursor, so a screenshot can show where the click was.
     private func drawCursor(in context: CGContext, rect: CGRect, color: NSColor, scale: CGFloat) {
         let size = max(rect.width, 20 * scale)
-        let origin = CGPoint(x: rect.minX, y: rect.minY)
+        // The tip sits at the box's top-left. `rect` is in CoreGraphics'
+        // bottom-left space, so that is maxY; the outline then runs down
+        // (negative y) inside the box. 6.5: it started at minY and drew the
+        // pointer below its own box in every export.
+        let origin = CGPoint(x: rect.minX, y: rect.maxY)
         let path = CGMutablePath()
         // A classic pointer outline, drawn as a filled polygon rather than an
         // SF Symbol so it renders identically at any size.

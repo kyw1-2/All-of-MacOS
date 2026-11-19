@@ -21,6 +21,10 @@ enum FolderRulesLive {
 
     static func open(_ file: URL, with app: URL?) -> Bool {
         guard let app else { return onMain { NSWorkspace.shared.open(file) } }
+        // 6.5: check first. Asking LaunchServices to open with an app that is
+        // gone still started an open, which macOS reported in its own alert
+        // (the unit test's deleted temp file surfaced as a Finder dialog).
+        guard isLaunchableApp(app) else { return false }
         let done = DispatchSemaphore(value: 0)
         let opened = Box(false)
         onMain {
@@ -34,7 +38,7 @@ enum FolderRulesLive {
         // Main cannot wait for the completion: it may need main, and a 30 s
         // stall is worse. 3.4.44: instead of reporting success blindly, check
         // that the app is still there to open the file with.
-        if Thread.isMainThread { return isLaunchableApp(app) }
+        if Thread.isMainThread { return true }
         guard done.wait(timeout: .now() + 30) == .success else { return false }
         return opened.value
     }

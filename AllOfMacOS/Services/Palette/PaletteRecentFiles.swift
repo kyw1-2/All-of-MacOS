@@ -44,6 +44,10 @@ final class PaletteRecentFiles: ObservableObject {
     @Published private(set) var recent: [PaletteFile] = []
     @Published private(set) var latestDownload: PaletteFile?
     @Published private(set) var latestScreenshot: PaletteFile?
+    /// While any of the three Spotlight queries has not answered (6.5: the
+    /// palette shows a small spinner, report 04 §5.5).
+    @Published private(set) var isLoading = false
+    private var pending = 0
 
     static let recentWindow: TimeInterval = 7 * 24 * 3600
     static let recentLimit = 40
@@ -56,6 +60,8 @@ final class PaletteRecentFiles: ObservableObject {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let now = Date()
 
+        pending = 3
+        isLoading = true
         let month: TimeInterval = 30 * 86_400
         let year: TimeInterval = 365 * 86_400
         run(predicate: NSPredicate(format: "%K >= %@", NSMetadataItemLastUsedDateKey, now.addingTimeInterval(-Self.recentWindow) as NSDate),
@@ -76,6 +82,8 @@ final class PaletteRecentFiles: ObservableObject {
     func stop() {
         for query in queries { query.stop() }
         queries.removeAll()
+        pending = 0
+        isLoading = false
         observers.forEach { NotificationCenter.default.removeObserver($0) }
         observers.removeAll()
     }
@@ -126,6 +134,8 @@ final class PaletteRecentFiles: ObservableObject {
                 guard self.queries.contains(where: { $0 === query }) else { return }
                 query.stop()
                 deliver(files)
+                self.pending = max(0, self.pending - 1)
+                if self.pending == 0 { self.isLoading = false }
             }
         }
         observers.append(observer)

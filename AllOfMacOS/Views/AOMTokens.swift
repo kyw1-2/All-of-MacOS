@@ -261,10 +261,17 @@ enum AOMColor {
     /// #1E1E1E dark), the grouped-content canvas of System Settings.
     static let canvas = Color.aomDynamic(light: NSColor(srgbRed: 0.961, green: 0.961, blue: 0.969, alpha: 1),
                                          dark: NSColor(srgbRed: 0.118, green: 0.118, blue: 0.118, alpha: 1))
-    /// Main-window pages: the opaque canvas. Liquid Glass stays in the
-    /// functional layer (sidebar, toolbar, floating panels); HIG Materials:
-    /// "Don't use Liquid Glass in the content layer."
-    static let pageBackground = canvas
+    /// Main-window pages (6.5, Raycast's window): the canvas tint over the
+    /// desktop seen through the window (`AOMWorkspaceBackground`), so pages
+    /// read as one glass sheet. Opaque with Reduce Transparency, Increase
+    /// Contrast or Settings › Appearance › Translucent Window off.
+    static let pageBackground = Color(nsColor: NSColor(name: nil) { appearance in
+        let dark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        let base = dark ? NSColor(srgbRed: 0.118, green: 0.118, blue: 0.118, alpha: 1)
+                        : NSColor(srgbRed: 0.961, green: 0.961, blue: 0.969, alpha: 1)
+        guard AOMTranslucency.isOn else { return base }
+        return base.withAlphaComponent(dark ? AOMTranslucency.pageAlphaDark : AOMTranslucency.pageAlphaLight)
+    })
     /// Groups of rows and content blocks: opaque white (#FFFFFF) in light
     /// mode, #2A2A2A in dark — one clear step above the canvas, never tinted.
     static let surface = Color.aomDynamic(light: .white,
@@ -621,5 +628,28 @@ extension Color {
             default: return light
             }
         })
+    }
+}
+
+
+/// Whether the main window lets the desktop through (6.5). Read where colors
+/// resolve, so it follows Reduce Transparency and Increase Contrast live.
+enum AOMTranslucency {
+    static let defaultsKey = "AOMWindowTranslucency"
+    static let pageAlphaLight: CGFloat = 0.62
+    static let pageAlphaDark: CGFloat = 0.55
+    static let cardAlphaLight: CGFloat = 0.82
+    static let cardAlphaDark: CGFloat = 0.72
+
+    static var isOn: Bool {
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency,
+              !NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast else { return false }
+        return UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? true
+    }
+
+    /// Pure: the page tint's alpha for these settings.
+    static func pageAlpha(enabled: Bool, reduceTransparency: Bool, increaseContrast: Bool, dark: Bool) -> CGFloat {
+        guard enabled, !reduceTransparency, !increaseContrast else { return 1 }
+        return dark ? pageAlphaDark : pageAlphaLight
     }
 }

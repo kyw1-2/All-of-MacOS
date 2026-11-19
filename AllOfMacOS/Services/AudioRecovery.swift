@@ -91,3 +91,67 @@ enum AudioRecovery {
         }
     }
 }
+
+/// Why a HomePod crackles when AOM's own stream is clean (6.5). Measured on
+/// 2026-11-19: in 30 minutes CoreAudio reported about 15 overloads on the
+/// AirPlay device, 2 of them AOM's; the rest were Chrome's audio thread
+/// missing its 2.7 ms deadline on page faults and timeouts while 7.2 of 8 GB
+/// of swap was in use and kernel_task held 35 % for cooling.
+enum AudioSystemLoad {
+    enum Cause: Equatable {
+        case memory(swappedGB: Double)
+        case heat(ProcessInfo.ThermalState)
+    }
+
+    /// Pure: swap of 4 GB or more, or three quarters of the swap file, and
+    /// a serious or critical thermal state.
+    static func causes(swapUsed: UInt64, swapTotal: UInt64, thermal: ProcessInfo.ThermalState) -> [Cause] {
+        var causes: [Cause] = []
+        let gb = Double(swapUsed) / 1_073_741_824
+        if gb >= 4 || (swapTotal > 0 && Double(swapUsed) / Double(swapTotal) >= 0.75 && gb >= 1) {
+            causes.append(.memory(swappedGB: (gb * 10).rounded() / 10))
+        }
+        if thermal == .serious || thermal == .critical { causes.append(.heat(thermal)) }
+        return causes
+    }
+
+    static func swapUsage() -> (used: UInt64, total: UInt64)? {
+        var usage = xsw_usage()
+        var size = MemoryLayout<xsw_usage>.size
+        guard sysctlbyname("vm.swapusage", &usage, &size, nil, 0) == 0 else { return nil }
+        return (usage.xsu_used, usage.xsu_total)
+    }
+
+    static func current() -> [Cause] {
+        let swap = swapUsage() ?? (0, 0)
+        return causes(swapUsed: swap.used, swapTotal: swap.total, thermal: ProcessInfo.processInfo.thermalState)
+    }
+
+    /// One line for the mixer and the HUD, or nil.
+    static func summary(_ causes: [Cause]) -> String? {
+        let parts = causes.map { cause -> String in
+            switch cause {
+            case .memory(let gb): return "the Mac is short of memory (\(gb) GB swapped)"
+            case .heat: return "the Mac is slowing down to cool"
+            }
+        }
+        guard !parts.isEmpty else { return nil }
+        return "Crackle likely: " + parts.joined(separator: " and ")
+    }
+}
+
+extension AudioRecovery {
+    /// ⌘K "Check HomePod Audio": what is in the way right now.
+    static func checkHomePod() {
+        let causes = AudioSystemLoad.current()
+        if let line = AudioSystemLoad.summary(causes) {
+            let advice = causes.contains { if case .memory = $0 { return true } else { return false } }
+                ? "Quit apps you are not using (browser tabs, Ulanzi Studio) — audio threads miss their deadline when memory is swapped."
+                : "Let the Mac cool down; heavy apps and charging in the sun make audio threads late."
+            GestureHUD.shared.show(title: line, detail: advice)
+        } else {
+            GestureHUD.shared.show(title: "No load problem found",
+                                   detail: "Memory and temperature are fine. If it still crackles, try Reconnect App Audio.")
+        }
+    }
+}

@@ -436,9 +436,7 @@ struct ModernGesturesWorkspace: View {
         let on = rows.filter(\.isEnabled).count
         let start = Calendar.current.startOfDay(for: Date())
         let names = Set(rows.map(\.input.displayName))
-        let ranToday = GestureStatistics.shared.events.reduce(into: 0) { count, event in
-            if event.fired, event.timestamp >= start, names.contains(event.gesture) { count += 1 }
-        }
+        let ranToday = AutomationRunsToday.count(GestureStatistics.shared.events, since: start, names: names)
         return HStack(spacing: AOMSpace.x1 + AOMSpace.x0_5) {
             Text("\(on) of \(rows.count) on")
             Text("·").foregroundStyle(AOMColor.textTertiary)
@@ -1143,5 +1141,29 @@ private struct FiredFlash: ViewModifier {
                 if flashing != value { flashing = value }
             }
             .animation(AOMDesign.animation(.easeOut(duration: 0.3)), value: flashing)
+    }
+}
+
+
+/// "N runs today" over the list (6.5): counted once per change of the event
+/// log, the day or the listed inputs instead of on every render of the list.
+enum AutomationRunsToday {
+    private struct Key: Equatable {
+        let count: Int
+        let last: Date?
+        let start: Date
+        let names: Set<String>
+    }
+    nonisolated(unsafe) private static var memo: (key: Key, value: Int)?
+
+    /// Pure apart from the memo.
+    static func count(_ events: [GestureEvent], since start: Date, names: Set<String>) -> Int {
+        let key = Key(count: events.count, last: events.last?.timestamp, start: start, names: names)
+        if let memo, memo.key == key { return memo.value }
+        let value = events.reduce(into: 0) { count, event in
+            if event.fired, event.timestamp >= start, names.contains(event.gesture) { count += 1 }
+        }
+        memo = (key, value)
+        return value
     }
 }

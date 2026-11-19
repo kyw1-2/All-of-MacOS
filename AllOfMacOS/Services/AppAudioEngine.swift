@@ -907,7 +907,9 @@ final class AppAudioEngine {
         }
         if !activity.rendering { return "Waiting for output device…" }
         if session.isAirPlay {
-            return session.muted ? "Muted · HomePod" : "Processing locally → HomePod / AirPlay"
+            if session.muted { return "Muted · HomePod" }
+            // 6.5: name what makes a HomePod crackle when it is not AOM.
+            return AudioSystemLoad.summary(AudioSystemLoad.current()) ?? "Processing locally → HomePod / AirPlay"
         }
         return session.muted ? "Muted" : "Processing audio"
     }

@@ -87,7 +87,7 @@ enum WorkspaceQuickActionKind: String, CaseIterable, Identifiable {
         case .focusSession: capture = .toggleFocusSession
         case .muteMicrophone: capture = .toggleMicMute
         case .clipboardHistory: return ClipboardShortcuts.shared.shortcut(for: .history)?.displayString
-        case .windowSwitcher: capture = nil
+        case .windowSwitcher: capture = .windowSwitcher
         }
         return capture.flatMap { CaptureShortcuts.shared.shortcut(for: $0)?.displayString }
     }

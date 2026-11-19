@@ -14,6 +14,8 @@ enum AOMCaptureDeepLink: Equatable {
     case openHistory, restoreRecentlyClosed, openSettings
     case pin, openAnnotate, openFromClipboard, addQuickAccessOverlay(URL)
     case openClipboard
+    /// aom://open-launcher toggles the ⌘K launcher panel (a deck key, Raycast).
+    case openLauncher
     /// aom://audio-reconnect rebuilds AOM's app audio (HomePod silent while
     /// the app's controls work): the mixer's Reconnect for every app.
     case reconnectAudio
@@ -63,6 +65,7 @@ enum AOMCaptureDeepLink: Equatable {
         case "open-from-clipboard" where exact(): return .openFromClipboard
         case "open-clipboard" where exact(): return .openClipboard
         case "audio-reconnect" where exact(): return .reconnectAudio
+        case "open-launcher" where exact(): return .openLauncher
         case "show-keystrokes" where exact(): return .keystrokes(.toggle)
         case "show-keystrokes" where exact(["mode"]):
             guard let mode = KeystrokeLinkMode(rawValue: params["mode"]?.lowercased() ?? ""), mode != .toggle else { return nil }
@@ -111,11 +114,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.current = self
+        if appState == nil, let state = AppState.current { appState = state }
         AOMScrollChromePolicy.shared.start()
         // 3.4.32 audit: an ordered-out SwiftUI scene keeps ticking; the
         // animation gate needs a real visibility signal from the window server.
         AOMUIVisibility.shared.start()
         if !PresetManager.isRunningTests && !PresetManager.isUIPreview {
+            // 6.5: ⌘K from any app (⌥Space unless changed in Settings › Shortcuts).
+            MainActor.assumeIsolated {
+                GlobalHotKeyManager.shared.start { AOMLauncherController.shared.toggle() }
+            }
             DisplayMediaKeys.shared.start()
             startMissionControlOverlay()
             AppAudioMixerService.shared.start()
@@ -264,7 +272,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // whether or not a window is ever shown, which is what an LSUIElement
         // menu-bar app needs.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [self] in
-            if let window = NSApp.windows.first(where: { $0.isVisible }) {
+            // 6.5: a window that can be main — the status item's own window is
+            // visible too, and was taken for the main window after a launch
+            // with the main window hidden, so Open All of MacOS did nothing.
+            if let window = NSApp.windows.first(where: { $0.isVisible && $0.canBecomeMain && !($0 is NSPanel) }) {
                 // The minimum size comes from the SwiftUI scene alone
                 // (AOMSize.windowMinWidth/Height); a second AppKit minimum
                 // here used to make the window's limit depend on launch timing.
@@ -380,6 +391,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case .openHistory: CaptureHistoryWindowController.shared.present()
         case .openClipboard: ClipboardPanelController.shared.toggle()
         case .reconnectAudio: AudioRecovery.reconnect()
+        case .openLauncher: AOMLauncherController.shared.toggle()
         case .keystrokes(let mode):
             let overlay = KeystrokeOverlay.shared
             let target: Bool? = switch mode {
@@ -458,6 +470,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// process. Without this, quitting while dimmed would leave the screen dark
     /// until the user changed the resolution or logged out.
     func applicationWillTerminate(_ notification: Notification) {
+        MainActor.assumeIsolated { GlobalHotKeyManager.shared.stop() }
         HardwareCareModel.shared.stop()
         ActionExecutor.cancelAllSequences()
         // Key remaps live only while AOM runs; give back exactly AOM's pairs.
@@ -812,18 +825,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         MainActor.assumeIsolated { AOMMenuShelfController.shared.toggle() }
     }
 
-    @objc private func openSettings() {
+    @objc private func openSettings() { openSettingsWindow() }
+
+    /// The app menu's Settings item, found by its ⌘, key rather than its
+    /// title (6.5: "Settings" never matched a localized "설정…").
+    @objc func openSettingsWindow() {
         NSApp.activate(ignoringOtherApps: true)
-        // Find and invoke the Settings menu item from the app menu
-        if let appMenu = NSApp.mainMenu?.item(at: 0)?.submenu {
-            for item in appMenu.items {
-                if item.title.contains("Settings") || item.title.contains("Preferences") {
-                    _ = item.target?.perform(item.action, with: item)
-                    return
-                }
-            }
+        if let appMenu = NSApp.mainMenu?.item(at: 0)?.submenu,
+           let item = appMenu.items.first(where: { $0.keyEquivalent == "," && $0.keyEquivalentModifierMask == .command })
+               ?? appMenu.items.first(where: { $0.title.contains("Settings") || $0.title.contains("Preferences") }),
+           let action = item.action {
+            NSApp.sendAction(action, to: item.target, from: item)
+            return
         }
-        // Fallback: try the known selector directly
         NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
     }
 

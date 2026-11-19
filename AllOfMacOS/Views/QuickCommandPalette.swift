@@ -16,6 +16,8 @@ import SwiftUI
 /// it closes.
 struct QuickCommandPalette: View {
     @Binding var isPresented: Bool
+    /// 6.5: in AOM's window (previews) or the launcher panel (everywhere else).
+    var host: Host = .window
     @EnvironmentObject var appState: AppState
     @ObservedObject private var clipboardStore = ClipboardStore.shared
     @ObservedObject private var captureHistory = CaptureHistory.shared
@@ -31,10 +33,16 @@ struct QuickCommandPalette: View {
     @State private var actionIndex = 0
     @State private var editingQuicklinks = false
     @State private var editingLinkRouter = false
-    @State private var hoveredID: String?
     /// Bumped when a suggestion is forgotten, so the list redraws.
     @State private var refreshToken = 0
+    /// Bumped when a source of rows changes (clipboard, captures, menus,
+    /// files, Keep Awake, the preset): the cached results are rebuilt.
+    @State private var generation = 0
+    @State private var appeared = false
+    @StateObject private var resultsCache = PaletteResultsCache()
     @FocusState private var isFieldFocused: Bool
+
+    enum Host: Equatable { case window, launcher }
 
     struct PaletteAction {
         let title: String
@@ -200,6 +208,15 @@ struct QuickCommandPalette: View {
     // MARK: Items
 
     private func close() { isPresented = false }
+
+    /// Rows that lead into AOM's own window: in the launcher, AOM comes forward.
+    private func showAOM() {
+        if host == .launcher { AppDelegate.current?.showMainWindow() }
+    }
+
+    private func openAOMSettings() {
+        if host == .launcher { AppDelegate.current?.openSettingsWindow() } else { openSettings() }
+    }
 
     private func captureKeys(_ action: CaptureShortcutAction) -> String? {
         CaptureShortcuts.shared.shortcut(for: action)?.displayString
@@ -470,6 +487,10 @@ struct QuickCommandPalette: View {
                 keywords: "homepod airplay 홈팟 에어플레이 소리 무음 복구 다시 연결 reconnect repair silent") {
             AudioRecovery.reconnect()
         }
+        command("audio.check", "Check HomePod Audio", "Why it crackles: memory, heat · 홈팟 지지직 점검", "stethoscope",
+                keywords: "homepod airplay 홈팟 지지직 끊김 crackle 점검 check memory 메모리") {
+            AudioRecovery.checkHomePod()
+        }
         command("audio.restartCoreAudio", "Restart Core Audio…",
                 "Silent in every app · asks for a password · 오디오 재시작",
                 "waveform.badge.exclamationmark",
@@ -493,7 +514,7 @@ struct QuickCommandPalette: View {
             for type in ActionType.allCases {
                 items.append(PaletteItem(id: "action.\(type.rawValue)", title: type.rawValue,
                     subtitle: type.description + " · Configure Automation", icon: type.iconName, section: .commands,
-                    primary: PaletteAction(title: "Configure Automation") { close(); appState.createDraft(for: type) }))
+                    primary: PaletteAction(title: "Configure Automation") { close(); showAOM(); appState.createDraft(for: type) }))
             }
         }
         return items
@@ -524,6 +545,7 @@ struct QuickCommandPalette: View {
                                    }
                                    appState.selectedTrigger = trigger
                                    appState.selectedMainTab = .gestures
+                                   showAOM()
                                },
                                secondaries: secondaries)
         }
@@ -597,7 +619,7 @@ struct QuickCommandPalette: View {
             var item = PaletteItem(id: "go.\(tab.rawValue)", title: tab.title, subtitle: tab.subtitle,
                                   icon: tab.sidebarSymbol, section: .navigation,
                                   shortcut: tab.shortcutKey.map { "⌘\($0.character)" },
-                                  primary: PaletteAction(title: "Open") { close(); appState.selectedMainTab = tab })
+                                  primary: PaletteAction(title: "Open") { close(); appState.selectedMainTab = tab; showAOM() })
             item.keywords = tab.discoveryKeywords
             item.identity = tab.identity
             return item
@@ -606,7 +628,7 @@ struct QuickCommandPalette: View {
             var item = PaletteItem(id: "settings.\(category.rawValue)", title: "\(category.title) Settings",
                         subtitle: "Settings › \(category.title)", icon: category.symbol, section: .navigation,
                         primary: PaletteAction(title: "Open Settings") {
-                            close(); openSettings()
+                            close(); openAOMSettings()
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
                                 NotificationCenter.default.post(name: .aomShowSettingsCategory, object: category.rawValue)
                             }
@@ -618,11 +640,12 @@ struct QuickCommandPalette: View {
         items.append(Self.homebrewItem {
             close()
             appState.selectedMainTab = .tools
+            showAOM()
             HomebrewModel.shared.present(.outdated, refresh: true)
         })
         items.append(PaletteItem(id: "go.settings", title: "Settings", subtitle: "Open All of MacOS Settings",
                                  icon: "gearshape", section: .navigation, shortcut: "⌘,",
-                                 primary: PaletteAction(title: "Open") { close(); openSettings() }))
+                                 primary: PaletteAction(title: "Open") { close(); openAOMSettings() }))
         return items
     }
 
@@ -673,6 +696,7 @@ struct QuickCommandPalette: View {
             // System Tools' own review: protection, quitting first, leftovers
             // by folder, a final check before anything moves to the Trash.
             appState.selectedMainTab = .tools
+            showAOM()
             SystemToolsRequests.shared.requestUninstall(app.url)
         }
     }
@@ -762,15 +786,32 @@ struct QuickCommandPalette: View {
 
     /// Searching ranks one flat list; menus, bookmarks and files are capped
     /// by their own searches before they get here.
+    /// 6.5: built once per query and change of a source, not on every
+    /// hover or arrow key (each rebuild ranked every row, the apps and, while
+    /// searching, all 242 actions).
     private var results: [PaletteItem] {
-        PaletteSearch.results(for: allItems, query: query, knowledge: PaletteKnowledgeStore.shared.knowledge)
+        resultsCache.items(for: .init(query: query, refresh: refreshToken, generation: generation)) {
+            PaletteSearch.results(for: allItems, query: query, knowledge: PaletteKnowledgeStore.shared.knowledge)
+        }
     }
 
-    /// Runs one of a row's actions and lets ⌘K learn the pick.
+    private func sourcesChanged() {
+        // After the change lands (objectWillChange fires before it).
+        DispatchQueue.main.async { generation &+= 1 }
+    }
+
+    /// Runs one of a row's actions and lets ⌘K learn the pick. In the
+    /// launcher the panel goes first and, unless the row opens AOM itself,
+    /// the app that was in front is active again when the action runs.
     private func perform(_ action: PaletteAction?, of item: PaletteItem) {
         guard let action, !item.isDimmed else { return }
         PaletteKnowledgeStore.shared.record(itemID: item.id, query: query)
-        action.run()
+        guard host == .launcher, !PaletteLauncherRouting.keepsPanel(item.id) else { action.run(); return }
+        AOMLauncherController.shared.dismiss(restoringFocus: PaletteLauncherRouting.restoresFocus(id: item.id,
+                                                                                                 section: item.section,
+                                                                                                 action: action.title)) {
+            action.run()
+        }
     }
 
     private func sectionTitle(_ section: Section) -> String {
@@ -784,14 +825,17 @@ struct QuickCommandPalette: View {
     // MARK: Body
 
     var body: some View {
-        let _ = refreshToken
         let items = results
         let selected = items.first { $0.id == selectedID } ?? items.first
+        let size = host == .launcher ? AOMLauncherController.size
+            : CGSize(width: AOMSize.paletteWidth, height: AOMFeatureSize.paletteHeight)
         ZStack {
-            Color.black.opacity(0.18)
-                .ignoresSafeArea()
-                .onTapGesture { close() }
-                .accessibilityHidden(true)
+            if host == .window {
+                Color.black.opacity(0.18)
+                    .ignoresSafeArea()
+                    .onTapGesture { close() }
+                    .accessibilityHidden(true)
+            }
 
             VStack(spacing: 0) {
                 searchField(count: items.count)
@@ -804,27 +848,47 @@ struct QuickCommandPalette: View {
                 AOMDivider()
                 actionBar(selected)
             }
-            .frame(width: AOMSize.paletteWidth, height: AOMFeatureSize.paletteHeight)
+            .frame(width: size.width, height: size.height)
             .overlay(alignment: .bottomTrailing) {
                 if showsActions, let selected {
                     actionPanel(selected)
                         .padding(.trailing, AOMSpace.x3)
-                        .padding(.bottom, AOMSize.rowStandard + AOMSpace.x1)
-                        .transition(.opacity)
+                        .padding(.bottom, PaletteMetrics.actionBarHeight + AOMSpace.x1)
+                        // Grows from the Actions key it belongs to (report 04 §5.3).
+                        .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .bottomTrailing)))
                 }
             }
             // Glass chrome draws its own shadow; nothing is added on top (c.4).
-            .aomFloatingSurface(.panel, radius: AOMRadius.panel, inWindow: true)
+            .aomFloatingSurface(.panel, radius: PaletteMetrics.panelRadius, inWindow: host == .window)
+            // Raycast's entrance: 0.98 → 1 with the fade (report 04 §5.3).
+            .scaleEffect(appeared ? 1 : 0.98)
+            .opacity(appeared ? 1 : 0)
             .background(alignment: .topLeading) {
                 // ⌘K inside the palette opens the Actions panel (Raycast).
                 Button("Actions") { toggleActions(selected) }
                     .keyboardShortcut("k", modifiers: .command)
                     .opacity(0)
                     .accessibilityHidden(true)
+                // ⌘, opens Settings from the palette, as in Raycast.
+                Button("Settings") { close(); openAOMSettings() }
+                    .keyboardShortcut(",", modifiers: .command)
+                    .opacity(0)
+                    .accessibilityHidden(true)
             }
         }
         .aomAnimation(.quick, value: showsActions)
-        .onAppear(perform: appear)
+        .onAppear {
+            appear()
+            withAnimation(PresetManager.isUIPreview ? nil : .smooth(duration: 0.22)) { appeared = true }
+        }
+        // Every source of rows; hover and arrow keys reuse the cached list.
+        .onReceive(clipboardStore.objectWillChange) { _ in sourcesChanged() }
+        .onReceive(captureHistory.objectWillChange) { _ in sourcesChanged() }
+        .onReceive(quicklinks.objectWillChange) { _ in sourcesChanged() }
+        .onReceive(session.objectWillChange) { _ in sourcesChanged() }
+        .onReceive(recentFiles.objectWillChange) { _ in sourcesChanged() }
+        .onReceive(KeepAwakeService.shared.objectWillChange) { _ in sourcesChanged() }
+        .onReceive(appState.objectWillChange) { _ in sourcesChanged() }
         .onDisappear {
             session.end()
             recentFiles.stop()
@@ -941,23 +1005,35 @@ struct QuickCommandPalette: View {
                     .background(AOMColor.accent.opacity(contrast == .increased ? 0.22 : 0.12), in: Capsule())
                     .accessibilityLabel("Quicklink \(match.link.name)")
             }
-            TextField("Search commands, apps, menus, bookmarks, or calculate…", text: $query)
+            TextField("Search apps, commands, menus, files, or calculate…", text: $query)
                 .textFieldStyle(.plain)
-                .font(AOMFont.pageStatus.weight(.regular))
+                // Raycast's search line is the largest type in the panel.
+                .font(host == .launcher ? PaletteMetrics.launcherQueryFont : AOMFont.pageStatus.weight(.regular))
                 .focused($isFieldFocused)
                 .onChange(of: query) { _, _ in
                     selectedID = nil
                     showsActions = false
                 }
                 .accessibilityLabel("Search")
+            if recentFiles.isLoading {
+                // Spotlight is still answering (report 04 §5.5).
+                ProgressView().controlSize(.small).scaleEffect(0.8)
+                    .accessibilityLabel("Searching files")
+            }
             if isSearching {
                 Text("\(count) result\(count == 1 ? "" : "s")")
                     .font(AOMFont.caption.monospacedDigit())
                     .foregroundStyle(AOMColor.textTertiary)
+            } else if host == .launcher, AOMLauncherShortcut.current != .off {
+                // The key that brings this back from any app.
+                HStack(spacing: AOMSpace.x0_5 + 1) {
+                    ForEach(AOMLauncherShortcut.current.keycaps, id: \.self) { AOMKeycap(text: $0) }
+                }
+                .help("Open from any app with \(AOMLauncherShortcut.current.displayString)")
             }
         }
         .padding(.horizontal, AOMSpace.x4)
-        .frame(height: AOMSize.rowDetail)
+        .frame(height: host == .launcher ? PaletteMetrics.launcherSearchHeight : AOMSize.rowDetail)
     }
 
     private var emptyState: some View {
@@ -1024,23 +1100,18 @@ struct QuickCommandPalette: View {
     }
 
     private func row(_ item: PaletteItem, selected: Bool) -> some View {
-        Button {
+        // The hover lives in the row (6.5): moving the pointer redraws one
+        // row, not the palette and its search.
+        PaletteRowButton(selected: selected) {
             selectedID = item.id
             perform(item.primary, of: item)
         } label: {
-            Group {
-                if item.section == .calculator {
-                    calculatorRow(item, selected: selected)
-                } else {
-                    standardRow(item, selected: selected)
-                }
+            if item.section == .calculator {
+                calculatorRow(item, selected: selected)
+            } else {
+                standardRow(item, selected: selected)
             }
-            .padding(.horizontal, AOMSpace.x2)
-            .background(rowFill(item, selected: selected), in: RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous))
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .onHover { hovering in hoveredID = hovering ? item.id : (hoveredID == item.id ? nil : hoveredID) }
         .contextMenu {
             ForEach(Array(item.actions.enumerated()), id: \.offset) { _, action in
                 Button(action.title) { perform(action, of: item) }
@@ -1054,11 +1125,6 @@ struct QuickCommandPalette: View {
         .accessibilityLabel(accessibilityLabel(item))
         .accessibilityHint(item.primary.title)
         .accessibilityAddTraits(selected ? [.isSelected, .isButton] : .isButton)
-    }
-
-    private func rowFill(_ item: PaletteItem, selected: Bool) -> Color {
-        if selected { return AOMColor.selection }
-        return hoveredID == item.id ? AOMColor.rowHover : .clear
     }
 
     private func accessibilityLabel(_ item: PaletteItem) -> String {
@@ -1201,8 +1267,8 @@ struct QuickCommandPalette: View {
             }
         }
         .padding(.horizontal, AOMSpace.x4)
-        .frame(height: AOMSize.rowStandard)
-        .background(AOMColor.track)
+        .frame(height: PaletteMetrics.actionBarHeight)
+        .background(AOMColor.track.opacity(host == .launcher ? 0.6 : 1))
     }
 
     /// A title and its keycap, grouped tighter than the hints are spaced.
@@ -1376,10 +1442,86 @@ enum PaletteApplications {
 /// 24 pt rows): a 28 pt badge on a 40 pt row; the calculator's answer row
 /// is taller.
 private enum PaletteMetrics {
-    static let rowBadge: CGFloat = 24
-    static let rowHeight: CGFloat = 40
-    static let calculatorHeight: CGFloat = 56
+    /// Report 04 §5.1 (Raycast's 46 pt rows on AOM's 13 pt type): 44.
+    static let rowBadge: CGFloat = 26
+    static let rowHeight: CGFloat = 44
+    static let calculatorHeight: CGFloat = 60
     static let actionPanelWidth: CGFloat = 280
+    static let actionBarHeight: CGFloat = 36
+    static let launcherSearchHeight: CGFloat = 52
+    static let launcherQueryFont = Font.system(size: 19, weight: .regular)
+    static let panelRadius: CGFloat = 16
+    static let rowRadius: CGFloat = 9
+}
+
+/// A result row's button with its own hover state, so the pointer moving
+/// over the list redraws only the rows it crosses. The selected row is the
+/// accent with a faint top light (Raycast's raised selection).
+private struct PaletteRowButton<Label: View>: View {
+    let selected: Bool
+    let action: () -> Void
+    @ViewBuilder let label: () -> Label
+    @State private var hovering = false
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: PaletteMetrics.rowRadius, style: .continuous)
+        Button(action: action) {
+            label()
+                .padding(.horizontal, AOMSpace.x2 + 2)
+                .background {
+                    if selected {
+                        shape.fill(LinearGradient(colors: [AOMColor.selection, AOMColor.selection.opacity(0.88)],
+                                                  startPoint: .top, endPoint: .bottom))
+                            .overlay(shape.strokeBorder(Color.white.opacity(contrast == .increased ? 0.5 : 0.18), lineWidth: 0.75))
+                    } else if hovering {
+                        shape.fill(AOMColor.rowHover)
+                    }
+                }
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+    }
+}
+
+/// The ranked rows for one (query, refresh, generation), kept across
+/// renders that change neither (hover, selection, the actions panel).
+final class PaletteResultsCache: ObservableObject {
+    struct Key: Equatable {
+        let query: String
+        let refresh: Int
+        let generation: Int
+    }
+    private var key: Key?
+    private var items: [QuickCommandPalette.PaletteItem] = []
+    private(set) var builds = 0
+
+    func items(for key: Key, build: () -> [QuickCommandPalette.PaletteItem]) -> [QuickCommandPalette.PaletteItem] {
+        if key == self.key { return items }
+        items = build()
+        self.key = key
+        builds += 1
+        return items
+    }
+}
+
+/// Where a launcher row's action runs (pure, for tests): rows that open a
+/// sheet keep the panel; rows that open AOM's window bring AOM forward; the
+/// rest give the front app its focus back first (menus, tiling, links).
+enum PaletteLauncherRouting {
+    static func keepsPanel(_ id: String) -> Bool {
+        id == "quicklinks.edit" || id == "links.router"
+    }
+
+    static func restoresFocus(id: String, section: QuickCommandPalette.Section, action: String) -> Bool {
+        if section == .navigation { return false }
+        if id.hasPrefix("action.") { return false }
+        if id.hasPrefix("trigger."), action == "Open in Editor" { return false }
+        if id.hasPrefix("app."), ["Uninstall…", "Force Quit…", "Open"].contains(action) { return false }
+        if ["audio.restartCoreAudio", "menus.edit"].contains(id) { return false }
+        return true
+    }
 }
 
 // MARK: - Quicklinks editor

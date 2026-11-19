@@ -17,6 +17,8 @@ struct AOMMenuBarPanelActions {
     var showAllCommands: () -> Void
     var quit: () -> Void
     var close: () -> Void
+    /// 6.5: the launcher bar at the top of the panel.
+    var openLauncher: () -> Void = { MainActor.assumeIsolated { AOMLauncherController.shared.show() } }
 }
 
 @MainActor
@@ -81,6 +83,7 @@ struct AOMMenuBarPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: AOMSpace.x3) {
             header
+            launcherBar
             if model.focusRunning || model.micMuted { urgent }
             LazyVGrid(columns: [GridItem(.flexible(), spacing: AOMSpace.x2), GridItem(.flexible(), spacing: AOMSpace.x2)],
                       spacing: AOMSpace.x2) {
@@ -93,6 +96,9 @@ struct AOMMenuBarPanel: View {
                 }
                 tile("Keep Awake", "cup.and.saucer", AOMModule.focus.hue, on: model.keepAwake, model.toggleKeepAwake)
                 tile("Gesture HUD", "rectangle.on.rectangle", AOMModule.automation.hue, on: model.hud, model.toggleHUD)
+                // 6.5: the sixth tile closes the grid's gap.
+                tile("Mute Mic", model.micMuted ? "mic.slash.fill" : "mic", AOMColor.recording, on: model.micMuted,
+                     model.toggleMic)
             }
             VStack(alignment: .leading, spacing: AOMSpace.x1) {
                 Text("Quick actions").font(AOMFont.caption.weight(.semibold)).foregroundStyle(AOMColor.textSecondary)
@@ -108,10 +114,40 @@ struct AOMMenuBarPanel: View {
             Divider()
             footer
         }
-        .padding(AOMSpace.x3)
-        .frame(width: 340)
+        .padding(AOMSpace.x3 + 2)
+        .frame(width: 356)
         .aomButtonDefaults()
         .onAppear { model.refresh() }
+    }
+
+    /// Raycast's search bar as the panel's first row: ⌘K from anywhere.
+    private var launcherBar: some View {
+        let shape = RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous)
+        return Button {
+            actions.close()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { actions.openLauncher() }
+        } label: {
+            HStack(spacing: AOMSpace.x2) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(AOMColor.accent)
+                Text("Search apps and commands…")
+                    .font(AOMFont.body)
+                    .foregroundStyle(AOMColor.textSecondary)
+                Spacer(minLength: 0)
+                if AOMLauncherShortcut.current != .off {
+                    HStack(spacing: 3) { ForEach(AOMLauncherShortcut.current.keycaps, id: \.self) { AOMKeycap(text: $0) } }
+                }
+            }
+            .padding(.horizontal, AOMSpace.x2 + AOMSpace.x0_5)
+            .frame(height: 36)
+            .background(Color.primary.opacity(0.06), in: shape)
+            .overlay(shape.strokeBorder(Color.white.opacity(0.14), lineWidth: 0.75))
+            .contentShape(shape)
+        }
+        .buttonStyle(.plain)
+        .help("⌘K launcher (\(AOMLauncherShortcut.current.displayString) from any app)")
+        .accessibilityLabel("Search apps and commands")
     }
 
     private var header: some View {
@@ -213,9 +249,13 @@ private struct AOMMenuBarTile: View {
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, AOMSpace.x2)
-            .frame(height: 44)
-            .background(hovering ? AOMColor.rowHover : AOMColor.surface.opacity(0.6),
-                        in: RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous))
+            .frame(height: 46)
+            // 6.5: an On tile glows faintly in its tool's hue (Control Center).
+            .background {
+                let shape = RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous)
+                shape.fill(on ? hue.opacity(0.14) : (hovering ? AOMColor.rowHover : AOMColor.surface.opacity(0.6)))
+                    .overlay(shape.strokeBorder(on ? hue.opacity(0.4) : Color.white.opacity(0.1), lineWidth: 0.75))
+            }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

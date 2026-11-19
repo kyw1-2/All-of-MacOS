@@ -23,6 +23,11 @@ enum WhatsNew {
     /// Highlights of the current version, bundled so the panel works offline.
     /// Items that alter defaults people already use say so with a note.
     static let items: [Item] = [
+        Item(symbol: "magnifyingglass", title: "⌥Space Opens ⌘K Anywhere",
+             detail: "The palette is now a launcher of its own, Raycast-style: press ⌥Space in any app and it appears in the upper middle of the screen, without AOM's window. Actions go back to the app you were in. Change or turn off the key in Settings › Shortcuts › Launcher; aom://open-launcher opens it from a deck key.",
+             note: "New shortcut"),
+        Item(symbol: "square.on.square.dashed", title: "A Glass Window",
+             detail: "Pages let the desktop show through, cards are frosted with a light edge, quick actions lift under the pointer, and the menu bar panel starts with a search bar. Settings › General › Translucent window turns it off; Reduce Transparency and Increase Contrast keep it opaque."),
         Item(symbol: "app.badge", title: "Manage Apps from ⌘K",
              detail: "An app found in ⌘K now offers Hide, Quit, Force Quit… and Uninstall… after Show in Finder (⌘K on the row, or right-click). ↩ still opens and ⌘↩ still shows it in Finder. Uninstall… opens System Tools' review with the app's leftovers; Force Quit asks first.",
              module: .systemTools),

@@ -45,15 +45,15 @@ final class KeySequenceDetector {
         // strokes: the tail only has to cover what is actually required.
         let span = min(history.count, max(pattern.count, required.count))
         let tail = Array(history.suffix(span))
-        let ok: Bool
-        if orderRelevant {
-            ok = Self.orderedMatch(pattern, tail: tail)
-        } else {
-            ok = Self.unorderedMatch(pattern, tail: tail)
-        }
-        guard ok else { return false }
-        for index in 1..<tail.count {
-            if tail[index].timestamp - tail[index - 1].timestamp > Double(maxGapMs) / 1000 { return false }
+        let matched = orderRelevant ? Self.orderedMatch(pattern, tail: tail) : Self.unorderedMatch(pattern, tail: tail)
+        guard let matched else { return false }
+        // 6.5: the gap is measured between the strokes that matched, not
+        // across the whole tail: with an optional stroke absent, an older,
+        // unrelated key at the tail's start used to fail a sequence typed
+        // in time.
+        let times = matched.sorted().map { tail[$0].timestamp }
+        for index in times.indices.dropFirst() where times[index] - times[index - 1] > Double(maxGapMs) / 1000 {
+            return false
         }
         return true
     }
@@ -61,29 +61,32 @@ final class KeySequenceDetector {
     /// The required strokes must appear as an in-order subsequence. Optional
     /// strokes are not constraints at all: they neither have to appear nor
     /// consume an event that a later required stroke needs.
-    private static func orderedMatch(_ pattern: [KeySequenceStroke], tail: [Press]) -> Bool {
+    /// The tail indices of the required strokes, or nil.
+    private static func orderedMatch(_ pattern: [KeySequenceStroke], tail: [Press]) -> [Int]? {
         var cursor = 0
+        var matched: [Int] = []
         for wanted in pattern where wanted.isRequired {
             var found = false
             while cursor < tail.count {
                 let candidate = tail[cursor]
                 cursor += 1
-                if stroke(wanted, matches: candidate.stroke) { found = true; break }
+                if stroke(wanted, matches: candidate.stroke) { found = true; matched.append(cursor - 1); break }
             }
-            if !found { return false }
+            if !found { return nil }
         }
-        return true
+        return matched
     }
 
     /// Required strokes are claimed regardless of order; optional strokes are
     /// ignored, which is the reading BTT gives an unordered pattern.
-    private static func unorderedMatch(_ pattern: [KeySequenceStroke], tail: [Press]) -> Bool {
-        var remaining = tail.map(\.stroke)
+    private static func unorderedMatch(_ pattern: [KeySequenceStroke], tail: [Press]) -> [Int]? {
+        var remaining = Array(tail.indices)
+        var matched: [Int] = []
         for wanted in pattern where wanted.isRequired {
-            guard let index = remaining.firstIndex(where: { stroke(wanted, matches: $0) }) else { return false }
-            remaining.remove(at: index)
+            guard let slot = remaining.firstIndex(where: { stroke(wanted, matches: tail[$0].stroke) }) else { return nil }
+            matched.append(remaining.remove(at: slot))
         }
-        return true
+        return matched
     }
 }
 
@@ -173,7 +176,7 @@ class KeyboardMonitor: ObservableObject {
             hasTap = true
             runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
             if let source = runLoopSource {
-                CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
+                CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
                 CGEvent.tapEnable(tap: tap, enable: true)
             }
         } else {
@@ -197,12 +200,16 @@ class KeyboardMonitor: ObservableObject {
             localKeyMonitor = nil
         }
 
+        // 6.5: the recording tap is invalidated (it was only disabled, so each
+        // recording leaked a mach port) and its source leaves the main run
+        // loop it joined, whichever thread stops it.
         if let tap = eventTap {
             CGEvent.tapEnable(tap: tap, enable: false)
+            CFMachPortInvalidate(tap)
             eventTap = nil
         }
         if let source = runLoopSource {
-            CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, .commonModes)
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
             runLoopSource = nil
         }
         if hasTap {
@@ -292,7 +299,11 @@ class KeyboardMonitor: ObservableObject {
                 // The title-bar snap's ⌃⌥ hotkeys (Swish's Advanced tab) answer from this tap too.
                 || TitleBarWindowSnap.hotkeysWanted()
         }
-        guard (!registeredTriggers.isEmpty || hasCaptureShortcuts), systemMonitoringEnabled else { return }
+        // 6.5: Mission Control's W/M/H keys arrive only through this tap, so
+        // it also runs for them when no trigger or shortcut needs it.
+        let missionControlKeys = MainActor.assumeIsolated { MissionControlHotKeyHandler.isEnabled }
+        guard (!registeredTriggers.isEmpty || hasCaptureShortcuts || missionControlKeys),
+              systemMonitoringEnabled else { return }
         KeyboardMonitor.activeMonitor = self
         secureHotKeys = SecureInputHotKeys(shortcuts: { [weak self] in
             guard let self, !self.isMonitoring, !Self.isRecordingShortcut,

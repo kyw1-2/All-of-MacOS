@@ -287,16 +287,20 @@ struct Preset: Identifiable, Codable {
         // Decode triggers one-by-one, skipping any that fail
         var triggersContainer = try container.nestedUnkeyedContainer(forKey: .triggers)
         var decodedTriggers: [Trigger] = []
+        var skipped = 0
         while !triggersContainer.isAtEnd {
             if let trigger = try? triggersContainer.decode(Trigger.self) {
                 decodedTriggers.append(trigger)
             } else {
                 // Skip the broken entry by decoding it as a generic JSON object
                 _ = try? triggersContainer.decode(AnyCodable.self)
+                skipped += 1
             }
         }
         triggers = decodedTriggers
-        if decodedTriggers.count < (try? container.decode([AnyCodable].self, forKey: .triggers))?.count ?? 0 {
+        // Counted while reading (6.5): the whole array was decoded a second
+        // time only for this line.
+        if skipped > 0 {
             NSLog("[PresetManager] Warning: some triggers were skipped due to decode errors")
         }
     }

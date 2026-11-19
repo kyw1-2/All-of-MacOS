@@ -1,3 +1,38 @@
+## [6.6.0] - 2026-11-19
+
+Follows the Raycast reports on Oracle (`/data/work/rea/aom-ux-20261117/report/03_raycast_클론_AOM_설계.md`, `04_raycast_uiux_복제_AOM64_통합.md`) that 6.5.0 had left out, a 14-item code review (each item checked against the source first), and the HomePod crackle measured on this Mac.
+
+### Added
+- **⌥Space launcher.** ⌘K is a floating glass panel of its own (720×490) in the upper middle of the screen with the pointer, opened from any app by a Carbon hot key (no Accessibility needed, the key never types into the front app), by ⌘K in AOM, the menu bar panel's new search bar or `aom://open-launcher`. AOM's main window is no longer involved. The panel does not activate AOM (Raycast, Alfred), so the app in front keeps its menus; a row that works on that app (tiling, its menus, links) runs after the panel has gone; rows that open AOM bring its window forward. Settings › Shortcuts › Launcher: ⌥Space, ⇧⌘Space, ⌥⌘Space or Off, and it says when another app holds the key. `defaults write com.kyw.allofmacos AOMLauncherActivatesApp -bool true` activates AOM too, should typing ever not reach the panel.
+- **Palette, report 04 §5:** rows 44 pt (40), a 52 pt search line in 19 pt type, 60 pt calculator rows, the panel's entrance 0.98 → 1 over 0.22 s, the Actions panel growing from its key, ⌘, for Settings, a spinner while Spotlight answers, the launcher key shown in the empty search field.
+- **Glass window.** The main window's pages let the desktop through (behind-window vibrancy, a faint accent light), cards are a see-through surface with a light top edge and a soft shadow, Workspace quick actions lift under the pointer. Settings › General › Translucent window; Reduce Transparency and Increase Contrast keep everything opaque.
+- **Menu bar panel:** a search bar on top (opens the launcher, shows its key), a sixth tile (Mute Mic) closes the grid's gap, tiles that are on glow in their tool's hue.
+- **Check HomePod Audio** (⌘K) and the mixer's HomePod line name what makes it crackle when AOM's stream is clean: swap in use or the Mac cooling down.
+
+### Fixed (14-item review; verified items only)
+- ⌘K redrew everything on every hover and arrow key: results are built once per query and change of a source; hover lives in the row.
+- AOM's delegate had no AppState until the main window appeared, so after a hidden launch the menu bar panel's switches and the launcher had none.
+- At launch the status item's window could be taken for the main window ("Open All of MacOS" did nothing); Settings was found by its English title.
+- Key sequences with an optional stroke failed when an older unrelated key sat at the start of the history (the gap was measured across all of it).
+- The shortcut recorder's event tap was disabled but never invalidated.
+- Activation conditions read the power source and the window list on the event tap's thread every second; a stale snapshot now answers while a background read refreshes it.
+- Annotation: an RRGGBBAA custom color fell back to the swatch; the cursor shape was drawn below its own box in every export (pixel test: rows 60–92 of a box ending at 60).
+- Workspace's Window Switcher tile did not show its shortcut; the automation list counted today's runs on every render; presets decoded their triggers twice.
+- With no trigger or shortcut, the keyboard tap that also carries Mission Control's W/M/H keys did not run.
+- Folder Rules "Open with" an app that is gone still asked LaunchServices to open the file (the unit test's deleted temp file surfaced as a Finder alert).
+
+### Not changed
+- CI runner label `xcode-27`: the review called it wrong, but 6.5.0 was built and published on it.
+- Two review claims did not hold: the macOS 14–15 glass fallback is not what this Mac shows (macOS 27 takes the Liquid Glass path); Window Switcher and the overlay's Esc do not depend on the keyboard tap.
+
+### HomePod crackle (measured, not fixed by AOM)
+- 21:51–22:20 on the installed 6.5.0: AOM's direct stream logged 1 IO gap and 1 overload in 28 minutes (render 30 µs mean). CoreAudio reported about 15 overloads on the AirPlay device in that half hour: Chrome's audio helper missing its 2.7 ms deadline (client timeouts, page faults on its IO thread) and 2 of AOM's (late wake-ups). At the time: 7.2 of 8 GB swap in use, kernel_task at 35 % (cooling), Chrome's GPU helper at 89 %. AOM keeps its own buffers wired; the cure is memory and heat, which the new Check HomePod Audio names.
+
+### Validation
+- 268 unit tests pass, 18 live System Tools checks skipped. New: `AOM65LauncherTests` (launcher routing, placement, shortcut choices, the results cache, the open-launcher link, sequence gaps, the stale activation cache, RRGGBBAA, the cursor inside its box — fails on the old code —, translucency rules, runs today, HomePod load causes).
+- Previews: the launcher panel, Workspace and System Tools on screen with the glass canvas, the menu bar panel, the Audio page in dark mode.
+- Not checked here: pressing ⌥Space (synthetic keys from this shell are dropped) and whether Raycast or ChatGPT already hold ⌥Space on this Mac (Settings shows it if registration fails).
+
 ## [6.5.0] - 2026-11-19
 
 The 6.4.0 bug-fix and integration report (Codex, PR #10) merged first, then its merge order 1–3 (Keep Awake presets, app row actions, uninstall review entry), then a HomePod silence fix after reviewing an outside patch proposal against the audio engine.

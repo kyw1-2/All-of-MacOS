@@ -111,16 +111,35 @@ struct AOMCardSurface: ViewModifier {
     var elevated = true
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.accessibilityShowBorders) private var showBorders
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorScheme) private var colorScheme
+    @AppStorage(AOMTranslucency.defaultsKey) private var translucent = true
 
     @ViewBuilder
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
         switch style {
         case .paper:
+            let glass = translucent && !reduceTransparency && contrast != .increased
             content
                 .padding(padding ?? 0)
                 .background {
-                    shape.fill(pressed ? AOMColor.surfacePressed : (hovering ? AOMColor.surfaceHover : AOMColor.surface))
+                    let fill = pressed ? AOMColor.surfacePressed : (hovering ? AOMColor.surfaceHover : AOMColor.surface)
+                    if glass {
+                        // 6.5: a glass card — the surface a little see-through
+                        // over the window's desktop, a light rim along the top
+                        // edge and a soft drop (the shape only, never the text).
+                        shape.fill(fill.opacity(colorScheme == .dark ? AOMTranslucency.cardAlphaDark
+                                                                     : AOMTranslucency.cardAlphaLight))
+                            .overlay(shape.strokeBorder(LinearGradient(
+                                colors: [Color.white.opacity(colorScheme == .dark ? 0.16 : 0.75),
+                                         Color.white.opacity(colorScheme == .dark ? 0.03 : 0.2)],
+                                startPoint: .top, endPoint: .bottom), lineWidth: 0.75))
+                            .shadow(color: .black.opacity(colorScheme == .dark ? 0.28 : 0.07),
+                                    radius: hovering ? 12 : 7, y: hovering ? 4 : 2)
+                    } else {
+                        shape.fill(fill)
+                    }
                 }
                 // The fill alone marks the group; Increase Contrast and Show
                 // Borders add a 1 pt edge.

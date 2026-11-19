@@ -17,10 +17,31 @@ enum AOMDesign {
 /// the toolbar glass and scroll-edge effect over it. Glass belongs to the
 /// functional layer only (HIG Materials; WWDC25 219 "avoid glass on glass").
 struct AOMWorkspaceBackground: View {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.colorScheme) private var colorScheme
+    @AppStorage(AOMTranslucency.defaultsKey) private var translucent = true
+
+    /// 6.5 (Raycast's window): the desktop seen through the window, a soft
+    /// accent light from the top corner; the pages lay their canvas tint on
+    /// top (`AOMColor.pageBackground`). The opaque canvas otherwise.
     var body: some View {
-        AOMColor.canvas
-            .ignoresSafeArea()
-            .accessibilityHidden(true)
+        Group {
+            if translucent && !reduceTransparency && contrast != .increased {
+                ZStack {
+                    VisualEffectBackground(material: .underWindowBackground, blendingMode: .behindWindow,
+                                           state: .followsWindowActiveState)
+                    RadialGradient(colors: [AOMColor.accent.opacity(colorScheme == .dark ? 0.16 : 0.09), .clear],
+                                   center: .topTrailing, startRadius: 24, endRadius: 620)
+                    RadialGradient(colors: [AOMBrand.start.opacity(colorScheme == .dark ? 0.10 : 0.05), .clear],
+                                   center: .bottomLeading, startRadius: 24, endRadius: 520)
+                }
+            } else {
+                AOMColor.canvas
+            }
+        }
+        .ignoresSafeArea()
+        .accessibilityHidden(true)
     }
 }
 
