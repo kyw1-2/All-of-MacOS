@@ -39,6 +39,8 @@ struct PaletteKnowledge: Codable, Equatable {
     private(set) var uses: [String: Use] = [:]
     /// Lowercased query → the item picked for it last.
     private(set) var picks: [String: String] = [:]
+    // Older archives retained picks without their chronological order.
+    private var queryOrder: [String]?
 
     /// Rows that change with the query or the moment (the calculator's
     /// answer, fallbacks, clipboard and capture rows, the latest file) and
@@ -63,15 +65,22 @@ struct PaletteKnowledge: Codable, Equatable {
         guard Self.isLearnable(itemID) else { return }
         uses[itemID] = Use(score: decayedScore(itemID, now: now) + 1, last: now, count: (uses[itemID]?.count ?? 0) + 1)
         let key = Self.normalized(query)
-        if !key.isEmpty, key.count <= 40 { picks[key] = itemID }
         if uses.count > Self.maxItems {
-            let keep = uses.sorted { decayedScore($0.key, now: now) > decayedScore($1.key, now: now) }.prefix(Self.maxItems)
-            uses = Dictionary(uniqueKeysWithValues: keep.map { ($0.key, $0.value) })
+            let oldest = uses.keys.filter { $0 != itemID }.min {
+                let lhs = decayedScore($0, now: now), rhs = decayedScore($1, now: now)
+                return lhs == rhs ? $0 < $1 : lhs < rhs
+            }
+            if let oldest { forget(oldest) }
         }
-        if picks.count > Self.maxQueries {
-            let live = Set(uses.keys)
-            picks = picks.filter { live.contains($0.value) }
-            if picks.count > Self.maxQueries { picks = Dictionary(uniqueKeysWithValues: picks.prefix(Self.maxQueries).map { ($0.key, $0.value) }) }
+        if !key.isEmpty, key.count <= 40 {
+            var order = queryOrder ?? picks.keys.sorted()
+            order.removeAll { $0 == key }
+            order.append(key)
+            picks[key] = itemID
+            if order.count > Self.maxQueries {
+                picks.removeValue(forKey: order.removeFirst())
+            }
+            queryOrder = order
         }
     }
 
@@ -93,6 +102,8 @@ struct PaletteKnowledge: Codable, Equatable {
     mutating func forget(_ id: String) {
         uses.removeValue(forKey: id)
         picks = picks.filter { $0.value != id }
+        let liveKeys = Set(picks.keys)
+        queryOrder?.removeAll { !liveKeys.contains($0) }
     }
 }
 

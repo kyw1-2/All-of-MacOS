@@ -158,6 +158,7 @@ final class KeepAwakeRulesTests: XCTestCase {
     @MainActor
     func testRuleOriginIsClearedWhenTheAssertionGoes() {
         let service = KeepAwakeService()
+        service.blockedBatteryPercent = { nil }
         service.createAssertion = { minutes, display in .init(id: 7, minutes: minutes, keepDisplay: display, endsAt: nil) }
         service.releaseAssertion = { _ in }
         service.start(minutes: nil, keepDisplay: false, origin: .externalDisplay)
@@ -208,5 +209,79 @@ final class TriggerSelectorActionTests: XCTestCase {
         XCTAssertNil(state.selectedTrigger, "an action never moves the editor's selection")
         a = state.currentPreset.triggers[0]; b = state.currentPreset.triggers[1]
         XCTAssertFalse(a.isEnabled || b.isEnabled)
+    }
+}
+
+final class AOM64IntegrationRegressionTests: XCTestCase {
+    func testFuzzyInstalledAppQueries() {
+        let apps = ["카카오톡", "Google Chrome"].map {
+            PaletteApplications.App(name: $0, url: URL(fileURLWithPath: "/Applications/\($0).app"))
+        }
+        XCTAssertEqual(PaletteApplications.matching("ㅋㅋㅇㅌ", in: apps).map(\.name), ["카카오톡"])
+        XCTAssertEqual(PaletteApplications.matching("gc", in: apps).map(\.name), ["Google Chrome"])
+    }
+
+    func testDistinctAppCopiesSurviveScan() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? fm.removeItem(at: root) }
+        let folders = ["A", "B"].map { root.appendingPathComponent($0) }
+        for folder in folders {
+            try fm.createDirectory(at: folder.appendingPathComponent("Example.app"), withIntermediateDirectories: true)
+        }
+        XCTAssertEqual(PaletteApplications.scan(folders + folders).count, 2)
+    }
+
+    func testNewestQuerySurvivesCapacityAndReload() throws {
+        var knowledge = PaletteKnowledge()
+        for n in 0...PaletteKnowledge.maxQueries { knowledge.record(itemID: "one", query: "q\(n)") }
+        XCTAssertNil(knowledge.pick(for: "q0"))
+        knowledge = try JSONDecoder().decode(PaletteKnowledge.self, from: JSONEncoder().encode(knowledge))
+        knowledge.record(itemID: "two", query: "q1")
+        knowledge.record(itemID: "three", query: "new")
+        XCTAssertEqual(knowledge.pick(for: "q1"), "two")
+        XCTAssertNil(knowledge.pick(for: "q2"))
+        XCTAssertEqual(knowledge.pick(for: "new"), "three")
+    }
+
+    func testOldKnowledgeCanStillLearn() throws {
+        let old = Data(#"{"uses":{},"picks":{"old":"existing"}}"#.utf8)
+        var knowledge = try JSONDecoder().decode(PaletteKnowledge.self, from: old)
+        knowledge.record(itemID: "another", query: "new")
+        XCTAssertEqual(knowledge.pick(for: "old"), "existing")
+        XCTAssertEqual(knowledge.pick(for: "new"), "another")
+    }
+
+    @MainActor
+    func testFailedReplacementKeepsTheOriginalAssertion() {
+        let service = KeepAwakeService()
+        service.blockedBatteryPercent = { nil }
+        var released: [UInt32] = []
+        service.releaseAssertion = { released.append($0) }
+        service.createAssertion = { _, _ in .init(id: 7, minutes: nil, keepDisplay: false, endsAt: nil) }
+        XCTAssertTrue(service.start(minutes: nil, keepDisplay: false, origin: .externalDisplay))
+        service.createAssertion = { _, _ in nil }
+        XCTAssertFalse(service.start(minutes: 30, keepDisplay: true))
+        XCTAssertTrue(released.isEmpty)
+        XCTAssertEqual(service.current?.id, 7)
+        XCTAssertEqual(service.origin, .externalDisplay)
+        service.stop()
+        XCTAssertEqual(released, [7])
+    }
+
+    @MainActor
+    func testBatteryFloorAppliesAtManualStart() {
+        let service = KeepAwakeService()
+        service.blockedBatteryPercent = { 15 }
+        service.createAssertion = { _, _ in XCTFail("Must not start at the battery floor"); return nil }
+        XCTAssertFalse(service.toggle(minutes: 30, keepDisplay: true))
+        XCTAssertFalse(service.hasAssertion)
+    }
+
+    func testProtectedAppIsRefusedBeforeRunningCheck() {
+        let calculator = URL(fileURLWithPath: "/System/Applications/Calculator.app")
+        XCTAssertThrowsError(try CleanupTools.checkUninstallTarget(calculator) { _ in
+            XCTFail("Protected apps must never reach a quit request"); return true
+        }) { XCTAssertEqual($0 as? CleanupTools.UninstallRefusal, .systemApp) }
     }
 }

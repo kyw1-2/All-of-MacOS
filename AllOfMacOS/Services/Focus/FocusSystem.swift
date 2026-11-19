@@ -107,7 +107,7 @@ final class FocusLiveSystem: FocusSystem {
         let service = KeepAwakeService.shared
         // A Keep Awake the person turned on stays theirs.
         guard !service.isActive else { return nil }
-        service.start(minutes: max(1, minutes), keepDisplay: true)
+        guard service.start(minutes: max(1, minutes), keepDisplay: true) else { return nil }
         return service.current?.id
     }
 

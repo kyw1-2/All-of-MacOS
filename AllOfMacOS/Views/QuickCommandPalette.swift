@@ -640,7 +640,7 @@ struct QuickCommandPalette: View {
 
     /// Runs one of a row's actions and lets ⌘K learn the pick.
     private func perform(_ action: PaletteAction?, of item: PaletteItem) {
-        guard let action else { return }
+        guard let action, !item.isDimmed else { return }
         PaletteKnowledgeStore.shared.record(itemID: item.id, query: query)
         action.run()
     }
@@ -1060,9 +1060,9 @@ struct QuickCommandPalette: View {
                 .lineLimit(1)
             Spacer()
             if let item {
-                actionHint(item.primary.title, keys: "↩", prominent: true) { item.primary.run() }
+                actionHint(item.primary.title, keys: "↩", prominent: true) { perform(item.primary, of: item) }
                 if let secondary = item.secondaries.first {
-                    actionHint(secondary.title, keys: "⌘↩", prominent: false) { secondary.run() }
+                    actionHint(secondary.title, keys: "⌘↩", prominent: false) { perform(secondary, of: item) }
                 }
                 if item.actions.count > 1 {
                     actionHint("Actions", keys: "⌘K", prominent: false) { toggleActions(item) }
@@ -1174,31 +1174,36 @@ enum PaletteApplications {
     }
 
     static func scan(_ folders: [URL]) -> [App] {
-        var seen = Set<String>()
+        var seen = Set<URL>()
         var apps: [App] = []
         for folder in folders {
             let urls = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil,
                                                                      options: [.skipsHiddenFiles])) ?? []
             for url in urls where url.pathExtension == "app" {
                 let name = url.deletingPathExtension().lastPathComponent
-                guard seen.insert(name.lowercased()).inserted else { continue }
+                guard seen.insert(url.resolvingSymlinksInPath().standardizedFileURL).inserted else { continue }
                 apps.append(App(name: name, url: url))
             }
         }
-        return apps.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        return apps.sorted {
+            let order = $0.name.localizedStandardCompare($1.name)
+            return order == .orderedSame ? $0.url.path < $1.url.path : order == .orderedAscending
+        }
     }
 
     /// Name prefix first, then any word that starts with the query, then
     /// anywhere in the name; at most eight, so commands are not crowded out.
     static func matching(_ query: String, in apps: [App]? = nil) -> [App] {
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !needle.isEmpty else { return [] }
+        guard let fuzzyQuery = PaletteFuzzy.Query(needle) else { return [] }
         func rank(_ app: App) -> Int? {
             let name = app.name
             if name.range(of: needle, options: [.caseInsensitive, .anchored, .diacriticInsensitive]) != nil { return 0 }
             if name.split(separator: " ").contains(where: { $0.range(of: needle, options: [.caseInsensitive, .anchored]) != nil }) { return 1 }
             if name.localizedCaseInsensitiveContains(needle) { return 2 }
-            return nil
+            guard let score = PaletteFuzzy.score(fuzzyQuery, PaletteFuzzy.Candidate(name)),
+                  score >= PaletteFuzzy.subsequenceFloor + 40 else { return nil }
+            return 3 + PaletteFuzzy.exactScore - score
         }
         let ranked: [(app: App, rank: Int)] = (apps ?? all()).compactMap { app in
             guard let value = rank(app) else { return nil }

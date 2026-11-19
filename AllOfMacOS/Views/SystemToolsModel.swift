@@ -41,6 +41,7 @@ struct CleanupReview: Identifiable {
     /// A second line for some rows (id → hint), shown instead of the note
     /// when rows are grouped by it.
     var hints: [String: String] = [:]
+    var uninstallTarget: (url: URL, bundleID: String)?
 }
 
 /// Processes in a sheet, each with Quit.
@@ -511,9 +512,8 @@ final class SystemToolsModel: ObservableObject {
             menu.addItem(header)
             for (title, minutes) in durations {
                 menu.addItem(SystemToolMenuItem(title: title) {
-                    awake.start(minutes: minutes, keepDisplay: keepDisplay)
-                    if awake.isActive { self.succeed(.keepAwake, "Keeping awake \(awake.remainingDescription ?? "")") }
-                    else { self.fail(.keepAwake, "Keep Awake Didn't Start", "macOS refused the power assertion.") }
+                    if awake.start(minutes: minutes, keepDisplay: keepDisplay) { self.succeed(.keepAwake, "Keeping awake \(awake.remainingDescription ?? "")") }
+                    else { self.fail(.keepAwake, "Keep Awake Didn't Start", "Check the battery stop rule and macOS power availability.") }
                 })
             }
             if !keepDisplay { menu.addItem(.separator()) }
@@ -1060,8 +1060,15 @@ final class SystemToolsModel: ObservableObject {
         let chosen = review.candidates.filter { review.selected.contains($0.id) }
         cleanupReview = nil
         guard !chosen.isEmpty else { return }
-        let id = cleanupTool
-        runInBackground(id, { CleanupTools.moveToTrash(chosen) }) { outcome in
+        let id: SystemToolID = review.uninstallTarget == nil ? cleanupTool : .uninstall
+        runInBackground(id, {
+            if let target = review.uninstallTarget {
+                _ = try CleanupTools.checkUninstallTarget(target.url, expectedID: target.bundleID) {
+                    !NSRunningApplication.runningApplications(withBundleIdentifier: $0).isEmpty
+                }
+            }
+            return CleanupTools.moveToTrash(chosen)
+        }) { outcome in
             if outcome.failures.isEmpty { self.succeed(id, outcome.summary) }
             else { self.fail(id, "Some Items Stayed", outcome.summary) }
         }

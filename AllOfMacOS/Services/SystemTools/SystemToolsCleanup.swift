@@ -125,9 +125,10 @@ enum CleanupTools {
     }
 
     enum UninstallRefusal: LocalizedError, Equatable {
-        case notAnApp, systemApp, isAOM, running(String)
+        case notAnApp, systemApp, isAOM, changed, running(String)
         var errorDescription: String? {
             switch self {
+            case .changed: return "This app changed after the review. Review it again."
             case .notAnApp: return "That isn't an app bundle with a bundle identifier."
             case .systemApp: return "Apps that ship with macOS can't be removed."
             case .isAOM: return "All of MacOS can't uninstall itself from here."
@@ -136,26 +137,22 @@ enum CleanupTools {
         }
     }
 
-    /// The app bundle plus its leftovers under `library` (the user's
-    /// ~/Library; tests pass a temporary folder). Nothing is moved here.
-    static func uninstallPlan(for app: URL, library: URL,
-                              isRunning: (String) -> Bool = { !NSRunningApplication.runningApplications(withBundleIdentifier: $0).isEmpty }) throws -> [CleanupCandidate] {
-        guard app.pathExtension == "app", let bundle = Bundle(url: app), let bundleID = bundle.bundleIdentifier else {
-            throw UninstallRefusal.notAnApp
-        }
-        let path = app.standardizedFileURL.path
-        if path.hasPrefix("/System/") || bundleID.hasPrefix("com.apple.") { throw UninstallRefusal.systemApp }
-        if bundleID.hasPrefix("com.kyw.allofmacos") { throw UninstallRefusal.isAOM }
-        let name = (bundle.object(forInfoDictionaryKey: "CFBundleName") as? String) ?? app.deletingPathExtension().lastPathComponent
-        if isRunning(bundleID) { throw UninstallRefusal.running(name) }
-
-        var plan = [CleanupCandidate(url: app, size: allocatedSize(app), note: "App")]
-        plan += leftovers(bundleID: bundleID, appName: name, library: library)
-        return plan
+    static func uninstallIdentity(for app: URL) throws -> (id: String, name: String) {
+        let resolved = app.resolvingSymlinksInPath().standardizedFileURL
+        guard resolved.pathExtension.lowercased() == "app", let bundle = Bundle(url: resolved),
+              let id = bundle.bundleIdentifier else { throw UninstallRefusal.notAnApp }
+        if resolved.path.hasPrefix("/System/") || id.hasPrefix("com.apple.") { throw UninstallRefusal.systemApp }
+        if id.hasPrefix("com.kyw.allofmacos") { throw UninstallRefusal.isAOM }
+        let name = bundle.object(forInfoDictionaryKey: "CFBundleName") as? String
+        return (id, name ?? app.deletingPathExtension().lastPathComponent)
     }
 
-    static func leftovers(bundleID: String, appName: String, library: URL) -> [CleanupCandidate] {
-        leftoverMatches(bundleID: bundleID, appName: appName, library: library).map(\.candidate)
+    static func checkUninstallTarget(_ app: URL, expectedID: String? = nil,
+                                     isRunning: (String) -> Bool) throws -> (id: String, name: String) {
+        let identity = try uninstallIdentity(for: app)
+        if let expectedID, identity.id != expectedID { throw UninstallRefusal.changed }
+        if isRunning(identity.id) { throw UninstallRefusal.running(identity.name) }
+        return identity
     }
 
     /// Each leftover with how it matched (see `LeftoverMatcher.matchKind`).
@@ -182,6 +179,7 @@ enum CleanupTools {
     /// matches on the name alone are listed unchecked ("Notes" could be
     /// another app's folder).
     struct UninstallReview: Equatable {
+        let bundleID: String
         let items: [CleanupCandidate]
         let preselected: Set<String>
         /// Leftovers that matched only by the app's name.
@@ -190,17 +188,12 @@ enum CleanupTools {
 
     static func uninstallReview(for app: URL, library: URL,
                                 isRunning: (String) -> Bool = { !NSRunningApplication.runningApplications(withBundleIdentifier: $0).isEmpty }) throws -> UninstallReview {
-        let plan = try uninstallPlan(for: app, library: library, isRunning: isRunning)
-        guard let bundle = Bundle(url: app), let bundleID = bundle.bundleIdentifier else { throw UninstallRefusal.notAnApp }
-        let name = (bundle.object(forInfoDictionaryKey: "CFBundleName") as? String) ?? app.deletingPathExtension().lastPathComponent
-        let byName = Set(leftoverMatches(bundleID: bundleID, appName: name, library: library)
-            .filter { $0.kind == .name }.map(\.candidate.id))
-        let order = LeftoverMatcher.locations.map(\.label)
-        let leftovers = plan.dropFirst().sorted {
-            (order.firstIndex(of: $0.note) ?? 99, $0.url.lastPathComponent) < (order.firstIndex(of: $1.note) ?? 99, $1.url.lastPathComponent)
-        }
-        let items = Array(plan.prefix(1)) + leftovers
-        return UninstallReview(items: items, preselected: Set(items.map(\.id)).subtracting(byName), nameOnly: byName)
+        let identity = try checkUninstallTarget(app, isRunning: isRunning)
+        let matches = leftoverMatches(bundleID: identity.id, appName: identity.name, library: library)
+        let byName = Set(matches.filter { $0.kind == .name }.map(\.candidate.id))
+        let items = [CleanupCandidate(url: app, size: allocatedSize(app), note: "App")] + matches.map(\.candidate)
+        return UninstallReview(bundleID: identity.id, items: items,
+                               preselected: Set(items.map(\.id)).subtracting(byName), nameOnly: byName)
     }
 
     // MARK: - Large files

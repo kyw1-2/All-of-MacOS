@@ -620,7 +620,7 @@ class ActionExecutor {
             // the same 1...1440 range the form offers.
             let minutes = action.parameters.keepAwakeMinutes.flatMap { $0.isFinite ? Int(min(max($0, 1), 1440)) : nil }
             let keepDisplay = action.parameters.keepDisplayOn ?? false
-            MainActor.assumeIsolated {
+            result = MainActor.assumeIsolated {
                 KeepAwakeService.shared.toggle(minutes: minutes, keepDisplay: keepDisplay)
             }
         case .showWindowSwitcher, .setAppVolume, .toggleAppMute, .setAppAudioOutput, .toggleMuteAllApps, .muteFrontAppAudio:

@@ -20,11 +20,17 @@ extension SystemToolsModel {
             guard panel.runModal() == .OK, let url = panel.url else { return }
             app = url
         }
-        guard let bundleID = Bundle(url: app)?.bundleIdentifier else {
-            fail(.uninstall, CleanupTools.UninstallRefusal.notAnApp); return
-        }
+        guard !self.running.contains(.uninstall) else { return }
+        let bundleID: String
+        do { bundleID = try CleanupTools.uninstallIdentity(for: app).id }
+        catch { fail(.uninstall, error); return }
         let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).filter { !$0.isTerminated }
         guard !running.isEmpty else { reviewUninstall(app); return }
+        let target = app.resolvingSymlinksInPath().standardizedFileURL
+        guard running.allSatisfy({ $0.bundleURL?.resolvingSymlinksInPath().standardizedFileURL.path == target.path }) else {
+            fail(.uninstall, "Another Copy Is Running", "Quit the other copy before reviewing shared app data.")
+            return
+        }
         let name = running.first?.localizedName ?? app.deletingPathExtension().lastPathComponent
         guard confirm("Quit \(name) First?", "\(name) is open. AOM asks it to quit the normal way (it can still ask to save), then shows what would move to the Trash.",
                       button: "Quit and Review", destructive: false) else { return }
@@ -57,7 +63,8 @@ extension SystemToolsModel {
                     + (nameOnly > 0 ? "; \(nameOnly) that only share its name are not, because other apps may use them" : "")
                     + ". Everything goes to the Trash, so Finder's Put Back works.",
                 candidates: review.items, selected: review.preselected, groupsByNote: true, safeDefault: true,
-                hints: Dictionary(uniqueKeysWithValues: review.nameOnly.map { ($0, "Matches the app's name only; check it if it's this app's") }))
+                hints: Dictionary(uniqueKeysWithValues: review.nameOnly.map { ($0, "Matches the app's name only; check it if it's this app's") }),
+                uninstallTarget: (app, review.bundleID))
         }
     }
 }

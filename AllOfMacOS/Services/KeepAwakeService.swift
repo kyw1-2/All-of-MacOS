@@ -49,6 +49,13 @@ final class KeepAwakeService: ObservableObject {
     /// Test seam: releases a previously created assertion.
     var releaseAssertion: (@MainActor (IOPMAssertionID) -> Void) = { IOPMAssertionRelease($0) }
 
+    var blockedBatteryPercent: () -> Int? = {
+        let floor = KeepAwakeRules.shared.batteryFloor
+        guard floor > 0, let battery = SystemStatus.battery(),
+              KeepAwakeRules.shouldStopForBattery(floor: floor, percent: battery.percent, onBattery: !battery.onPower) else { return nil }
+        return battery.percent
+    }
+
     @Published private(set) var current: Assertion?
 
     /// Why the current assertion exists: the user, or a rule that also ends it.
@@ -74,21 +81,32 @@ final class KeepAwakeService: ObservableObject {
         return "until " + formatter.string(from: Date(), to: endsAt)
     }
 
-    func toggle(minutes: Int?, keepDisplay: Bool) {
-        if isActive { stop() } else { start(minutes: minutes, keepDisplay: keepDisplay) }
+    @discardableResult
+    func toggle(minutes: Int?, keepDisplay: Bool) -> Bool {
+        if isActive { stop(); return true }
+        return start(minutes: minutes, keepDisplay: keepDisplay)
     }
 
-    func start(minutes: Int?, keepDisplay: Bool, origin: Origin = .manual) {
-        // Always replace: a live session switches duration, and an expired one
-        // (system already released it) is cleared so a restart cannot be
-        // blocked by the stale ID — the bug the audit reproduced.
-        clearCurrent()
-        guard let assertion = createAssertion(minutes, keepDisplay) else { return }
+    @discardableResult
+    func start(minutes: Int?, keepDisplay: Bool, origin: Origin = .manual) -> Bool {
+        if let percent = blockedBatteryPercent() {
+            clearCurrent()
+            GestureHUD.shared.show(title: "Keep Awake Off", detail: "Battery at \(percent)%")
+            return false
+        }
+        // Acquire the replacement first so a refusal leaves a live session intact.
+        guard let assertion = createAssertion(minutes, keepDisplay) else {
+            if !isActive { clearCurrent() }
+            GestureHUD.shared.show(title: "Keep Awake Didn't Start", detail: "macOS refused the power assertion.")
+            return false
+        }
+        if let prior = current, prior.id != assertion.id { releaseAssertion(prior.id) }
         current = assertion
         self.origin = origin
         let detail = minutes.map { "Active (\($0) min)" } ?? "Active indefinitely"
         GestureLog.shared.logFromAnyThread("Keep Awake enabled\(minutes.map { " for \($0) min" } ?? "")", level: .action)
         GestureHUD.shared.show(title: "Caffeine", detail: "ON — \(detail)")
+        return true
     }
 
     func stop() {
