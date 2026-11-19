@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 
 /// The System Tools page: a compact This Mac strip, Favorites, then focused
@@ -125,6 +126,10 @@ struct SystemToolsView: View {
         .onChange(of: vpn.lastServices) { _, _ in refreshIfActive() }
         // Which tools exist is checked again at most every 30 s of selections.
         .aomPageLifecycle(minimumInterval: 30, onActivate: { SystemToolAvailability.shared.invalidate() })
+        // ⌘K's "Uninstall…" on an app row starts the same review as the tile.
+        .onReceive(SystemToolsRequests.shared.$pendingUninstall.compactMap { $0 }.receive(on: DispatchQueue.main)) { _ in
+            if let app = SystemToolsRequests.shared.takeUninstall() { model.reviewUninstall(app) }
+        }
         .onAppear {
             if PresetManager.isUIPreview {
                 if ProcessInfo.processInfo.arguments.contains("--aom-preview-homebrew") {

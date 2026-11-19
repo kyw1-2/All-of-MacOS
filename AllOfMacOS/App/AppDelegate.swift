@@ -14,6 +14,9 @@ enum AOMCaptureDeepLink: Equatable {
     case openHistory, restoreRecentlyClosed, openSettings
     case pin, openAnnotate, openFromClipboard, addQuickAccessOverlay(URL)
     case openClipboard
+    /// aom://audio-reconnect rebuilds AOM's app audio (HomePod silent while
+    /// the app's controls work): the mixer's Reconnect for every app.
+    case reconnectAudio
     /// aom://show-keystrokes toggles the keystroke overlay; mode=all,
     /// shortcuts or off sets it (for a deck key or an automation step).
     case keystrokes(KeystrokeLinkMode)
@@ -59,6 +62,7 @@ enum AOMCaptureDeepLink: Equatable {
         case "open-annotate" where exact(): return .openAnnotate
         case "open-from-clipboard" where exact(): return .openFromClipboard
         case "open-clipboard" where exact(): return .openClipboard
+        case "audio-reconnect" where exact(): return .reconnectAudio
         case "show-keystrokes" where exact(): return .keystrokes(.toggle)
         case "show-keystrokes" where exact(["mode"]):
             guard let mode = KeystrokeLinkMode(rawValue: params["mode"]?.lowercased() ?? ""), mode != .toggle else { return nil }
@@ -375,6 +379,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             CaptureCoordinator.shared.captureText(keepsLineBreaks: keepsLineBreaks)
         case .openHistory: CaptureHistoryWindowController.shared.present()
         case .openClipboard: ClipboardPanelController.shared.toggle()
+        case .reconnectAudio: AudioRecovery.reconnect()
         case .keystrokes(let mode):
             let overlay = KeystrokeOverlay.shared
             let target: Bool? = switch mode {

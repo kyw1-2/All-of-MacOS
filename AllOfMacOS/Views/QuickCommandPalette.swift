@@ -76,12 +76,14 @@ struct QuickCommandPalette: View {
         /// 5.0: a destination's own mark (pages, Settings categories).
         var identity: AOMIdentity?
 
-        /// The palette stays a launcher, not a context menu.
+        /// The palette stays a launcher, not a context menu. App rows keep
+        /// their whole fixed list (6.5: Hide, Quit, Force Quit, Uninstall).
         static let secondaryLimit = 3
 
         init(id: String, title: String, subtitle: String, icon: String, section: Section,
              shortcut: String? = nil, primary: PaletteAction, secondaries: [PaletteAction] = [],
-             placement: Placement = .ranked, accessory: String? = nil, image: NSImage? = nil, isDimmed: Bool = false) {
+             placement: Placement = .ranked, accessory: String? = nil, image: NSImage? = nil, isDimmed: Bool = false,
+             secondaryLimit: Int = PaletteItem.secondaryLimit) {
             self.id = id
             self.title = title
             self.subtitle = subtitle
@@ -89,7 +91,7 @@ struct QuickCommandPalette: View {
             self.section = section
             self.shortcut = shortcut
             self.primary = primary
-            self.secondaries = Array(secondaries.prefix(Self.secondaryLimit))
+            self.secondaries = Array(secondaries.prefix(secondaryLimit))
             self.placement = placement
             self.accessory = accessory
             self.image = image
@@ -209,6 +211,51 @@ struct QuickCommandPalette: View {
             : "Keep Awake"
     }
 
+    /// A rule's session comes back at the next display or power change.
+    private var keepAwakeSubtitle: String {
+        let awake = KeepAwakeService.shared
+        guard awake.isActive else { return "Hold a prevent-idle-sleep power assertion" }
+        return awake.origin == .externalDisplay
+            ? "Started by the external display rule; it turns on again at the next display or power change"
+            : "Let the Mac sleep again"
+    }
+
+    struct WindowLayout {
+        let id: String
+        let title: String
+        let subtitle: String
+        let type: ActionType
+        let keywords: String
+    }
+
+    /// Layouts WindowManager already performs (halves, quarters, thirds).
+    static let windowLayouts: [WindowLayout] = [
+        .init(id: "topHalf", title: "Tile Window Top Half", subtitle: "Move the front window to the top half",
+              type: .snapWindowTopHalf, keywords: "위 절반 top half"),
+        .init(id: "bottomHalf", title: "Tile Window Bottom Half", subtitle: "Move the front window to the bottom half",
+              type: .snapWindowBottomHalf, keywords: "아래 절반 bottom half"),
+        .init(id: "topLeft", title: "Tile Window Top Left Quarter", subtitle: "Move the front window to the top left quarter",
+              type: .snapWindowTopLeft, keywords: "4분할 왼쪽 위 quarter corner"),
+        .init(id: "topRight", title: "Tile Window Top Right Quarter", subtitle: "Move the front window to the top right quarter",
+              type: .snapWindowTopRight, keywords: "4분할 오른쪽 위 quarter corner"),
+        .init(id: "bottomLeft", title: "Tile Window Bottom Left Quarter", subtitle: "Move the front window to the bottom left quarter",
+              type: .snapWindowBottomLeft, keywords: "4분할 왼쪽 아래 quarter corner"),
+        .init(id: "bottomRight", title: "Tile Window Bottom Right Quarter", subtitle: "Move the front window to the bottom right quarter",
+              type: .snapWindowBottomRight, keywords: "4분할 오른쪽 아래 quarter corner"),
+        .init(id: "leftThird", title: "Tile Window Left Third", subtitle: "Move the front window to the left third",
+              type: .snapWindowLeftThird, keywords: "3분할 왼쪽 1/3 third"),
+        .init(id: "centerThird", title: "Tile Window Center Third", subtitle: "Move the front window to the center third",
+              type: .snapWindowCenterThird, keywords: "3분할 가운데 1/3 third"),
+        .init(id: "rightThird", title: "Tile Window Right Third", subtitle: "Move the front window to the right third",
+              type: .snapWindowRightThird, keywords: "3분할 오른쪽 1/3 third"),
+        .init(id: "leftTwoThirds", title: "Tile Window Left Two Thirds", subtitle: "Move the front window to the left two thirds",
+              type: .snapWindowLeftTwoThirds, keywords: "3분할 왼쪽 2/3 two thirds"),
+        .init(id: "rightTwoThirds", title: "Tile Window Right Two Thirds", subtitle: "Move the front window to the right two thirds",
+              type: .snapWindowRightTwoThirds, keywords: "3분할 오른쪽 2/3 two thirds"),
+        .init(id: "center", title: "Center Window", subtitle: "Center the front window on its screen",
+              type: .centerWindow, keywords: "가운데 center"),
+    ]
+
     private var trimmed: String { PaletteSearch.trimmedQuery(query) }
     private var isSearching: Bool { !trimmed.isEmpty }
 
@@ -298,9 +345,13 @@ struct QuickCommandPalette: View {
     private func commandItems() -> [PaletteItem] {
         var items: [PaletteItem] = []
         func command(_ id: String, _ title: String, _ subtitle: String, _ icon: String, keys: String? = nil,
+                     keywords: String = "",
                      primaryTitle: String = "Run", secondaries: [PaletteAction] = [], _ run: @escaping () -> Void) {
-            items.append(PaletteItem(id: id, title: title, subtitle: subtitle, icon: icon, section: .commands, shortcut: keys,
-                                     primary: PaletteAction(title: primaryTitle) { close(); run() }, secondaries: secondaries))
+            var item = PaletteItem(id: id, title: title, subtitle: subtitle, icon: icon, section: .commands, shortcut: keys,
+                                   primary: PaletteAction(title: primaryTitle) { close(); run() }, secondaries: secondaries)
+            // Search aliases (Korean names among them); `keys` is only the keycap.
+            item.keywords = keywords
+            items.append(item)
         }
         // Keycaps mirror the user's real bindings; unbound commands show none.
         // Capture Text resolves to the OCR binding, as in CaptureMenu.
@@ -357,6 +408,15 @@ struct QuickCommandPalette: View {
         command("window.maximize", "Maximize Window", "Fill the visible screen", "arrow.up.left.and.arrow.down.right") {
             ActionExecutor.executeAction(TriggerAction(actionType: .maximizeWindow))
         }
+        // 6.5: the tiling layouts that already exist, runnable from a search
+        // (only while searching, so the browsing list stays short).
+        if isSearching {
+            for layout in Self.windowLayouts {
+                command("window.\(layout.id)", layout.title, layout.subtitle, layout.type.iconName, keywords: layout.keywords) {
+                    ActionExecutor.executeAction(TriggerAction(actionType: layout.type))
+                }
+            }
+        }
         command("window.switcher", "Window Switcher", "Every window with thumbnails, like AltTab", "rectangle.stack",
                 keys: captureKeys(.windowSwitcher)) {
             WindowSwitcherController.shared.show()
@@ -368,12 +428,53 @@ struct QuickCommandPalette: View {
         command("window.unpinAll", "Unpin All Windows", "Remove every live window pin", "pin.slash") {
             ActionExecutor.executeAction(TriggerAction(actionType: .unpinAllWindows))
         }
-        command("system.keepAwake", keepAwakeTitle, "Hold a prevent-idle-sleep power assertion", "flask",
-                keys: captureKeys(.keepAwake)) {
-            KeepAwakeService.shared.toggle(minutes: nil, keepDisplay: false)
+        let awake = KeepAwakeService.shared
+        let rules = KeepAwakeRules.shared
+        // The toggle keeps its ID and keys; running, it is "Turn Off" (지금 종료).
+        command("system.keepAwake", keepAwakeTitle, keepAwakeSubtitle, "flask",
+                keys: captureKeys(.keepAwake),
+                keywords: awake.isActive ? "지금 종료 끄기 stop caffeine 잠자기 방지" : "잠자기 방지 카페인 caffeine amphetamine") {
+            awake.toggle(minutes: nil, keepDisplay: false)
+        }
+        // 6.5: durations and the display from ⌘K (KeepingYouAwake's menu).
+        // Each replaces a running session: the new assertion first, so a
+        // refusal leaves the old one running.
+        command("system.keepAwake.30", "Keep Awake for 30 Minutes", "Then the Mac may sleep again · 30분 잠자기 방지", "timer",
+                keywords: "30분 30 minutes 30m caffeine 잠자기") {
+            awake.start(minutes: 30, keepDisplay: false)
+        }
+        command("system.keepAwake.60", "Keep Awake for 1 Hour", "Then the Mac may sleep again · 1시간 잠자기 방지", "timer",
+                keywords: "1시간 60분 1 hour 60 minutes caffeine 잠자기") {
+            awake.start(minutes: 60, keepDisplay: false)
+        }
+        command("system.keepAwake.display", "Keep Display On", "The display and the Mac stay awake until turned off · 화면 계속 켜기",
+                "sun.max", keywords: "화면 켜기 화면 유지 화면 계속 display screen awake caffeine") {
+            awake.start(minutes: nil, keepDisplay: true)
+        }
+        if rules.whileExternalDisplay {
+            // A manual Turn Off lasts until the next display or power change;
+            // this one stops the rule itself (자동 규칙 끄기).
+            command("system.keepAwake.rule", "Turn Off Keep Awake While a Display Is Connected",
+                    "Stops the automatic rule, not just this session · 자동 규칙 끄기", "display.2",
+                    keywords: "외장 모니터 자동 규칙 끄기 external display rule keep awake") {
+                rules.whileExternalDisplay = false
+                GestureHUD.shared.show(title: "Keep Awake Rule Off", detail: "A connected display no longer keeps the Mac awake.")
+            }
         }
         command("audio.mixer", "App Audio Mixer", "Per-app volume and mute (macOS 14.2+)", "slider.horizontal.3") {
             AppAudioMixerService.shared.showPanel()
+        }
+        // 6.5: HomePod plays nothing while the app's controls work.
+        command("audio.reconnect", "Reconnect App Audio",
+                "When a HomePod stays silent while the app plays · 홈팟 소리 복구", "arrow.triangle.2.circlepath",
+                keywords: "homepod airplay 홈팟 에어플레이 소리 무음 복구 다시 연결 reconnect repair silent") {
+            AudioRecovery.reconnect()
+        }
+        command("audio.restartCoreAudio", "Restart Core Audio…",
+                "Silent in every app · asks for a password · 오디오 재시작",
+                "waveform.badge.exclamationmark",
+                keywords: "coreaudiod core audio homepod airplay 홈팟 오디오 재시작 restart") {
+            AudioRecovery.restartCoreAudio()
         }
         command("menus.edit", "Floating Menus & Widgets", "Create menus, clocks and variable widgets · 플로팅 메뉴",
                 "rectangle.grid.2x2") {
@@ -534,18 +635,45 @@ struct QuickCommandPalette: View {
                     primary: PaletteAction(title: "Open Homebrew", run: open))
     }
 
-    // BTT / Raycast launcher: installed apps.
+    // BTT / Raycast launcher: installed apps, plus running apps elsewhere
+    // (an external volume, Downloads). 6.5: Hide, Quit, Force Quit… and
+    // Uninstall… after Show in Finder, so ↩ and ⌘↩ never change meaning.
     private func applicationItems() -> [PaletteItem] {
-        PaletteApplications.matching(trimmed).map { app in
-            PaletteItem(id: "app.\(app.url.path)", title: app.name, subtitle: app.url.deletingLastPathComponent().path,
-                        icon: "app", section: .applications,
-                        primary: PaletteAction(title: "Open", symbol: "arrow.up.forward.app") {
-                            close(); NSWorkspace.shared.openApplication(at: app.url, configuration: .init())
-                        },
-                        secondaries: [PaletteAction(title: "Show in Finder", symbol: "folder") {
-                            close(); NSWorkspace.shared.activateFileViewerSelecting([app.url])
-                        }],
-                        image: session.icon(forPath: app.url.path))
+        let running = NSWorkspace.shared.runningApplications
+        let runningKeys = Set(running.compactMap { $0.isTerminated ? nil : PaletteAppControl.runningKey($0) })
+        let apps = PaletteApplications.merged(PaletteApplications.all(),
+                                              running: running.compactMap { $0.activationPolicy == .regular ? $0.bundleURL : nil })
+        return PaletteApplications.matching(trimmed, in: apps).map { app in
+            let key = PaletteAppControl.installedKey(app.url)
+            let bundleID = PaletteApplications.bundleID(for: app.url)
+            let isRunning = runningKeys.contains(key)
+            let secondaries = PaletteAppControl.commands(isRunning: isRunning, bundleID: bundleID, path: key).map { command in
+                PaletteAction(title: command.title, symbol: command.symbol) { runAppCommand(command, app: app) }
+            }
+            return PaletteItem(id: "app.\(app.url.path)", title: app.name, subtitle: app.url.deletingLastPathComponent().path,
+                               icon: "app", section: .applications,
+                               primary: PaletteAction(title: "Open", symbol: "arrow.up.forward.app") {
+                                   close(); NSWorkspace.shared.openApplication(at: app.url, configuration: .init())
+                               },
+                               secondaries: secondaries, accessory: isRunning ? "Running" : nil,
+                               image: session.icon(forPath: app.url.path), secondaryLimit: .max)
+        }
+    }
+
+    private func runAppCommand(_ command: PaletteAppControl.Command, app: PaletteApplications.App) {
+        close()
+        switch command {
+        case .showInFinder: NSWorkspace.shared.activateFileViewerSelecting([app.url])
+        case .hide: PaletteAppControl.hide(app.url, name: app.name)
+        case .quit: PaletteAppControl.quit(app.url, name: app.name)
+        case .forceQuit:
+            // After the palette has gone, so the alert is the front window.
+            DispatchQueue.main.async { PaletteAppControl.forceQuit(app.url, name: app.name) }
+        case .uninstall:
+            // System Tools' own review: protection, quitting first, leftovers
+            // by folder, a final check before anything moves to the Trash.
+            appState.selectedMainTab = .tools
+            SystemToolsRequests.shared.requestUninstall(app.url)
         }
     }
 
@@ -1171,6 +1299,34 @@ enum PaletteApplications {
         let apps = scan(folders)
         cache = (apps, now)
         return apps
+    }
+
+    private static var bundleIDs: [String: String?] = [:]
+
+    /// Read once per path (the Info.plist), never a Library scan.
+    static func bundleID(for url: URL) -> String? {
+        lock.lock(); defer { lock.unlock() }
+        if let cached = bundleIDs[url.path] { return cached }
+        let id = Bundle(url: url)?.bundleIdentifier
+        if bundleIDs.count > 512 { bundleIDs.removeAll() }
+        bundleIDs[url.path] = id
+        return id
+    }
+
+    /// The installed list plus running apps that live outside the scanned
+    /// folders (an external volume, Downloads), each copy once. Pure.
+    static func merged(_ installed: [App], running: [URL], folders: [URL] = folders) -> [App] {
+        let scanned = folders.map { $0.standardizedFileURL.path + "/" }
+        var known = Set(installed.map { $0.url.standardizedFileURL.path })
+        var extra: [App] = []
+        for url in running where url.pathExtension == "app" {
+            let path = url.standardizedFileURL.path
+            // Inside a scanned folder (or the system's own): already listed.
+            guard !path.hasPrefix("/System/"), !scanned.contains(where: { path.hasPrefix($0) }),
+                  known.insert(path).inserted else { continue }
+            extra.append(App(name: url.deletingPathExtension().lastPathComponent, url: url))
+        }
+        return extra.isEmpty ? installed : installed + extra
     }
 
     static func scan(_ folders: [URL]) -> [App] {

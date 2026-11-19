@@ -53,6 +53,10 @@ struct AudioControlSnapshot: Sendable {
     var defaultOutputTransport: UInt32?
     var devices: [AudioOutputDevice] = []
     var transport: [AudioDeviceID: UInt32] = [:]
+    /// 6.5: AirPlay devices that answered "not alive" or a zero nominal rate
+    /// (`AirPlayDeviceReadiness`), read here on the control queue so the apply
+    /// step never asks the HAL on main while a HomePod reconnects.
+    var unreadyAirPlay = Set<AudioDeviceID>()
     /// Configured software output gain per device UID (absent: unity).
     var softwareGains: [String: Float] = [:]
     /// Tap formats of the request's taps; a tap in `queriedTaps` but missing
@@ -74,6 +78,9 @@ struct AudioControlSnapshot: Sendable {
     }
 
     func device(uid: String) -> AudioOutputDevice? { devices.first { $0.uid == uid } }
+
+    /// An AirPlay device a direct session may attach to now.
+    func isReadyAirPlay(_ device: AudioOutputDevice) -> Bool { !unreadyAirPlay.contains(device.id) }
 
     func softwareGain(uid: String) -> Float { softwareGains[uid] ?? 1 }
 
@@ -124,7 +131,12 @@ struct AudioControlSnapshot: Sendable {
             snapshot.playingOwners = AudioPlaybackActivity.playingOwners(snapshot.objectsByOwner) { running.contains($0) }
             snapshot.devices = AudioOutputService.devices()
             for device in snapshot.devices {
-                if let type = AppAudioEngine.outputTransport(device.id) { snapshot.transport[device.id] = type }
+                if let type = AppAudioEngine.outputTransport(device.id) {
+                    snapshot.transport[device.id] = type
+                    if type == kAudioDeviceTransportTypeAirPlay, !AirPlayDeviceReadiness.isReady(deviceID: device.id) {
+                        snapshot.unreadyAirPlay.insert(device.id)
+                    }
+                }
                 let gain = AudioOutputService.softwareGain(uid: device.uid, in: snapshot.devices,
                                                            appAudioEnabled: request.appAudioEnabled)
                 if gain != 1 { snapshot.softwareGains[device.uid] = gain }

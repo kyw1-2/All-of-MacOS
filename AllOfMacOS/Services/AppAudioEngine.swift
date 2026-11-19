@@ -807,6 +807,15 @@ final class AppAudioEngine {
             // non-audio app. Process-list notifications attach new producers.
             guard !ids.isEmpty, decision == .attach,
                   AudioEffectsIdlePolicy.mayAttach(effectsOnly: effectsOnly, playing: appPlaying) else { continue }
+            // 6.5: a HomePod still reconnecting (after wake, or a receiver that
+            // dropped) is not attached to: the tap would mute the app into a
+            // device that plays nothing while its media controls keep working.
+            // The app plays natively until the device is back; the backstop
+            // sweep (every 2–3 s) tries again. Read in the gather, off main.
+            if wantsDirect, let device = route, !snapshot.isReadyAirPlay(device) {
+                pendingAirPlayPIDs.insert(app.pid)
+                continue
+            }
             if attach(pid: app.pid, bundleID: app.bundleID, ids: ids, snapshot: snapshot,
                       gain: Self.storedGain(bundleID: app.bundleID), muted: muted, direct: wantsDirect) {
                 GestureLog.shared.logFromAnyThread("Audio session attached: pid \(app.pid) (\(app.bundleID))", level: .noMatch)

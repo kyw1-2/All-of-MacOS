@@ -23,6 +23,15 @@ enum WhatsNew {
     /// Highlights of the current version, bundled so the panel works offline.
     /// Items that alter defaults people already use say so with a note.
     static let items: [Item] = [
+        Item(symbol: "app.badge", title: "Manage Apps from ⌘K",
+             detail: "An app found in ⌘K now offers Hide, Quit, Force Quit… and Uninstall… after Show in Finder (⌘K on the row, or right-click). ↩ still opens and ⌘↩ still shows it in Finder. Uninstall… opens System Tools' review with the app's leftovers; Force Quit asks first.",
+             module: .systemTools),
+        Item(symbol: "timer", title: "Keep Awake for 30 Minutes, an Hour or with the Display On",
+             detail: "Type 30분, 1시간 or 화면 켜기 in ⌘K. A new duration replaces the running one without a gap, and the battery stop rule applies when you start it, not only at the next power change.",
+             module: .systemTools),
+        Item(symbol: "hifispeaker", title: "HomePod Waits Instead of Going Silent",
+             detail: "After wake, or while a HomePod reconnects, the app plays as usual until the receiver is back instead of being muted into it. ⌘K › Reconnect App Audio (or aom://audio-reconnect) rebuilds AOM's audio; Restart Core Audio… is there for a receiver that stays silent for every app.",
+             module: .audio),
         Item(symbol: "keyboard", title: "Show Keystrokes",
              detail: "System Tools › Quick Toggles shows the keys you press at the bottom of the screen for demos and recordings, KeyCastr-style: every key, or shortcuts only so typed text stays private. Hidden in password fields; aom://show-keystrokes toggles it from a deck key or an automation.",
              module: .systemTools),

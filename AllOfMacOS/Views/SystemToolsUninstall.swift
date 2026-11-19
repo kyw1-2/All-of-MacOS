@@ -1,5 +1,23 @@
 import AppKit
+import Combine
 import UniformTypeIdentifiers
+
+/// A one-shot request from ⌘K's app row ("Uninstall…", 6.5). System Tools
+/// takes it when its page shows, so the review sheet stays up after the
+/// palette closes; nothing is scanned until then.
+@MainActor
+final class SystemToolsRequests: ObservableObject {
+    static let shared = SystemToolsRequests()
+    @Published private(set) var pendingUninstall: URL?
+
+    func requestUninstall(_ app: URL) { pendingUninstall = app }
+
+    /// The request, once.
+    func takeUninstall() -> URL? {
+        defer { pendingUninstall = nil }
+        return pendingUninstall
+    }
+}
 
 /// The app uninstaller: choose an app (or drop one on the tile), quit it
 /// after asking if it is running, then review it with its leftovers grouped

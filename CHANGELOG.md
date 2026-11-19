@@ -1,3 +1,38 @@
+## [6.5.0] - 2026-11-19
+
+The 6.4.0 bug-fix and integration report (Codex, PR #10) merged first, then its merge order 1–3 (Keep Awake presets, app row actions, uninstall review entry), then a HomePod silence fix after reviewing an outside patch proposal against the audio engine.
+
+### Fixed (6.4.0 integration report, PR #10)
+- **Uninstall review**: a protected app (macOS's own, AOM) is refused before AOM asks it to quit; another running copy of the same app is never quit, the review says so; the reviewed app is checked again (bundle ID, running) right before anything moves to the Trash; leftovers and which are checked come from one scan.
+- **Keep Awake**: switching duration acquires the new assertion before releasing the old one, so a refusal keeps the running session; failures reach the caller (automations, Focus, System Tools); the battery stop rule applies when you start it manually.
+- **⌘K**: the footer buttons and the row menu run actions the same way as ↩ (and learn the pick); a dimmed menu item neither runs nor is learnt; installed apps match by initials and abbreviations again (ㅋㅋㅇㅌ → 카카오톡, gc → Google Chrome); two copies of an app in different folders are both listed; query learning keeps the newest 300 queries (it dropped them in dictionary order) and reads older records.
+- **Clipboard search**: typing `from:"Google` keeps the opening quote and spaces; the closing quote makes it a chip.
+- **Recent files**: Spotlight hits are read in batches of 64 until enough usable files are found, instead of cutting at 200 (20 for screenshots) before hidden and nested paths were filtered out; a closed palette stops the read.
+
+### Added
+- **App actions in ⌘K** (Raycast): Open, Show in Finder, Hide, Quit, Force Quit…, Uninstall…, always in that order, so ↩ opens and ⌘↩ shows in Finder whether or not the app runs; ⌘K or a right-click reaches the rest. Each action finds the running instances of that exact copy again when it runs; Force Quit names the app in a confirmation; AOM, Finder and the system hosts are never quit from here; apps that ship with macOS get no Uninstall. Running apps outside the app folders (an external volume) are listed too, marked Running.
+- **Uninstall… from ⌘K** opens System Tools' own review (quit first, leftovers by folder, the final check), consumed once when the page shows. Nothing under ~/Library is scanned while you type.
+- **Keep Awake presets in ⌘K**: Keep Awake for 30 Minutes, for 1 Hour, Keep Display On; found by 30분, 1시간, 화면 켜기. The toggle keeps its ID and shortcut; running, it says when a rule started the session (a manual Turn Off lasts until the next display or power change), and "Turn Off Keep Awake While a Display Is Connected" stops the rule itself.
+- **Window layouts in ⌘K** while searching: top and bottom halves, the four quarters, thirds and two thirds, Center Window (the existing WindowManager layouts).
+- **Reconnect App Audio** (⌘K, `aom://audio-reconnect`): the mixer's Reconnect for every app. **Restart Core Audio…** (⌘K only, confirmation and administrator prompt): `killall coreaudiod`, for a receiver that stays silent in every app; never a link.
+
+### Fixed (HomePod silent while the app's controls work)
+- A direct AirPlay session mutes the app with its tap for its whole life. After wake, or while a HomePod reconnects, AOM could attach to a receiver that was not alive and hold the app muted until the 5 s watchdog gave up. The control gather now reads each AirPlay device's alive flag and nominal rate on its own queue (never on main); a device that answers "not alive" or a zero rate is not attached to, and the app plays natively until it is back. A live session also listens to its receiver's availability and rebuilds at once instead of after 5 s.
+
+### Reviewed, not adopted (outside "Patch 7" proposal)
+- *Tear down every tap while the output is AirPlay*: that is the existing "HomePod effects" switch (`AOMAudioAirPlayProcessingEnabled`), which is on by the user's choice; the direct path has its own watchdog that restores native playback.
+- *Suppress AudioOutputRestore during an AirPlay handshake*: its forced return to the speakers is opt-in, off here (`aom.audio.protectMediaPlayback = 0`) and suspended while HomePod processing is on, so it cannot fight a HomePod.
+- *Soft re-route through the built-in speakers*: moving the system output, even for 500 ms, plays through the speakers and overrides the person's choice; not done automatically or from ⌘K.
+- The crackle on the AirPlay direct path (6.2.1–6.3.3) is unchanged; nothing here claims it is gone.
+
+### Not done
+- The report's step 4 (680×520 / 44 pt rows against 600×480, 30+ timed opens on this Mac and an external display) and the optional clipboard / text-expansion entry points stay for a measured follow-up.
+
+### Validation
+- 256 unit tests pass, 18 live System Tools checks skipped (opt-in). New: `AOM65Tests` (app action order and protection, the searched copy only, running apps outside the folders, the six-action row, the one-shot uninstall request, Korean preset search, distinct window layouts, 30→60 min acquire-before-release, AirPlay readiness and its snapshot field, the reconnect link and the fixed restart command).
+- ⌘K previews (debug binary, `--aom-ui-preview`): "잠자기" lists the presets, "홈팟" the two recoveries, "chrome" shows the six actions with Running.
+- Not checked here: a real HomePod (none was the output today: `audio-health.json` since 04:25 shows no AirPlay output), quitting or uninstalling a real app from ⌘K, and the administrator prompt.
+
 ## [6.4.0] - 2026-11-19
 
 DeepSeek's second binary round (SoundSource, Pearcleaner, LinearMouse, Shottr, Stats, Alfred, KeepingYouAwake, BetterTouchTool, Raycast, CleanShot X) and Codex's whole-app audit (`AOM-6.3.3-감사보고서.html`). Item-by-item decisions: docs/aom-6.4-plan.md.

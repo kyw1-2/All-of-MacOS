@@ -236,6 +236,8 @@ final class AirPlayDirectStream: AppAudioActivitySource {
     private var procID: AudioDeviceIOProcID?
     private let queue: DispatchQueue
     private var listeners: [(AudioObjectPropertyAddress, AudioObjectPropertyListenerBlock)] = []
+    /// On the AirPlay device itself, not the aggregate (its availability).
+    private var deviceListeners: [(AudioObjectPropertyAddress, AudioObjectPropertyListenerBlock)] = []
 
     /// The nominal rate or stream layout changed: the engine rebuilds the session.
     var needsRebuild: Bool { reconfigured.load() != 0 }
@@ -319,6 +321,11 @@ final class AirPlayDirectStream: AppAudioActivitySource {
             AudioObjectRemovePropertyListenerBlock(aggregateID, &address, queue, block)
         }
         listeners.removeAll()
+        for (address, block) in deviceListeners {
+            var address = address
+            AudioObjectRemovePropertyListenerBlock(deviceID, &address, queue, block)
+        }
+        deviceListeners.removeAll()
     }
 
     private func addListeners(onReconfigure: @escaping () -> Void) {
@@ -349,6 +356,20 @@ final class AirPlayDirectStream: AppAudioActivitySource {
         }
         if AudioObjectAddPropertyListenerBlock(aggregateID, &overload, queue, block) == noErr {
             listeners.append((overload, block))
+        }
+        // 6.5: the receiver itself dropping (HomePod asleep, out of range,
+        // reconnecting) rebuilds at once instead of after the 5 s watchdog,
+        // so the app's own playback is not held muted meanwhile.
+        var alive = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyDeviceIsAlive,
+            mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        let aliveBlock: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            guard let self, self.stopRequested.load() == 0 else { return }
+            AudioEventLog.shared.record(.outputStopped, source: name, detail: "AirPlay receiver availability changed")
+            self.reconfigured.store(1)
+            onReconfigure()
+        }
+        if AudioObjectAddPropertyListenerBlock(deviceID, &alive, queue, aliveBlock) == noErr {
+            deviceListeners.append((alive, aliveBlock))
         }
     }
 
