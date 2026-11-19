@@ -213,6 +213,14 @@ final class TriggerSelectorActionTests: XCTestCase {
 }
 
 final class AOM64IntegrationRegressionTests: XCTestCase {
+    func testUnfinishedQuotedClipboardFilterCanBeTyped() {
+        let partial = #"from:"Google "#
+        XCTAssertEqual(ClipboardSearchQuery.editableText(in: partial), partial)
+        XCTAssertEqual(ClipboardSearchQuery.editableText(in: "type:image " + partial), partial)
+        let complete = #"from:"Google Chrome""#
+        XCTAssertEqual(ClipboardSearchQuery.filterTokens(in: complete), [complete])
+    }
+
     func testFuzzyInstalledAppQueries() {
         let apps = ["카카오톡", "Google Chrome"].map {
             PaletteApplications.App(name: $0, url: URL(fileURLWithPath: "/Applications/\($0).app"))

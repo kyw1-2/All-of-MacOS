@@ -20,7 +20,7 @@ struct ClipboardSearchQuery {
     }
     private var terms: [Term] = []
 
-    private static let tokenExpression = try? NSRegularExpression(pattern: #"(?:[^\s"]|"[^"]*")+"#)
+    private static let tokenExpression = try? NSRegularExpression(pattern: #"(?:[^\s"]|"[^"]*(?:"|$))+"#)
     static let fields: Set<String> = ["type", "from", "app", "board", "pinboard", "before", "after", "on", "is"]
 
     init(_ query: String, boards: [ClipboardPinboard]? = nil, now: Date = Date(), calendar: Calendar = .current) {
@@ -180,7 +180,10 @@ extension ClipboardSearchQuery {
     }
     static func editableText(in query: String) -> String {
         let filters = Set(filterTokens(in: query))
-        return tokens(in: query).filter { !filters.contains($0) }.joined(separator: " ") + (query.last?.isWhitespace == true ? " " : "")
+        if filters.isEmpty { return query }
+        let editable = tokens(in: query).filter { !filters.contains($0) }.joined(separator: " ")
+        guard query.last?.isWhitespace == true, editable.last?.isWhitespace != true else { return editable }
+        return editable + " "
     }
     static func updatingEditableText(_ text: String, in query: String) -> String {
         let filters = filterTokens(in: query)

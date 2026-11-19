@@ -56,38 +56,21 @@ final class PaletteRecentFiles: ObservableObject {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let now = Date()
 
+        let month: TimeInterval = 30 * 86_400
+        let year: TimeInterval = 365 * 86_400
         run(predicate: NSPredicate(format: "%K >= %@", NSMetadataItemLastUsedDateKey, now.addingTimeInterval(-Self.recentWindow) as NSDate),
-            scopes: [NSMetadataQueryUserHomeScope], sortKey: NSMetadataItemLastUsedDateKey) { [weak self] items in
-            let files = items.compactMap { item -> (url: URL, contentType: String?, date: Date)? in
-                guard let path = item.value(forAttribute: NSMetadataItemPathKey) as? String,
-                      let date = item.value(forAttribute: NSMetadataItemLastUsedDateKey) as? Date else { return nil }
-                return (URL(fileURLWithPath: path), item.value(forAttribute: NSMetadataItemContentTypeKey) as? String, date)
-            }
-            self?.recent = Array(PaletteRecentFilter.usable(files, home: home, now: now, window: Self.recentWindow)
-                .prefix(Self.recentLimit))
-        }
+            scope: NSMetadataQueryUserHomeScope, sortKey: NSMetadataItemLastUsedDateKey,
+            home: home, now: now, window: Self.recentWindow, limit: Self.recentLimit) { [weak self] in self?.recent = $0 }
 
         let downloads = home.appendingPathComponent("Downloads", isDirectory: true)
-        run(predicate: NSPredicate(format: "%K >= %@", "kMDItemDateAdded", now.addingTimeInterval(-30 * 24 * 3600) as NSDate),
-            scopes: [downloads], sortKey: "kMDItemDateAdded") { [weak self] items in
-            let files = items.compactMap { item -> (url: URL, contentType: String?, date: Date)? in
-                guard let path = item.value(forAttribute: NSMetadataItemPathKey) as? String,
-                      (path as NSString).deletingLastPathComponent == downloads.path,
-                      let date = item.value(forAttribute: "kMDItemDateAdded") as? Date else { return nil }
-                return (URL(fileURLWithPath: path), item.value(forAttribute: NSMetadataItemContentTypeKey) as? String, date)
-            }
-            self?.latestDownload = PaletteRecentFilter.usable(files, home: home, now: now, window: 30 * 24 * 3600).first
-        }
+        run(predicate: NSPredicate(format: "%K >= %@", "kMDItemDateAdded", now.addingTimeInterval(-month) as NSDate),
+            scope: downloads, sortKey: "kMDItemDateAdded", home: home, now: now,
+            window: month, limit: 1, parent: downloads) { [weak self] in self?.latestDownload = $0.first }
 
-        run(predicate: NSPredicate(format: "kMDItemIsScreenCapture == 1"),
-            scopes: [NSMetadataQueryUserHomeScope], sortKey: NSMetadataItemFSCreationDateKey) { [weak self] items in
-            let files = items.prefix(20).compactMap { item -> (url: URL, contentType: String?, date: Date)? in
-                guard let path = item.value(forAttribute: NSMetadataItemPathKey) as? String,
-                      let date = item.value(forAttribute: NSMetadataItemFSCreationDateKey) as? Date else { return nil }
-                return (URL(fileURLWithPath: path), item.value(forAttribute: NSMetadataItemContentTypeKey) as? String, date)
-            }
-            self?.latestScreenshot = PaletteRecentFilter.usable(Array(files), home: home, now: now, window: 365 * 24 * 3600).first
-        }
+        run(predicate: NSPredicate(format: "kMDItemIsScreenCapture == 1 AND %K >= %@", NSMetadataItemFSCreationDateKey,
+                                   now.addingTimeInterval(-year) as NSDate),
+            scope: NSMetadataQueryUserHomeScope, sortKey: NSMetadataItemFSCreationDateKey,
+            home: home, now: now, window: year, limit: 1) { [weak self] in self?.latestScreenshot = $0.first }
     }
 
     func stop() {
@@ -104,21 +87,45 @@ final class PaletteRecentFiles: ObservableObject {
         latestScreenshot = screenshot
     }
 
-    private func run(predicate: NSPredicate, scopes: [Any], sortKey: String,
-                     deliver: @escaping @MainActor ([NSMetadataItem]) -> Void) {
+    private func run(predicate: NSPredicate, scope: Any, sortKey: String, home: URL, now: Date,
+                     window: TimeInterval, limit: Int, parent: URL? = nil,
+                     deliver: @escaping @MainActor ([PaletteFile]) -> Void) {
         let query = NSMetadataQuery()
         query.predicate = predicate
-        query.searchScopes = scopes
+        query.searchScopes = [scope]
         query.sortDescriptors = [NSSortDescriptor(key: sortKey, ascending: false)]
         query.notificationBatchingInterval = 0.2
         let observer = NotificationCenter.default.addObserver(forName: .NSMetadataQueryDidFinishGathering, object: query,
-                                                              queue: .main) { [weak query] _ in
-            MainActor.assumeIsolated {
-                guard let query else { return }
+                                                              queue: .main) { [weak self, weak query] _ in
+            Task { @MainActor in
+                guard let self, let query, self.queries.contains(where: { $0 === query }) else { return }
                 query.disableUpdates()
-                let items = (0..<min(query.resultCount, 200)).compactMap { query.result(at: $0) as? NSMetadataItem }
+                var files: [PaletteFile] = []
+                var seen = Set<String>()
+                let count = query.resultCount
+                // Spotlight has already sorted the hits. Advance past hidden or nested
+                // items until enough eligible files are found. Yield between batches.
+                for start in stride(from: 0, to: count, by: 64) {
+                    guard self.queries.contains(where: { $0 === query }) else { return }
+                    let batch = (start..<min(start + 64, count)).compactMap { index -> (url: URL, contentType: String?, date: Date)? in
+                        guard let item = query.result(at: index) as? NSMetadataItem,
+                              let path = item.value(forAttribute: NSMetadataItemPathKey) as? String,
+                              let date = item.value(forAttribute: sortKey) as? Date else { return nil }
+                        let url = URL(fileURLWithPath: path)
+                        if let parent, url.deletingLastPathComponent().path != parent.path { return nil }
+                        return (url, item.value(forAttribute: NSMetadataItemContentTypeKey) as? String, date)
+                    }
+                    let usable = PaletteRecentFilter.usable(batch, home: home, now: now, window: window)
+                    for file in usable where seen.insert(file.id).inserted {
+                        files.append(file)
+                        if files.count == limit { break }
+                    }
+                    if files.count == limit { break }
+                    await Task.yield()
+                }
+                guard self.queries.contains(where: { $0 === query }) else { return }
                 query.stop()
-                deliver(items)
+                deliver(files)
             }
         }
         observers.append(observer)
