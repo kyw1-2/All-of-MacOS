@@ -580,11 +580,14 @@ struct AppAudioLevelMeter: View {
     let pid: pid_t
     @ObservedObject private var meters = AppAudioMixerService.shared.meters
     var body: some View {
+        // 7.0: SoundSource's segmented peak meter (12 cells, amber, then red).
         let level = meters.levels[pid] ?? 0
-        ProgressView(value: Double(level), total: 1)
-            .tint(level > 0.95 ? AOMColor.warning : AOMColor.success)
-            .frame(maxWidth: Self.maxWidth)
+        AOMPeakMeterView(level: Double(level))
+            .frame(width: 60, height: 8)
+            .frame(maxWidth: Self.maxWidth, alignment: .leading)
+            .accessibilityElement()
             .accessibilityLabel("Application audio level")
+            .accessibilityValue("\(Int((level * 100).rounded())) percent")
     }
 }
 
@@ -1021,18 +1024,18 @@ struct MixerAppRow: View {
                 .disabled(!hasBundle)
                 .help(app.muted ? "Unmute \(app.name)" : "Mute \(app.name)")
                 .accessibilityLabel(app.muted ? "Unmute \(app.name)" : "Mute \(app.name)")
-                Slider(value: Binding(get: { Double(gain) }, set: { newValue in
-                    gain = Float(newValue)
-                    service.setGain(gain, bundleID: app.bundleID)
-                }), in: 0...1)
-                    .frame(width: AOMRowControlMetrics.sliderWidth)
-                    .controlSize(.small)
+                // 7.0: one track for 0–400 % (SoundSource): volume up to the
+                // 100 % detent, Volume Overdrive in amber beyond it.
+                AOMOverdriveSlider(value: Binding(get: { Double(gain) * Double(app.overdrive) }, set: { newValue in
+                    setCombinedVolume(newValue)
+                }), isMuted: app.muted)
+                    .frame(width: 150, height: 18)
                     .disabled(!hasBundle)
+                    .opacity(hasBundle ? 1 : 0.5)
                     .accessibilityLabel("Volume for \(app.name)")
-                    .accessibilityValue("\(Int((gain * app.overdrive * 100).rounded())) percent")
                 Text("\(Int((gain * app.overdrive * 100).rounded()))%")
                     .font(AOMFont.caption.monospacedDigit())
-                    .foregroundStyle(app.overdrive > 1.0001 ? AOMColor.warningText : AOMColor.textSecondary)
+                    .foregroundStyle(app.overdrive > 1.0001 ? AOMCraftColor.overdriveAmber : AOMColor.textSecondary)
                     .frame(width: AOMRowControlMetrics.valueWidth, alignment: .trailing)
                     .help(app.overdrive > 1.0001 ? "Volume Overdrive \(Int((app.overdrive * 100).rounded()))%" : "Volume")
                     .accessibilityHidden(true)
@@ -1048,7 +1051,7 @@ struct MixerAppRow: View {
                 .accessibilityLabel("Magic Boost for \(app.name)")
                 .accessibilityValue(app.magicBoost ? "On" : "Off")
                 outputMenu
-                Button { withAnimation(AOMMotion.standard) { expanded.toggle() } } label: {
+                Button { withAnimation(AOMCraftMotion.resolve(AOMCraftMotion.inlineFold, reduceMotion: AOMMotion.systemReduceMotion)) { expanded.toggle() } } label: {
                     Image(systemName: "chevron.right")
                         .rotationEffect(.degrees(expanded ? 90 : 0))
                         .foregroundStyle(AOMColor.textSecondary)
@@ -1065,11 +1068,28 @@ struct MixerAppRow: View {
             .padding(.vertical, AOMSpace.x1)
             .frame(minHeight: AOMSize.rowDetail)
             .contentShape(Rectangle())
+            // 7.0: the row's fill answers the pointer in 80 ms; nothing moves.
+            .aomCalmHover(radius: AOMCraftRadius.row)
             .contextMenu { contextMenu }
             if expanded { effects }
         }
         .onChange(of: app.gain) { _, value in gain = min(max(value, 0), 1) }
         .onChange(of: app.balance) { _, value in balance = AudioBalance.clamp(value) }
+    }
+
+    /// 0…4: up to 1 is the app's volume, above it Volume Overdrive (as the
+    /// "Set App Volume" action splits it), in 5 % steps for the effect.
+    private func setCombinedVolume(_ value: Double) {
+        let clamped = AOMVolumeScale.clamped(value)
+        let nextGain = Float(min(clamped, 1))
+        if abs(nextGain - gain) > 0.0005 || (clamped >= 1 && gain < 1) {
+            gain = nextGain
+            service.setGain(nextGain, bundleID: app.bundleID)
+        }
+        let nextOverdrive = Float(max(1, (clamped * 20).rounded() / 20))
+        if abs(nextOverdrive - app.overdrive) > 0.001 {
+            service.setOverdrive(nextOverdrive, bundleID: app.bundleID)
+        }
     }
 
     @ViewBuilder private var icon: some View {

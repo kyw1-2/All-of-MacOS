@@ -263,6 +263,10 @@ final class ClipboardPanelController {
     }
 
     func show() {
+        // 7.0: the launcher, menu bar panel, switcher or drop shelf goes first.
+        AOMOverlayCoordinator.shared.present(.clipboardShelf, dismiss: { [weak self] in
+            self?.hideImmediately(cancelPendingPaste: false)
+        }) { _ in }
         pasteTask?.cancel()
         dismissalGeneration += 1
         slidingOut = false
@@ -1735,7 +1739,9 @@ private struct ClipboardCardView: View, Equatable {
             }
             .foregroundStyle(headerText)
             .frame(height: compact ? ShelfCardMetrics.headerCompact : ShelfCardMetrics.header, alignment: .top)
-            .background(accent)
+            // 7.0: Paste 7's header — the source colour with a faint top light.
+            .background(accent.overlay(LinearGradient(colors: [Color.white.opacity(0.16), .clear],
+                                                      startPoint: .top, endPoint: .bottom)))
             .overlay(alignment: .trailing) {
                 if let appIcon {
                     Image(nsImage: appIcon).resizable().scaledToFill()

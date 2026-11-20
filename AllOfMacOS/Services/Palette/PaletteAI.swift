@@ -15,6 +15,7 @@ import Combine
 // interactive session where the CLI asks for each permission itself.
 
 enum PaletteAIProvider: String, CaseIterable, Identifiable {
+    // 7.0: kept as the agents beside the native models (AOMAIProvider).
     case claude, codex
 
     var id: String { rawValue }
@@ -136,9 +137,12 @@ enum PaletteAIEvent: Equatable {
     }
 }
 
-/// The launcher's conversation. Shared, so closing and reopening the
+/// The launcher's conversation (7.0). Shared, so closing and reopening the
 /// launcher keeps it; after ten quiet minutes a question starts a new one
-/// (Raycast's auto-new chat).
+/// (Raycast's auto-new chat). Answers come from the chosen model: a native
+/// provider streams over HTTP (or on-device), an agent through its CLI —
+/// Claude Code in one warm session that stays up between questions, so
+/// only the first question pays for its start-up.
 @MainActor
 final class PaletteAIChat: ObservableObject {
     static let shared = PaletteAIChat()
@@ -148,56 +152,187 @@ final class PaletteAIChat: ObservableObject {
         let id = UUID()
         let role: Role
         var text: String
+        /// The model that answered ("Claude Opus 5.5").
+        var model: String? = nil
+        /// Why an answer stopped early.
+        var notice: String? = nil
+        /// Reasoning before the first word.
+        var thinking = false
     }
 
     @Published private(set) var messages: [Message] = []
     @Published private(set) var isRunning = false
-    @Published var provider: PaletteAIProvider {
+    /// 7.0: provider and model, persisted. Switching keeps the conversation.
+    @Published var model: AOMAIModelRef {
         didSet {
-            UserDefaults.standard.set(provider.rawValue, forKey: "AOMLauncherAIProvider")
-            if oldValue != provider { newChat() }
+            guard oldValue != model else { return }
+            AOMAIConfig.selectedModel = model
+            if oldValue.provider != model.provider || oldValue.provider.isAgent { agentSession.stop() }
+        }
+    }
+    @Published private(set) var chatID = UUID()
+
+    /// 6.9 API kept for the agent paths and the tests.
+    var provider: PaletteAIProvider { model.provider == .codex ? .codex : .claude }
+    var agent: PaletteAIProvider? {
+        switch model.provider {
+        case .claudeCode: return .claude
+        case .codex: return .codex
+        default: return nil
         }
     }
 
     private var sessions: [PaletteAIProvider: String] = [:]
     private var process: Process?
+    private var task: Task<Void, Never>?
+    private let agentSession = PaletteAgentSession()
     private var lastActivity = Date.distantPast
+    /// Tokens collected between two screen updates (one update per frame).
+    private var pending = ""
+    private var flushScheduled = false
     static let idleReset: TimeInterval = 600
 
     init() {
-        provider = PaletteAIProvider(rawValue: UserDefaults.standard.string(forKey: "AOMLauncherAIProvider") ?? "") ?? .claude
+        model = AOMAIConfig.selectedModel
+        agentSession.onEvents = { [weak self] events in self?.applyAgent(events) }
+        agentSession.onExit = { [weak self] status, stderr in self?.finishAgent(status: status, stderr: stderr) }
     }
 
     var session: String? { sessions[provider] }
     var lastAnswer: String? { messages.last { $0.role == .assistant && !$0.text.isEmpty }?.text }
     var lastQuestion: String? { messages.last { $0.role == .user }?.text }
+    var title: String { messages.first { $0.role == .user }.map { String($0.text.prefix(60)) } ?? "New Chat" }
+
+    /// Starts the agent's CLI before the first question (the Ask AI screen opened).
+    func prewarm() {
+        guard agent == .claude, let executable = PaletteAIProvider.claude.executable else { return }
+        agentSession.start(executable: executable, model: model.model, system: systemPrompt, resume: session)
+    }
 
     func newChat() {
         cancel()
+        AOMAIChatHistory.shared.save(self)
         messages = []
         sessions = [:]
+        chatID = UUID()
+        agentSession.stop()
+    }
+
+    /// Opens a saved conversation (AI Chat's sidebar).
+    func load(_ record: AOMAIChatHistory.Record) {
+        cancel()
+        AOMAIChatHistory.shared.save(self)
+        agentSession.stop()
+        chatID = record.id
+        messages = record.messages.map { Message(role: $0.role == "user" ? .user : .assistant, text: $0.text, model: $0.model) }
+        sessions = [:]
+        lastActivity = Date()
+        if let ref = record.model.flatMap(AOMAIModelRef.init(key:)) { model = ref }
     }
 
     func cancel() {
+        task?.cancel()
+        task = nil
         if let process, process.isRunning { process.terminate() }
         process = nil
+        if agentSession.isBusy { agentSession.stop() }
+        flush()
+        if isRunning, let last = messages.last, last.role == .assistant, last.text.isEmpty {
+            messages.removeLast()
+            messages.append(Message(role: .error, text: "Stopped."))
+        }
         isRunning = false
     }
 
     func ask(_ prompt: String) {
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !isRunning else { return }
-        if Date().timeIntervalSince(lastActivity) > Self.idleReset { messages = []; sessions = [:] }
+        if Date().timeIntervalSince(lastActivity) > Self.idleReset, !messages.isEmpty {
+            AOMAIChatHistory.shared.save(self)
+            messages = []
+            sessions = [:]
+            chatID = UUID()
+            agentSession.stop()
+        }
         lastActivity = Date()
         messages.append(Message(role: .user, text: text))
-        guard let executable = provider.executable else {
-            messages.append(Message(role: .error, text: "\(provider.title) isn't installed on this Mac (looked in \(provider.candidates.prefix(3).joined(separator: ", ")))."))
+        answer()
+    }
+
+    /// ⌘R: the last question again (the old answer is replaced).
+    func regenerate() {
+        guard !isRunning, messages.contains(where: { $0.role == .user }) else { return }
+        while let last = messages.last, last.role != .user { messages.removeLast() }
+        // An agent remembers the turn it answered; it gets the question as new.
+        if agent != nil { agentSession.stop(); sessions = [:] }
+        answer()
+    }
+
+    private func answer() {
+        guard let question = messages.last(where: { $0.role == .user })?.text else { return }
+        let ref = model
+        messages.append(Message(role: .assistant, text: "", model: ref.title))
+        isRunning = true
+        if let agent {
+            guard let executable = agent.executable else {
+                replaceLast(with: Message(role: .error, text: "\(agent.title) isn't installed on this Mac (looked in \(agent.candidates.prefix(3).joined(separator: ", ")))."))
+                isRunning = false
+                return
+            }
+            if agent == .claude {
+                agentSession.start(executable: executable, model: ref.model, system: systemPrompt, resume: session)
+                agentSession.send(question)
+            } else {
+                // Codex has no warm session here: earlier turns go with the question.
+                let sent = Self.withHistory(question, messages.dropLast(2))
+                run(executable, arguments: agent.arguments(prompt: sent, session: nil))
+            }
             return
         }
-        // Codex has no streaming resume here: earlier turns go with the question.
-        let sent = provider == .codex ? Self.withHistory(text, messages.dropLast()) : text
-        messages.append(Message(role: .assistant, text: ""))
-        run(executable, arguments: provider.arguments(prompt: sent, session: provider == .claude ? session : nil))
+        let turns = messages.dropLast().compactMap { message -> AOMAITurn? in
+            switch message.role {
+            case .user: return AOMAITurn(role: .user, text: message.text)
+            case .assistant: return message.text.isEmpty ? nil : AOMAITurn(role: .assistant, text: message.text)
+            case .error: return nil
+            }
+        }
+        let stream = AOMAIClient.stream(ref, system: systemPrompt, turns: Self.alternating(turns))
+        task = Task { [weak self] in
+            do {
+                for try await piece in stream {
+                    guard let self, !Task.isCancelled else { return }
+                    switch piece {
+                    case .text(let delta): self.buffer(delta)
+                    case .snapshot(let full): self.flush(); self.setAnswer(full)
+                    case .thinking: self.setThinking(true)
+                    case .notice(let notice): self.flush(); self.setNotice(notice)
+                    }
+                }
+                self?.finishNative(error: nil)
+            } catch {
+                self?.finishNative(error: error)
+            }
+        }
+    }
+
+    /// Pure: consecutive turns of one role merged (an error between two
+    /// questions leaves them adjacent), starting with the user.
+    nonisolated static func alternating(_ turns: [AOMAITurn]) -> [AOMAITurn] {
+        var result: [AOMAITurn] = []
+        for turn in turns {
+            if let last = result.last, last.role == turn.role {
+                result[result.count - 1] = AOMAITurn(role: turn.role, text: last.text + "\n\n" + turn.text)
+            } else if result.isEmpty, turn.role == .assistant {
+                continue
+            } else {
+                result.append(turn)
+            }
+        }
+        return result
+    }
+
+    private var systemPrompt: String {
+        AOMAIConfig.systemPrompt(frontApp: AOMLauncherController.shared.frontApp?.localizedName)
     }
 
     /// Pure: earlier turns as context for a CLI without a resumable session.
@@ -208,23 +343,122 @@ final class PaletteAIChat: ObservableObject {
         return "Conversation so far:\n\(history)\n\nUser: \(prompt)"
     }
 
+    // MARK: Streaming into the transcript
+
+    private func buffer(_ text: String) {
+        pending += text
+        guard !flushScheduled else { return }
+        flushScheduled = true
+        // About one screen update per frame however fast tokens arrive.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) { [weak self] in
+            MainActor.assumeIsolated { self?.flush() }
+        }
+    }
+
+    private func flush() {
+        flushScheduled = false
+        guard !pending.isEmpty else { return }
+        let text = pending
+        pending = ""
+        guard let index = messages.indices.last, messages[index].role == .assistant else { return }
+        messages[index].text += text
+        messages[index].thinking = false
+    }
+
+    private func setAnswer(_ text: String) {
+        guard let index = messages.indices.last, messages[index].role == .assistant else { return }
+        messages[index].text = text
+        messages[index].thinking = false
+    }
+
+    private func setThinking(_ on: Bool) {
+        guard let index = messages.indices.last, messages[index].role == .assistant, messages[index].text.isEmpty else { return }
+        if messages[index].thinking != on { messages[index].thinking = on }
+    }
+
+    private func setNotice(_ notice: String) {
+        guard let index = messages.indices.last, messages[index].role == .assistant else { return }
+        messages[index].notice = notice
+    }
+
+    private func finishNative(error: Error?) {
+        flush()
+        task = nil
+        isRunning = false
+        lastActivity = Date()
+        if let error {
+            let text = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            replaceLast(with: Message(role: .error, text: text))
+        } else if let last = messages.last, last.role == .assistant, last.text.isEmpty {
+            replaceLast(with: Message(role: .error, text: last.notice ?? "\(model.title) sent an empty answer."))
+        }
+        AOMAIChatHistory.shared.save(self)
+    }
+
+    private func appendToAnswer(_ text: String) {
+        guard let index = messages.indices.last, messages[index].role == .assistant else { return }
+        messages[index].text += text
+        messages[index].thinking = false
+    }
+
+    private func replaceLast(with message: Message) {
+        if let index = messages.indices.last, messages[index].role == .assistant, messages[index].text.isEmpty {
+            messages[index] = message
+        } else {
+            messages.append(message)
+        }
+    }
+
+    // MARK: Agents (Claude Code warm session, Codex per turn)
+
+    private func applyAgent(_ events: [PaletteAIEvent]) {
+        for event in events {
+            switch event {
+            case .session(let id): sessions[.claude] = id
+            case .delta(let text): buffer(text)
+            case .message(let text): flush(); appendToAnswer(messages.last?.text.isEmpty == false ? "\n\n" + text : text)
+            case .done(let text):
+                flush()
+                if let text, !text.isEmpty, messages.last?.role == .assistant, messages.last?.text.isEmpty == true {
+                    appendToAnswer(text)
+                }
+                if agent == .claude, isRunning {
+                    isRunning = false
+                    lastActivity = Date()
+                    if let last = messages.last, last.role == .assistant, last.text.isEmpty {
+                        replaceLast(with: Message(role: .error, text: "Claude Code sent an empty answer."))
+                    }
+                    AOMAIChatHistory.shared.save(self)
+                }
+            case .failure(let text):
+                flush()
+                replaceLast(with: Message(role: .error, text: text))
+                if agent == .claude { isRunning = false }
+            }
+        }
+    }
+
+    private func finishAgent(status: Int32, stderr: String) {
+        flush()
+        guard isRunning, agent == .claude else { return }
+        isRunning = false
+        if let last = messages.last, last.role == .assistant, last.text.isEmpty {
+            let reason = stderr.split(separator: "\n").last.map(String.init) ?? "exit \(status)"
+            replaceLast(with: Message(role: .error, text: status == 15 ? "Stopped." : "Claude Code didn't answer (\(reason))."))
+        }
+    }
+
     private func run(_ executable: String, arguments: [String]) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
         process.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
-        var environment = ProcessInfo.processInfo.environment
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        // A GUI app gets launchd's PATH; the CLIs need the user's.
-        environment["PATH"] = ["\(home)/.local/bin", "/opt/homebrew/bin", "/usr/local/bin", "\(home)/.npm-global/bin",
-                               "/usr/bin", "/bin", "/usr/sbin", "/sbin"].joined(separator: ":")
-        environment["TERM"] = "dumb"
-        process.environment = environment
+        process.environment = PaletteAgentSession.environment
         let output = Pipe(), errors = Pipe()
         process.standardOutput = output
         process.standardError = errors
         process.standardInput = FileHandle.nullDevice
-        let provider = self.provider
+        let provider = PaletteAIProvider.codex
         var buffer = Data()
         output.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let chunk = handle.availableData
@@ -237,7 +471,7 @@ final class PaletteAIChat: ObservableObject {
             }
             let events = lines.flatMap { PaletteAIEvent.parse($0, provider: provider) }
             guard !events.isEmpty else { return }
-            DispatchQueue.main.async { self?.apply(events, provider: provider) }
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.applyAgent(events) } }
         }
         var errorText = Data()
         errors.fileHandleForReading.readabilityHandler = { handle in errorText.append(handle.availableData) }
@@ -246,67 +480,42 @@ final class PaletteAIChat: ObservableObject {
             errors.fileHandleForReading.readabilityHandler = nil
             let status = finished.terminationStatus
             let stderr = String(decoding: errorText.suffix(2000), as: UTF8.self)
-            DispatchQueue.main.async { self?.finish(status: status, stderr: stderr) }
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.finish(status: status, stderr: stderr) } }
         }
         do {
             try process.run()
             self.process = process
-            isRunning = true
-            // A turn that hangs is ended after five minutes.
             DispatchQueue.main.asyncAfter(deadline: .now() + 300) { [weak process] in
                 if let process, process.isRunning { process.terminate() }
             }
         } catch {
-            replaceLast(with: Message(role: .error, text: "Couldn't start \(provider.title): \(error.localizedDescription)"))
-        }
-    }
-
-    private func apply(_ events: [PaletteAIEvent], provider: PaletteAIProvider) {
-        guard provider == self.provider else { return }
-        for event in events {
-            switch event {
-            case .session(let id): sessions[provider] = id
-            case .delta(let text): appendToAnswer(text)
-            case .message(let text): appendToAnswer(messages.last?.text.isEmpty == false ? "\n\n" + text : text)
-            case .done(let text):
-                if let text, !text.isEmpty, messages.last?.role == .assistant, messages.last?.text.isEmpty == true {
-                    appendToAnswer(text)
-                }
-            case .failure(let text): replaceLast(with: Message(role: .error, text: text))
-            }
-        }
-    }
-
-    private func appendToAnswer(_ text: String) {
-        guard let index = messages.indices.last, messages[index].role == .assistant else { return }
-        messages[index].text += text
-    }
-
-    private func replaceLast(with message: Message) {
-        if let index = messages.indices.last, messages[index].role == .assistant, messages[index].text.isEmpty {
-            messages[index] = message
-        } else {
-            messages.append(message)
+            replaceLast(with: Message(role: .error, text: "Couldn't start Codex: \(error.localizedDescription)"))
+            isRunning = false
         }
     }
 
     private func finish(status: Int32, stderr: String) {
+        flush()
         process = nil
         isRunning = false
         lastActivity = Date()
         if let last = messages.last, last.role == .assistant, last.text.isEmpty {
             let reason = stderr.split(separator: "\n").last.map(String.init) ?? "exit \(status)"
-            replaceLast(with: Message(role: .error, text: status == 15 ? "Stopped." : "\(provider.title) didn't answer (\(reason))."))
+            replaceLast(with: Message(role: .error, text: status == 15 ? "Stopped." : "Codex didn't answer (\(reason))."))
         }
+        AOMAIChatHistory.shared.save(self)
     }
 
     /// ⌘J: the conversation in Terminal, interactive, where the CLI asks
     /// for each permission itself. A .command file needs no Automation access.
+    /// With a native model the question starts a new Claude Code session.
     func continueInTerminal() -> Bool {
-        let command = provider.terminalCommand(session: session, prompt: session == nil ? lastQuestion : nil)
+        let cli = agent ?? .claude
+        let session = agent != nil ? sessions[cli] : nil
+        let command = cli.terminalCommand(session: session, prompt: session == nil ? lastQuestion : nil)
         let folder = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/AllOfMacOS/AI", isDirectory: true)
-        let file = folder.appendingPathComponent("continue-\(provider.rawValue).command")
+        let file = folder.appendingPathComponent("continue-\(cli.rawValue).command")
         let script = "#!/bin/zsh -l\ncd ~\n\(command)\n"
         do {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -315,7 +524,196 @@ final class PaletteAIChat: ObservableObject {
         } catch {
             return false
         }
+        // The CLI picks the session up; the warm one here lets go of it.
+        agentSession.stop()
         return NSWorkspace.shared.open(file)
+    }
+}
+
+/// 7.0: one Claude Code process kept up for the conversation
+/// (`claude -p --input-format stream-json`): each question is a line on its
+/// stdin, the answer streams back on stdout, and the process waits for the
+/// next one. Measured on this Mac: the first answer starts ~1.3 s after
+/// launch, a follow-up within 0.1 s. Read-only (plan mode), no MCP servers
+/// (they slow the start); ⌘J resumes the same session in Terminal with
+/// everything. Ends after ten idle minutes, a model change or New Chat.
+@MainActor
+final class PaletteAgentSession {
+    var onEvents: (([PaletteAIEvent]) -> Void)?
+    var onExit: ((Int32, String) -> Void)?
+    private var process: Process?
+    private var input: FileHandle?
+    private var key: String?
+    private var idleTimer: Timer?
+    private(set) var isBusy = false
+
+    static var environment: [String: String] {
+        var environment = ProcessInfo.processInfo.environment
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        // A GUI app gets launchd's PATH; the CLIs need the user's.
+        environment["PATH"] = ["\(home)/.local/bin", "/opt/homebrew/bin", "/usr/local/bin", "\(home)/.npm-global/bin",
+                               "/usr/bin", "/bin", "/usr/sbin", "/sbin"].joined(separator: ":")
+        environment["TERM"] = "dumb"
+        return environment
+    }
+
+    /// Pure: the warm session's arguments.
+    nonisolated static func arguments(model: String, system: String, resume: String?) -> [String] {
+        var args = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--include-partial-messages",
+                    "--verbose", "--permission-mode", "plan", "--strict-mcp-config", "--append-system-prompt", system]
+        if model != "default", !model.isEmpty { args += ["--model", model] }
+        if let resume { args += ["--resume", resume] }
+        return args
+    }
+
+    /// Pure: one question as a stream-json input line.
+    nonisolated static func inputLine(_ text: String) -> Data {
+        let object: [String: Any] = ["type": "user", "message": ["role": "user", "content": [["type": "text", "text": text]]]]
+        var data = (try? JSONSerialization.data(withJSONObject: object)) ?? Data()
+        data.append(0x0A)
+        return data
+    }
+
+    func start(executable: String, model: String, system: String, resume: String?) {
+        let key = "\(executable)|\(model)"
+        if let process, process.isRunning, self.key == key { return }
+        stop()
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = Self.arguments(model: model, system: system, resume: resume)
+        process.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
+        process.environment = Self.environment
+        let output = Pipe(), errors = Pipe(), stdin = Pipe()
+        process.standardOutput = output
+        process.standardError = errors
+        process.standardInput = stdin
+        var buffer = Data()
+        output.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let chunk = handle.availableData
+            guard !chunk.isEmpty else { return }
+            buffer.append(chunk)
+            var lines: [String] = []
+            while let newline = buffer.firstIndex(of: 0x0A) {
+                lines.append(String(decoding: buffer[buffer.startIndex..<newline], as: UTF8.self))
+                buffer.removeSubrange(buffer.startIndex...newline)
+            }
+            let events = lines.flatMap { PaletteAIEvent.parse($0, provider: .claude) }
+            guard !events.isEmpty else { return }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    if events.contains(where: { if case .done = $0 { return true }; if case .failure = $0 { return true }; return false }) {
+                        self.isBusy = false
+                        self.armIdleTimer()
+                    }
+                    self.onEvents?(events)
+                }
+            }
+        }
+        var errorText = Data()
+        errors.fileHandleForReading.readabilityHandler = { handle in errorText.append(handle.availableData) }
+        process.terminationHandler = { [weak self] finished in
+            output.fileHandleForReading.readabilityHandler = nil
+            errors.fileHandleForReading.readabilityHandler = nil
+            let status = finished.terminationStatus
+            let stderr = String(decoding: errorText.suffix(2000), as: UTF8.self)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self, self.process === finished else { return }
+                    self.process = nil
+                    self.input = nil
+                    self.isBusy = false
+                    self.onExit?(status, stderr)
+                }
+            }
+        }
+        do {
+            try process.run()
+            self.process = process
+            self.input = stdin.fileHandleForWriting
+            self.key = key
+            armIdleTimer()
+        } catch {
+            onExit?(-1, error.localizedDescription)
+        }
+    }
+
+    func send(_ text: String) {
+        guard let input, process?.isRunning == true else { onExit?(-1, "Claude Code isn't running"); return }
+        isBusy = true
+        idleTimer?.invalidate()
+        do { try input.write(contentsOf: Self.inputLine(text)) } catch { onExit?(-1, error.localizedDescription) }
+    }
+
+    func stop() {
+        idleTimer?.invalidate()
+        idleTimer = nil
+        isBusy = false
+        try? input?.close()
+        input = nil
+        if let process, process.isRunning { process.terminate() }
+        process = nil
+        key = nil
+    }
+
+    private func armIdleTimer() {
+        idleTimer?.invalidate()
+        idleTimer = Timer.scheduledTimer(withTimeInterval: PaletteAIChat.idleReset, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.stop() }
+        }
+    }
+}
+
+/// 7.0: past conversations for AI Chat's sidebar, newest first, at most 60,
+/// in Application Support (never answers with errors only).
+@MainActor
+final class AOMAIChatHistory: ObservableObject {
+    static let shared = AOMAIChatHistory()
+
+    struct Record: Codable, Identifiable, Equatable {
+        struct Turn: Codable, Equatable { let role: String; let text: String; var model: String? }
+        let id: UUID
+        var title: String
+        var date: Date
+        var model: String?
+        var messages: [Turn]
+    }
+
+    @Published private(set) var records: [Record] = []
+    private let url: URL? = {
+        guard !PresetManager.isRunningTests, !PresetManager.isUIPreview else { return nil }
+        return FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/AllOfMacOS/AI/chats.json")
+    }()
+
+    init() {
+        if let url, let data = try? Data(contentsOf: url),
+           let decoded = try? JSONDecoder().decode([Record].self, from: data) { records = decoded }
+    }
+
+    func save(_ chat: PaletteAIChat) {
+        let turns = chat.messages.filter { $0.role != .error && !$0.text.isEmpty }
+            .map { Record.Turn(role: $0.role == .user ? "user" : "assistant", text: $0.text, model: $0.model) }
+        guard turns.contains(where: { $0.role == "assistant" }) else { return }
+        let record = Record(id: chat.chatID, title: chat.title, date: Date(), model: chat.model.key, messages: turns)
+        records.removeAll { $0.id == record.id }
+        records.insert(record, at: 0)
+        if records.count > 60 { records.removeLast(records.count - 60) }
+        write()
+    }
+
+    func delete(_ id: UUID) {
+        records.removeAll { $0.id == id }
+        write()
+    }
+
+    private func write() {
+        guard let url else { return }
+        let snapshot = records
+        DispatchQueue.global(qos: .utility).async {
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if let data = try? JSONEncoder().encode(snapshot) { try? data.write(to: url, options: .atomic) }
+        }
     }
 }
 

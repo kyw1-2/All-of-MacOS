@@ -257,25 +257,25 @@ enum AOMColor {
     static let textTertiary = Color(nsColor: .tertiaryLabelColor)
 
     // Surfaces (opaque; glass is reserved for chrome)
-    /// Every page background: a neutral grey with no tint (#F5F5F7 light,
-    /// #1E1E1E dark), the grouped-content canvas of System Settings.
-    static let canvas = Color.aomDynamic(light: NSColor(srgbRed: 0.961, green: 0.961, blue: 0.969, alpha: 1),
-                                         dark: NSColor(srgbRed: 0.118, green: 0.118, blue: 0.118, alpha: 1))
+    /// Every page background. 7.0: a warm neutral (#F7F6F3 light, #18181A
+    /// dark, Linear and Things) instead of 6.x's cool grey.
+    static let canvas = Color.aomDynamic(light: NSColor(srgbRed: 0.969, green: 0.965, blue: 0.953, alpha: 1),
+                                         dark: NSColor(srgbRed: 0.094, green: 0.094, blue: 0.102, alpha: 1))
     /// Main-window pages (6.5, Raycast's window): the canvas tint over the
     /// desktop seen through the window (`AOMWorkspaceBackground`), so pages
     /// read as one glass sheet. Opaque with Reduce Transparency, Increase
     /// Contrast or Settings › Appearance › Translucent Window off.
     static let pageBackground = Color(nsColor: NSColor(name: nil) { appearance in
         let dark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-        let base = dark ? NSColor(srgbRed: 0.118, green: 0.118, blue: 0.118, alpha: 1)
-                        : NSColor(srgbRed: 0.961, green: 0.961, blue: 0.969, alpha: 1)
+        let base = dark ? NSColor(srgbRed: 0.094, green: 0.094, blue: 0.102, alpha: 1)
+                        : NSColor(srgbRed: 0.969, green: 0.965, blue: 0.953, alpha: 1)
         guard AOMTranslucency.isOn else { return base }
         return base.withAlphaComponent(dark ? AOMTranslucency.pageAlphaDark : AOMTranslucency.pageAlphaLight)
     })
     /// Groups of rows and content blocks: opaque white (#FFFFFF) in light
     /// mode, #2A2A2A in dark — one clear step above the canvas, never tinted.
     static let surface = Color.aomDynamic(light: .white,
-                                          dark: NSColor(srgbRed: 0.165, green: 0.165, blue: 0.165, alpha: 1),
+                                          dark: NSColor(srgbRed: 0.133, green: 0.133, blue: 0.145, alpha: 1),
                                           highContrastLight: .white,
                                           highContrastDark: NSColor(srgbRed: 0.196, green: 0.196, blue: 0.196, alpha: 1))
     /// Opaque: labels and small panels that sit over other drawn content
@@ -644,7 +644,9 @@ enum AOMTranslucency {
     static var isOn: Bool {
         guard !NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency,
               !NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast else { return false }
-        return UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? true
+        // 7.0 (craft rules): the main window is an opaque warm canvas; glass
+        // is for floating chrome. A Mac that turned it on keeps it.
+        return UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? false
     }
 
     /// Pure: the page tint's alpha for these settings.

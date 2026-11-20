@@ -23,6 +23,8 @@ struct ModernGesturesWorkspace: View {
     @State private var searchPresented = false
     @FocusState private var listFocused: Bool
     @State private var runStates: [UUID: AOMRunState] = [:]
+    /// 7.0: the steps drawn as a recipe (kept per Mac).
+    @AppStorage("AOMAutomationShowsRecipe") private var showsRecipe = false
     @State private var expandedActionIDs: Set<UUID> = []
     @State private var showOptions = false
     @State private var showInputSettings = false
@@ -861,6 +863,17 @@ struct ModernGesturesWorkspace: View {
         return VStack(alignment: .leading, spacing: AOMSpace.titleGap) {
             AOMSectionTitle("Then",
                             help: "The steps run in order, top to bottom. Test runs them now; each step's options open from its chevron.") {
+                // 7.0: the same steps as a WHEN → IF → DO recipe (Shortcuts, Hazel).
+                if !rows.isEmpty {
+                    Picker("View", selection: $showsRecipe) {
+                        Text("Steps").tag(false)
+                        Text("Recipe").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .fixedSize()
+                    .help("Recipe: when, if and then on one spine, with branches and the last run")
+                }
                 AOMRunStatusView(state: runState)
                 if !trigger.actions.isEmpty {
                     Button { test(trigger) } label: {
@@ -897,6 +910,16 @@ struct ModernGesturesWorkspace: View {
                     .buttonStyle(AOMRowButtonStyle(radius: AOMRadius.card))
                     .accessibilityLabel("Add Action")
                 }
+            } else if showsRecipe {
+                AOMAutomationRecipeCanvas(
+                    triggerName: trigger.name.isEmpty ? trigger.input.displayName : trigger.name,
+                    triggerSymbol: AOMTriggerGlyph.symbol(name: trigger.input.displayName, category: trigger.input.category),
+                    scopeLabel: recipeScope(trigger),
+                    conditionChips: recipeConditions(trigger),
+                    steps: Self.recipeSteps(trigger.actions, runState: runState),
+                    onRun: { test(trigger) },
+                    onAddStep: { addAction() },
+                    scrolls: false)
             } else {
                 VStack(spacing: 0) {
                     ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
@@ -920,6 +943,59 @@ struct ModernGesturesWorkspace: View {
                 .help("Add a step at the end")
             }
         }
+    }
+
+    /// Where the recipe runs: everywhere, one app or a group.
+    private func recipeScope(_ trigger: Trigger) -> String {
+        if let id = trigger.appBundleID, !id.isEmpty {
+            return NSWorkspace.shared.urlForApplication(withBundleIdentifier: id)
+                .map { FileManager.default.displayName(atPath: $0.path).replacingOccurrences(of: ".app", with: "") } ?? id
+        }
+        return trigger.activationGroupID == nil ? "Everywhere" : "App group"
+    }
+
+    /// The IF strip: what has to hold before the steps run.
+    private func recipeConditions(_ trigger: Trigger) -> [String] {
+        var chips: [String] = []
+        if let modifiers = trigger.requiredModifiers, modifiers != 0 {
+            let flags = NSEvent.ModifierFlags(rawValue: modifiers)
+            let keys = [(NSEvent.ModifierFlags.control, "⌃"), (.option, "⌥"), (.shift, "⇧"), (.command, "⌘")]
+                .filter { flags.contains($0.0) }.map(\.1).joined()
+            chips.append(keys.isEmpty ? "With modifiers" : "Holding \(keys)")
+        }
+        if trigger.delayBeforeTriggeringMs > 0 { chips.append("After \(trigger.delayBeforeTriggeringMs) ms") }
+        if trigger.pressCount > 1 { chips.append("Pressed twice") }
+        if trigger.repeatWhileHeld { chips.append("Repeats while held") }
+        return chips
+    }
+
+    /// Pure: the steps as the recipe's cards, branches nested, numbered in
+    /// order, the last run's result on every enabled card.
+    static func recipeSteps(_ actions: [TriggerAction], runState: AOMRunState) -> [AOMRecipeStepViewModel] {
+        var counter = 0
+        func build(_ list: [TriggerAction]) -> [AOMRecipeStepViewModel] {
+            list.map { action in
+                counter += 1
+                let status: AOMStepRunStatus
+                switch runState {
+                case .idle: status = .idle
+                case .running: status = action.isEnabled ? .running : .idle
+                case .succeeded: status = action.isEnabled ? .succeeded : .idle
+                case .failed: status = action.isEnabled ? .failed("This run stopped with an error") : .idle
+                }
+                let index = counter
+                let branch = action.actionType == .ifElse || action.actionType == .actionGroup
+                let summary = action.parameters.notes?.trimmingCharacters(in: .whitespacesAndNewlines)
+                return AOMRecipeStepViewModel(
+                    id: action.id, index: index, title: action.displayName,
+                    subtitle: (summary?.isEmpty == false ? summary : nil) ?? (action.isEnabled ? nil : "Off"),
+                    symbol: action.actionType.iconName, isEnabled: action.isEnabled, runStatus: status,
+                    isBranchContainer: branch,
+                    thenChildren: build(action.parameters.children ?? []),
+                    elseChildren: build(action.parameters.elseChildren ?? []))
+            }
+        }
+        return build(actions)
     }
 
     private func actionCard(row: ActionTree.Row, index: Int, trigger: Trigger) -> some View {

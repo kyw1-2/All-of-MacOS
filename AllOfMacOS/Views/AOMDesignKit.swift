@@ -269,7 +269,8 @@ private struct AOMModeMark: View {
         let page = pageTab.map { $0.identity.isBrand ? AOMBrand.start : $0.identity.color }
         AOMAppIcon(AOMIdentity(symbol: symbol, color: tint ?? page ?? AOMBrand.graphite),
                    size: AOMSize.modeButton)
-            .scaleEffect(hovering ? 1.06 : 1)
+            // 7.0: the mark brightens under the pointer; it never grows.
+            .brightness(hovering ? 0.04 : 0)
             .onHover { hovering = $0 }
             .aomAnimation(.quick, value: hovering)
     }
@@ -344,13 +345,13 @@ struct AOMModeButton: View {
                         .overlay(shape.strokeBorder((tint == AOMTheme.text ? AOMColor.accent : tint)
                             .opacity(hovering ? 0.38 : 0), lineWidth: 1))
                 }
-                .scaleEffect(hovering && !reduceMotion ? 1.03 : 1)
+                // 7.0: the well fills in 80 ms; content keeps its size.
                 .contentShape(Rectangle())
             }
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .animation(reduceMotion ? nil : .smooth(duration: 0.16), value: hovering)
+        .animation(AOMCraftMotion.resolve(AOMCraftMotion.hoverFill, reduceMotion: reduceMotion), value: hovering)
         .help(help ?? (shortcut.map { "\(title) (\($0))" } ?? title))
         .accessibilityLabel(title)
         .accessibilityHint(shortcut.map { "Shortcut \($0)" } ?? "")

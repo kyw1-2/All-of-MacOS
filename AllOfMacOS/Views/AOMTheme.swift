@@ -113,7 +113,7 @@ struct AOMCardSurface: ViewModifier {
     @Environment(\.accessibilityShowBorders) private var showBorders
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorScheme) private var colorScheme
-    @AppStorage(AOMTranslucency.defaultsKey) private var translucent = true
+    @AppStorage(AOMTranslucency.defaultsKey) private var translucent = false
 
     @ViewBuilder
     func body(content: Content) -> some View {

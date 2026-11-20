@@ -1,0 +1,220 @@
+import SwiftUI
+
+struct AOMMenuBarCraftPanel: View {
+    struct LiveSession: Identifiable {
+        let id: String
+        let symbol: String
+        let title: String
+        let detail: String
+        let tint: Color
+        let stopLabel: String
+        let onStop: () -> Void
+    }
+
+    struct ToggleTile: Identifiable {
+        let id: String
+        let title: String
+        let subtitle: String
+        let symbol: String
+        let tint: Color
+        let isOn: Bool
+        let onToggle: () -> Void
+    }
+
+    struct QuickAction: Identifiable {
+        let id: String
+        let title: String
+        let symbol: String
+        let onRun: () -> Void
+    }
+
+    let isEngineRunning: Bool
+    let liveSessions: [LiveSession]
+    let toggles: [ToggleTile]
+    let quickActions: [QuickAction] // Workspace 상위 3개
+    let launcherShortcutText: String?
+
+    let onToggleMaster: () -> Void
+    let onOpenLauncher: () -> Void
+    let onOpenMainWindow: () -> Void
+    let onOpenSettings: () -> Void
+    let onShowClassicMenu: () -> Void
+    /// 7.0: a row of the host's own under the tiles (AOM's battery line).
+    var accessory: AnyView? = nil
+
+    var body: some View {
+        VStack(spacing: 12) {
+            // 1. 헤더 & 마스터 스위치
+            HStack {
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(isEngineRunning ? Color.green : Color.orange)
+                        .frame(width: 8, height: 8)
+                    Text("All of MacOS")
+                        .font(.system(size: 13.5, weight: .semibold))
+                }
+                Spacer()
+                Toggle("Automation engine", isOn: Binding(get: { isEngineRunning }, set: { _ in onToggleMaster() }))
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+            }
+
+            // 2. 실행 중인 라이브 세션 배너 (녹화/집중/Keep Awake/마이크 음소거)
+            if !liveSessions.isEmpty {
+                VStack(spacing: 6) {
+                    ForEach(liveSessions) { session in
+                        HStack(spacing: 8) {
+                            Image(systemName: session.symbol)
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(session.tint)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(session.title).font(.system(size: 12, weight: .semibold))
+                                Text(session.detail).font(.system(size: 10.5)).foregroundStyle(AOMCraftColor.inkSecondary)
+                            }
+                            Spacer()
+                            Button(session.stopLabel, action: session.onStop)
+                                .buttonStyle(.bordered)
+                                .controlSize(.mini)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        .background(session.tint.opacity(0.13), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    }
+                }
+            }
+
+            // 3. Control Center 26 스타일 2열 토글 타일 (호버 시 스케일 확대 없음)
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
+                ForEach(toggles) { tile in
+                    Button(action: tile.onToggle) {
+                        HStack(spacing: 9) {
+                            ZStack {
+                                Circle()
+                                    .fill(tile.isOn ? tile.tint : Color.primary.opacity(0.10))
+                                    .frame(width: 28, height: 28)
+                                Image(systemName: tile.symbol)
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(tile.isOn ? .white : .secondary)
+                            }
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(tile.title)
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .lineLimit(1)
+                                Text(tile.subtitle)
+                                    .font(.system(size: 10.5))
+                                    .foregroundStyle(AOMCraftColor.inkSecondary)
+                                    .lineLimit(1)
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, 10)
+                        .frame(height: 48)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(tile.isOn ? tile.tint.opacity(0.14) : Color.primary.opacity(0.05))
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .aomCalmHover(radius: 12)
+                    .accessibilityValue(tile.isOn ? Text("On") : Text("Off"))
+                }
+            }
+
+            if let accessory { accessory }
+
+            // 4. 라벨을 갖춘 Quick Actions 3개
+            HStack(spacing: 8) {
+                ForEach(quickActions.prefix(3)) { item in
+                    Button(action: item.onRun) {
+                        VStack(spacing: 5) {
+                            Image(systemName: item.symbol)
+                                .font(.system(size: 15, weight: .medium))
+                            Text(item.title)
+                                .font(.system(size: 10.5, weight: .medium))
+                                .lineLimit(1)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .aomCalmHover(radius: 10)
+                }
+            }
+
+            // 5. Open Launcher… 진입 바
+            Button(action: onOpenLauncher) {
+                HStack {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(AOMCraftColor.inkSecondary)
+                    Text("Open Launcher…")
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(AOMCraftColor.ink)
+                    Text("Ask AI, Kill Apps, Clipboard …")
+                        .font(.system(size: 11))
+                        .foregroundStyle(AOMCraftColor.inkTertiary)
+                        .lineLimit(1)
+                    Spacer()
+                    if let shortcut = launcherShortcutText {
+                        AOMCraftKeycap(text: shortcut)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .frame(height: 34)
+                .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .aomCalmHover(radius: 10)
+
+            // 6. 하단 유틸리티 바 (전원 버튼은 '⋯' 클래식 메뉴 안으로 격리 유지)
+            HStack(spacing: 6) {
+                Button("Open Window", action: onOpenMainWindow)
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(AOMCraftColor.inkSecondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 4)
+                    .aomCalmHover(radius: 6)
+
+                Spacer()
+
+                if quickActions.count > 3 {
+                    Menu("More Actions") {
+                        ForEach(quickActions.dropFirst(3)) { item in
+                            Button(item.title, action: item.onRun)
+                        }
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                }
+
+                Button(action: onOpenSettings) {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(AOMCraftColor.inkSecondary)
+                        .frame(width: 26, height: 24)
+                }
+                .buttonStyle(.plain)
+                .aomCalmHover(radius: 6)
+                .accessibilityLabel("Settings")
+                .help("Settings")
+
+                Button(action: onShowClassicMenu) {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(AOMCraftColor.inkSecondary)
+                        .frame(width: 26, height: 24)
+                }
+                .buttonStyle(.plain)
+                .aomCalmHover(radius: 6)
+                .accessibilityLabel("All Commands and Quit")
+                .help("All Commands & Quit")
+            }
+        }
+        .padding(14)
+        .frame(width: 340)
+        .aomLauncherSurface(radius: AOMCraftRadius.floatingPanel)
+    }
+}

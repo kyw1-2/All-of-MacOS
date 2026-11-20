@@ -27,8 +27,10 @@ enum PaletteRoute: Hashable {
     case battery
     /// 6.11: every app's menu bar item (Ice's search).
     case menuBarItems
-    /// 6.9: Quick AI on Claude Code or Codex.
+    /// 6.9: Quick AI on Claude Code or Codex; 7.0 every model.
     case ai
+    /// 7.0: the model picker (⌘P on Ask AI).
+    case aiModels
     /// The pending in-panel confirmation (one at a time).
     case confirm
 
@@ -45,6 +47,7 @@ enum PaletteRoute: Hashable {
         case .battery: return "Battery"
         case .menuBarItems: return "Menu Bar Items"
         case .ai: return "Ask AI"
+        case .aiModels: return "Choose Model"
         case .confirm: return "Confirm"
         }
     }
@@ -61,7 +64,8 @@ enum PaletteRoute: Hashable {
         case .system: return "Search system commands…"
         case .battery: return "Search battery controls…"
         case .menuBarItems: return "Search menu bar items, even those behind the notch…"
-        case .ai: return "Ask a question or a follow-up… ↩ sends · ⇥ switches agent"
+        case .ai: return "Ask anything…"
+        case .aiModels: return "Search models…"
         case .confirm: return "↑↓ to choose, ↩ to confirm, esc to go back"
         }
     }
@@ -78,6 +82,7 @@ enum PaletteRoute: Hashable {
         case .battery: return "battery.75percent"
         case .menuBarItems: return "menubar.rectangle"
         case .ai: return "sparkles"
+        case .aiModels: return "cpu"
         case .confirm: return "exclamationmark.triangle"
         }
     }

@@ -28,11 +28,13 @@ struct MainWindow: View {
             AOMPageHost { tab in
                 switch tab {
                 case .home: AOMHomeView()
-                case .gestures: ModernGesturesWorkspace()
+                // 7.0: the two heaviest pages draw a skeleton first and build
+                // on the next turn of the run loop, so the sidebar answers at once.
+                case .gestures: AOMProgressiveHydration { AOMPageSkeleton() } content: { ModernGesturesWorkspace() }
                 case .snapping: ModernWindowSnappingView()
                 case .capture: CaptureStudioView()
                 case .clipboard: ClipboardStudioView()
-                case .audio: AudioWorkspaceView()
+                case .audio: AOMProgressiveHydration { AOMPageSkeleton() } content: { AudioWorkspaceView() }
                 case .tools: SystemToolsView()
                 case .insights: StatisticsView()
                 case .folderRules: FolderRulesPage()

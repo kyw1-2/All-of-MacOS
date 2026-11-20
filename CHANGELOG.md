@@ -1,3 +1,33 @@
+## [7.0.0] - 2026-11-20
+
+"Craft & Fluidity": the 7.0 plan (Phases 1–4) with Codex's review of it (`~/Documents/Codex/2026-11-20/dlrj-x20/outputs/`), wired into the app. Design notes: `docs/design-7.0-craft.md`.
+
+### Ask AI, native (the launcher)
+- **Models answer directly and stream.** Apple Intelligence on this Mac (FoundationModels; private, no key — the default when no other model is set up), Anthropic (Claude Opus 5.5 / Sonnet 5.5 / Haiku 5.5 / Fable 5.2 over the Messages API, SSE, `anthropic-version: 2026-10-21`, effort per Settings, server-side fallback on a refusal), OpenAI, DeepSeek, Ollama, and a **Local Proxy** (your Anthropic-compatible router on `127.0.0.1:8082`; its haiku route answers without a key).
+- **The CLI agents stay, faster.** Claude Code and Codex remain in the model menu on your own subscriptions. Claude Code now runs as one warm session (`claude -p --input-format stream-json`, plan mode, no MCP servers): only the first question waits for it to start; follow-ups start answering within ~0.1 s. ⌘J still continues an agent's conversation in Terminal. AOM never reads their sign-in.
+- **Raycast's keys:** the model dropdown at the end of the field, ⌘P lists every model (searchable), ⇥ moves to the next ready one, ⌘R asks again, ⌘. stops, ⌘N new chat, ↩ on an empty line pastes the answer into the app you were in, ⌘J opens **AI Chat** — a window with your earlier chats in the sidebar.
+- **Answers render as Markdown:** headings, lists, quotes, tables and code blocks with a Copy button, a caret while streaming, "Thinking…" before the first word, the stop reason when it ends early.
+- **Settings › AI:** the default model, effort (Fast / Balanced / Thorough), your instructions, each provider's key (Keychain, shown masked), address and Fetch Models; **Import from Shell…** reads `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `DEEPSEEK_API_KEY` (and OpenAI's base URL and model) from your login shell once, on your click.
+
+### The launcher, redesigned
+- **Readable over anything:** a frosted surface (glass at the rim, a mostly opaque warm base under the text) and launcher ink that stays ≥ 4.5:1; the search prompt and keycaps no longer use the system's faint tertiary label.
+- Raycast v2's **neutral selection** (a quiet grey fill; text keeps its colours), 56 pt search, 20 pt query, rounder rows; the entrance fades and settles instead of scaling.
+- **Split preview (42 : 58):** Clipboard History shows the selected clip as its Paste card with its source, time and size; Window Management shows the layout on a miniature screen.
+- **Calculator:** question and answer side by side in one card.
+- **Footer:** where you are · the primary action ↩ · Actions ⌘K; the Actions panel is opaque and quieter.
+- **One floating surface at a time** (`AOMOverlayCoordinator`): opening the launcher, the clipboard shelf, the menu bar panel, the window switcher or the drop shelf closes the others first — synchronously and without handing focus back, so a late fade can't steal the new surface's keyboard (`hideImmediatelyForHandoff`).
+
+### Main window and panels
+- **Warm opaque canvas** (#F7F6F3 / #18181A) with white cards; **Translucent window is off by default** (a Mac that turned it on keeps it). Mode buttons and quick actions no longer grow under the pointer; fills change in 80 ms.
+- Audio and Automation draw a skeleton first and build on the next turn of the run loop.
+- **Menu bar panel** (Control Center 26): live sessions on top, tinted tiles with a state line, labelled quick actions with More Actions for the rest, the launcher bar, the battery line.
+- **Mixer:** one track per app from 0 to 400 % — volume to a 100 % detent, Volume Overdrive in amber beyond (arrow keys step 1 %), and a 12-segment peak meter.
+- **Automations as recipes:** Steps | Recipe in an automation's Then section draws When → If → Then on one spine, If/Otherwise on coloured rails, the last run on every step.
+- **Clipboard shelf:** the header picks black or white by WCAG contrast (white on red was 4.0 : 1) and gets Paste 7's top light.
+
+### Tests
+- `AOM70Tests` (stream decoders, request bodies, model refs, shell import, warm-session arguments, Markdown blocks, layout previews, recipe steps), Codex's `CraftBehaviorTests` (overlay handoff races, volume mapping, swatch ink) and `DesignTokenHygieneTests` (no raw animation, RGB or scaling in the craft views).
+
 ## [6.11.0] - 2026-11-20
 
 ### Changed

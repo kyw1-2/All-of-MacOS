@@ -85,6 +85,12 @@ final class FilesShelfPanelController: NSObject {
     /// Opens the shelf beside `point` (screen coordinates), or beside the
     /// pointer. It appears without taking focus.
     func show(at point: NSPoint? = nil) {
+        // 7.0: one floating surface at a time.
+        AOMOverlayCoordinator.shared.present(.dropShelf, dismiss: { [weak self] in
+            guard let panel = self?.panel, panel.isVisible else { return }
+            panel.allowsKey = false
+            panel.orderOut(nil)
+        }) { _ in }
         let panel = self.panel ?? makePanel()
         self.panel = panel
         let size = CGSize(width: Self.width, height: currentHeight)

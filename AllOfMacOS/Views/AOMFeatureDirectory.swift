@@ -51,6 +51,7 @@ extension SettingsCategory {
         case .capture: "screenshot recording OCR export 스크린샷 녹화 캡처 저장"
         case .clipboard: "paste privacy history retention copy 클립보드 붙여넣기 보관 개인정보"
         case .automation: "hyper key remap caps lock keyboard mouse trackpad 하이퍼 키 리매핑 키보드 마우스 트랙패드"
+        case .ai: "ai llm claude anthropic openai deepseek ollama apple intelligence api key model 인공지능 모델 키"
         case .shortcuts: "hotkey shortcut keyboard 단축키 키보드"
         case .permissions: "accessibility screen recording input monitoring 권한 접근성 화면 기록 입력 모니터링"
         case .data: "backup restore import export profile 백업 복원 가져오기 내보내기 프로필"

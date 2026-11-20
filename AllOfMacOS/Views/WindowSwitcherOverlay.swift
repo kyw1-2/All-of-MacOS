@@ -69,6 +69,11 @@ final class WindowSwitcherController: NSObject, ObservableObject {
 
     func show() {
         guard panel == nil, !isPresenting else { return }
+        // 7.0: the switcher takes the screen alone.
+        AOMOverlayCoordinator.shared.present(.windowSwitcher, dismiss: { [weak self] in
+            // No focus hand-back: the surface taking over keeps the keyboard.
+            if self?.panel != nil { self?.closeForHandoff() }
+        }) { _ in }
         isPresenting = true
         session += 1
         let currentSession = session
@@ -223,6 +228,13 @@ final class WindowSwitcherController: NSObject, ObservableObject {
     func cancel() {
         closePanel()
         previousApp?.activate(options: [])
+    }
+
+    /// 7.0 (AOMOverlayCoordinator): closes without activating the previous app.
+    func closeForHandoff() {
+        isPresenting = false
+        session += 1
+        closePanel()
     }
 
     /// Test seam: activates the chosen target. The default un-minimizes,

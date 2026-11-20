@@ -23,6 +23,20 @@ enum WhatsNew {
     /// Highlights of the current version, bundled so the panel works offline.
     /// Items that alter defaults people already use say so with a note.
     static let items: [Item] = [
+        Item(symbol: "sparkles", title: "Ask AI, Streaming Natively",
+             detail: "Ask AI now talks to models directly and streams every word: Apple Intelligence on this Mac (private, no key), Claude, GPT, DeepSeek or Ollama with your own key, or your local :8082 router. Your Claude Code and Codex stay — Claude Code is kept warm between questions, so only the first one waits. ⌘P picks a model, ⇥ moves to the next, ⌘R asks again, ⌘J opens AI Chat (or Terminal for an agent). Keys live in Settings › AI and the Keychain.",
+             note: "New"),
+        Item(symbol: "command", title: "A Calmer, Clearer Launcher",
+             detail: "Frosted instead of see-through, so text stays readable on any wallpaper; quiet grey selection like Raycast; the calculator answers side by side; Clipboard History and Window Management show a preview beside the list; one footer with the action and ⌘K. Opening the launcher, the clipboard shelf, the menu bar panel or the switcher now closes the others."),
+        Item(symbol: "square.split.2x1", title: "Warm Canvas, Calm Hover",
+             detail: "The main window is a warm, opaque canvas with white cards; nothing grows under the pointer any more — rows and buttons just fill. Audio and Automation draw at once and fill in a moment later. Settings › General › Translucent window brings the glass back.",
+             note: "New default"),
+        Item(symbol: "point.topleft.down.to.point.bottomright.curvepath", title: "Automations as Recipes",
+             detail: "In an automation's Then section, Recipe shows When → If → Then on one spine, with If/Otherwise branches on coloured rails and the last run's result on every step.",
+             module: .automation),
+        Item(symbol: "slider.horizontal.3", title: "One Slider to 400%",
+             detail: "Each app in the mixer has one track: volume up to a 100% detent, Volume Overdrive in amber beyond it, with a segmented peak meter (SoundSource).",
+             module: .audio),
         Item(symbol: "sparkles", title: "Ask AI in the Launcher",
              detail: "Type a question and press ⇥: your own Claude Code (or Codex) answers in the launcher, read-only. ↩ pastes the answer into the app you were in, ⌘J continues in Terminal where it can edit and run things after asking you, ⇥ switches agent. AI Commands summarize, fix, translate or explain the text you selected."),
         Item(symbol: "battery.75percent", title: "Battery Care That Works on macOS 27",

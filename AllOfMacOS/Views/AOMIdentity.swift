@@ -110,6 +110,7 @@ extension SettingsCategory {
         case .capture: return AOMIdentity(symbol: "camera.viewfinder", color: AOMModule.capture.hue)
         case .clipboard: return AOMIdentity(symbol: "doc.on.clipboard.fill", color: AOMModule.clipboard.hue)
         case .automation: return AOMIdentity(symbol: "hand.draw.fill", color: AOMModule.automation.hue)
+        case .ai: return AOMIdentity(symbol: "sparkles", color: AOMBrand.start)
         case .shortcuts: return AOMIdentity(symbol: "command", color: AOMModule.audio.hue)
         case .permissions: return AOMIdentity(symbol: "hand.raised.fill", color: AOMModule.files.hue)
         case .data: return AOMIdentity(symbol: "externaldrive.fill", color: AOMModule.folderRules.hue)

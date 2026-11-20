@@ -105,48 +105,80 @@ struct AOMMenuBarPanel: View {
     @ObservedObject private var layout = AOMWorkspaceLayout.shared
     private var quickKinds: [WorkspaceQuickActionKind] { Array(layout.visibleQuickActions.prefix(3)) }
 
+    /// 7.0: drawn by the craft panel (Control Center 26): live sessions on
+    /// top, tinted tiles, labelled quick actions with More for the rest,
+    /// the launcher bar and the utility row.
     var body: some View {
-        VStack(alignment: .leading, spacing: AOMSpace.x3) {
-            header
-            launcherBar
-            if model.hasActiveSessions { urgent }
-            LazyVGrid(columns: [GridItem(.flexible(), spacing: AOMSpace.x2), GridItem(.flexible(), spacing: AOMSpace.x2)],
-                      spacing: AOMSpace.x2) {
-                tile("Drag to Snap", "rectangle.split.2x2", AOMModule.tiling.hue, on: model.snapping,
-                     enabled: model.engineOn, model.toggleSnapping)
-                tile("Clipboard", "doc.on.clipboard", AOMModule.clipboard.hue, on: model.clipboardOn,
-                     model.toggleClipboard)
-                if #available(macOS 14.2, *) {
-                    tile("App Audio", "speaker.wave.2", AOMModule.audio.hue, on: model.appAudio, model.toggleAppAudio)
+        AOMMenuBarCraftPanel(
+            isEngineRunning: model.engineOn,
+            liveSessions: liveSessions,
+            toggles: tiles,
+            quickActions: layout.visibleQuickActions.map { kind in
+                AOMMenuBarCraftPanel.QuickAction(id: kind.id, title: kind.title, symbol: kind.symbol) {
+                    actions.close()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { kind.run() }
                 }
-                tile("Keep Awake", "cup.and.saucer", AOMModule.focus.hue, on: model.keepAwake, model.toggleKeepAwake)
-                tile("Gesture HUD", "rectangle.on.rectangle", AOMModule.automation.hue, on: model.hud, model.toggleHUD)
-                // 6.5: the sixth tile closes the grid's gap.
-                tile("Mute Mic", model.micMuted ? "mic.slash.fill" : "mic", AOMColor.recording, on: model.micMuted,
-                     model.toggleMic)
-            }
-            if battery.power?.percent != nil { batteryRow }
-            if !quickKinds.isEmpty {
-                HStack(spacing: AOMSpace.x1) {
-                    ForEach(quickKinds) { kind in
-                        AOMMenuBarQuickButton(kind: kind) {
-                            actions.close()
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { kind.run() }
-                        }
-                    }
-                }
-            }
-            Divider().opacity(0.6)
-            footer
-        }
-        .padding(AOMSpace.x3 + 2)
-        .frame(width: 356)
+            },
+            launcherShortcutText: AOMLauncherShortcut.isRegistered ? AOMLauncherShortcut.current.displayString : nil,
+            onToggleMaster: model.toggleEngine,
+            onOpenLauncher: {
+                actions.close()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { actions.openLauncher() }
+            },
+            onOpenMainWindow: { actions.close(); actions.openWindow() },
+            onOpenSettings: { actions.close(); actions.openSettings() },
+            onShowClassicMenu: actions.showAllCommands,
+            accessory: battery.power?.percent != nil ? AnyView(batteryRow) : nil)
         .aomButtonDefaults()
-        // 6.8: its own surface; the panel no longer borrows NSPopover's chrome.
-        .aomFloatingSurface(.panel, radius: 18, inWindow: false)
         .onAppear { model.refresh(); battery.refreshBattery() }
         .onChange(of: model.hasActiveSessions) { _, _ in DispatchQueue.main.async { actions.resized() } }
         .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in model.refresh() }
+    }
+
+    private var liveSessions: [AOMMenuBarCraftPanel.LiveSession] {
+        var sessions: [AOMMenuBarCraftPanel.LiveSession] = []
+        if model.recording {
+            sessions.append(.init(id: "rec", symbol: "record.circle", title: "Recording the screen", detail: "Stops and saves the clip",
+                                  tint: AOMColor.recording, stopLabel: "Stop", onStop: model.stopRecording))
+        }
+        if model.keepAwake {
+            sessions.append(.init(id: "awake", symbol: "cup.and.saucer.fill", title: "Keep Awake",
+                                  detail: model.keepAwakeRemaining ?? "Until turned off", tint: AOMModule.focus.hue,
+                                  stopLabel: "Turn Off", onStop: model.toggleKeepAwake))
+        }
+        if model.focusRunning {
+            sessions.append(.init(id: "focus", symbol: "timer", title: "Focus session", detail: "Running",
+                                  tint: AOMModule.focus.hue, stopLabel: "End", onStop: model.endFocus))
+        }
+        if model.micMuted {
+            sessions.append(.init(id: "mic", symbol: "mic.slash.fill", title: "Microphone muted", detail: "Every app hears silence",
+                                  tint: AOMColor.recording, stopLabel: "Unmute", onStop: model.toggleMic))
+        }
+        return sessions
+    }
+
+    private var tiles: [AOMMenuBarCraftPanel.ToggleTile] {
+        var tiles: [AOMMenuBarCraftPanel.ToggleTile] = [
+            .init(id: "snap", title: "Drag to Snap", subtitle: !model.engineOn ? "AOM paused" : model.snapping ? "On" : "Off",
+                  symbol: "rectangle.split.2x2", tint: AOMModule.tiling.hue, isOn: model.snapping && model.engineOn,
+                  onToggle: { if model.engineOn { model.toggleSnapping() } }),
+            .init(id: "clip", title: "Clipboard", subtitle: model.clipboardOn ? "Saving copies" : "Paused",
+                  symbol: "doc.on.clipboard", tint: AOMModule.clipboard.hue, isOn: model.clipboardOn, onToggle: model.toggleClipboard),
+        ]
+        if #available(macOS 14.2, *) {
+            tiles.append(.init(id: "audio", title: "App Audio", subtitle: model.appAudio ? "Per-app volume" : "Off",
+                               symbol: "speaker.wave.2", tint: AOMModule.audio.hue, isOn: model.appAudio, onToggle: model.toggleAppAudio))
+        }
+        tiles += [
+            .init(id: "awake", title: "Keep Awake", subtitle: model.keepAwake ? (model.keepAwakeRemaining ?? "On") : "Off",
+                  symbol: "cup.and.saucer", tint: AOMModule.focus.hue, isOn: model.keepAwake, onToggle: model.toggleKeepAwake),
+            .init(id: "hud", title: "Gesture HUD", subtitle: model.hud ? "On" : "Off", symbol: "rectangle.on.rectangle",
+                  tint: AOMModule.automation.hue, isOn: model.hud, onToggle: model.toggleHUD),
+            .init(id: "mic", title: "Mute Mic", subtitle: model.micMuted ? "Muted" : "Live",
+                  symbol: model.micMuted ? "mic.slash.fill" : "mic", tint: AOMColor.recording, isOn: model.micMuted,
+                  onToggle: model.toggleMic),
+        ]
+        return tiles
     }
 
     /// Raycast's search bar as the panel's first row: ⌘K from anywhere.

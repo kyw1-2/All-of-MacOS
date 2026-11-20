@@ -21,8 +21,9 @@ private final class AOMLauncherPanel: NSPanel {
 final class AOMLauncherController: NSObject, NSWindowDelegate {
     static let shared = AOMLauncherController()
 
-    /// 9 rows of 44 pt, the 52 pt search field and the 36 pt action bar.
-    static let size = CGSize(width: 720, height: 490)
+    /// 7.0: 9 rows of 44 pt, the 56 pt search field and the 38 pt footer;
+    /// wide enough for the list and its detail side by side (42 : 58).
+    static let size = CGSize(width: 760, height: 500)
 
     /// 6.7 (report L4): never larger than the screen it opens on, with a
     /// 16 pt margin; the rows scroll.
@@ -61,6 +62,9 @@ final class AOMLauncherController: NSObject, NSWindowDelegate {
 
     private func show(initialRoute: PaletteRoute?) {
         guard !isVisible, let appState = AppDelegate.current?.appState ?? AppState.current else { return }
+        // 7.0: one floating surface at a time — the shelf, the menu bar
+        // panel, the switcher or the drop shelf goes before the launcher comes.
+        AOMOverlayCoordinator.shared.present(.launcher, dismiss: { [weak self] in self?.hideImmediatelyForHandoff() }) { _ in }
         presentation &+= 1
         hiding = false
         // Raycast's "auto-switch input source": type commands in English.
@@ -135,6 +139,22 @@ final class AOMLauncherController: NSObject, NSWindowDelegate {
                 }
             }
         })
+    }
+
+    /// 7.0: for AOMOverlayCoordinator. Hides the panel now, without the
+    /// fade and without giving the previous app its focus back: another
+    /// AOM surface is taking over, and a late fade-out completion activating
+    /// the old app would steal that surface's keyboard.
+    func hideImmediatelyForHandoff() {
+        guard let panel, panel.isVisible else { return }
+        // A fade already running ends on an old ticket and does nothing.
+        presentation &+= 1
+        hiding = false
+        stopWatchingClicks()
+        PaletteInputSource.forget()
+        panel.orderOut(nil)
+        panel.alphaValue = 1
+        panel.contentView = nil
     }
 
     private func makePanel() -> AOMLauncherPanel {

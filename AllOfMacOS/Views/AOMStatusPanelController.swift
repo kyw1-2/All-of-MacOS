@@ -33,6 +33,8 @@ final class AOMStatusPanelController: NSObject, NSWindowDelegate {
 
     func show<Content: View>(_ content: Content, under button: NSStatusBarButton) {
         close()
+        // 7.0: no launcher or shelf left open under the menu bar panel.
+        AOMOverlayCoordinator.shared.present(.menuBarPanel, dismiss: { [weak self] in self?.close() }) { _ in }
         guard let buttonWindow = button.window else { return }
         let hosting = NSHostingView(rootView: content)
         let size = hosting.fittingSize

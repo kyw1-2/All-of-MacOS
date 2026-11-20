@@ -62,12 +62,9 @@ final class AppMetadataCache {
         if let cached = darkTextCache[key] { return cached }
         var dark = false
         if let color = NSColor(bannerColor(for: bundleID, name: name)).usingColorSpace(.sRGB) {
-            func linear(_ value: CGFloat) -> CGFloat {
-                value <= 0.03928 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
-            }
-            let luminance = 0.2126 * linear(color.redComponent) + 0.7152 * linear(color.greenComponent)
-                + 0.0722 * linear(color.blueComponent)
-            dark = 1.05 / (luminance + 0.05) < 3
+            // 7.0 (Codex review): whichever of black and white contrasts more,
+            // not white until it drops under 3:1 — white on red was 4.0:1.
+            dark = AOMSwatchContrast.prefersBlack(color)
         }
         darkTextCache[key] = dark
         return dark

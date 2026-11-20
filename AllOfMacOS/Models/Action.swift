@@ -427,16 +427,16 @@ enum ActionType: String, Codable, Identifiable, CaseIterable {
         case .minimizeWindow: return "arrow.down.right.and.arrow.up.left"
         case .snapWindowLeft: return "rectangle.lefthalf.filled"
         case .snapWindowRight: return "rectangle.righthalf.filled"
-        case .snapWindowTopLeft: return "rectangle.topleft.filled"
-        case .snapWindowTopRight: return "rectangle.topright.filled"
-        case .snapWindowBottomLeft: return "rectangle.bottomleft.filled"
-        case .snapWindowBottomRight: return "rectangle.bottomright.filled"
+        case .snapWindowTopLeft: return "rectangle.inset.topleft.filled"
+        case .snapWindowTopRight: return "rectangle.inset.topright.filled"
+        case .snapWindowBottomLeft: return "rectangle.inset.bottomleft.filled"
+        case .snapWindowBottomRight: return "rectangle.inset.bottomright.filled"
         case .centerWindow: return "rectangle.center.inset.filled"
         case .snapWindowLeftThird, .snapWindowCenterThird, .snapWindowRightThird,
              .snapWindowLeftTwoThirds, .snapWindowRightTwoThirds: return "rectangle.split.3x1"
         case .snapWindowTopLeftSixth, .snapWindowTopCenterSixth, .snapWindowTopRightSixth,
              .snapWindowBottomLeftSixth, .snapWindowBottomCenterSixth, .snapWindowBottomRightSixth:
-            return "rectangle.split.3x2"
+            return "rectangle.split.3x3"
         case .moveWindowLeft: return "arrow.left.square"
         case .moveWindowRight: return "arrow.right.square"
         case .moveWindowUp: return "arrow.up.square"
