@@ -31,6 +31,9 @@ final class AOMMenuBarPanelModel: ObservableObject {
     @Published var hud = true
     @Published var focusRunning = false
     @Published var micMuted = false
+    /// 6.7: sessions that are running now, shown as rows with their control.
+    @Published var recording = false
+    @Published var keepAwakeRemaining: String?
     let appState: AppState?
 
     init(appState: AppState?) {
@@ -38,16 +41,33 @@ final class AOMMenuBarPanelModel: ObservableObject {
         refresh()
     }
 
+    /// 6.7 (report A5): polled once a second while the panel is open, so a
+    /// focus session that ends or a mic muted elsewhere shows at once. Only
+    /// values that changed are published.
     func refresh() {
-        engineOn = appState?.globalEnabled ?? true
-        snapping = appState?.currentPreset.snappingEnabled ?? false
-        clipboardOn = !ClipboardStore.shared.paused
-        if #available(macOS 14.2, *) { appAudio = AppAudioEngine.shared.isEnabled }
-        keepAwake = KeepAwakeService.shared.isActive
-        hud = UserDefaults.standard.object(forKey: "AOMHUDEnabled") as? Bool ?? true
-        focusRunning = FocusModule.isSessionActive
-        micMuted = MicMuteController.shared.isMuted
+        set(\.engineOn, appState?.globalEnabled ?? true)
+        set(\.snapping, appState?.currentPreset.snappingEnabled ?? false)
+        set(\.clipboardOn, !ClipboardStore.shared.paused)
+        if #available(macOS 14.2, *) { set(\.appAudio, AppAudioEngine.shared.isEnabled) }
+        let awake = KeepAwakeService.shared
+        set(\.keepAwake, awake.isActive)
+        set(\.keepAwakeRemaining, awake.isActive ? awake.remainingDescription : nil)
+        set(\.hud, UserDefaults.standard.object(forKey: "AOMHUDEnabled") as? Bool ?? true)
+        set(\.focusRunning, FocusModule.isSessionActive)
+        set(\.micMuted, MicMuteController.shared.isMuted)
+        set(\.recording, ScreenRecordingService.shared.isRecording)
     }
+
+    private func set<Value: Equatable>(_ key: ReferenceWritableKeyPath<AOMMenuBarPanelModel, Value>, _ value: Value) {
+        if self[keyPath: key] != value { self[keyPath: key] = value }
+    }
+
+    func stopRecording() {
+        Task { _ = try? await ScreenRecordingService.shared.stopRecording(); refresh() }
+    }
+
+    /// Anything running that the panel lists on top.
+    var hasActiveSessions: Bool { focusRunning || micMuted || recording || keepAwake }
 
     func toggleEngine() { appState?.toggleGlobalEnabled(); refresh() }
     func toggleSnapping() {
@@ -84,7 +104,7 @@ struct AOMMenuBarPanel: View {
         VStack(alignment: .leading, spacing: AOMSpace.x3) {
             header
             launcherBar
-            if model.focusRunning || model.micMuted { urgent }
+            if model.hasActiveSessions { urgent }
             LazyVGrid(columns: [GridItem(.flexible(), spacing: AOMSpace.x2), GridItem(.flexible(), spacing: AOMSpace.x2)],
                       spacing: AOMSpace.x2) {
                 tile("Drag to Snap", "rectangle.split.2x2", AOMModule.tiling.hue, on: model.snapping,
@@ -118,6 +138,7 @@ struct AOMMenuBarPanel: View {
         .frame(width: 356)
         .aomButtonDefaults()
         .onAppear { model.refresh() }
+        .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in model.refresh() }
     }
 
     /// Raycast's search bar as the panel's first row: ⌘K from anywhere.
@@ -131,11 +152,16 @@ struct AOMMenuBarPanel: View {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(AOMColor.accent)
-                Text("Search apps and commands…")
+                // 6.7: it opens the launcher; it is not a field to type in here.
+                Text("Open Launcher…")
                     .font(AOMFont.body)
-                    .foregroundStyle(AOMColor.textSecondary)
+                    .foregroundStyle(AOMColor.text)
+                Text("Kill Apps, Uninstall, Sound …")
+                    .font(AOMFont.caption)
+                    .foregroundStyle(AOMColor.textTertiary)
+                    .lineLimit(1)
                 Spacer(minLength: 0)
-                if AOMLauncherShortcut.current != .off {
+                if AOMLauncherShortcut.isRegistered {
                     HStack(spacing: 3) { ForEach(AOMLauncherShortcut.current.keycaps, id: \.self) { AOMKeycap(text: $0) } }
                 }
             }
@@ -147,7 +173,7 @@ struct AOMMenuBarPanel: View {
         }
         .buttonStyle(.plain)
         .help("⌘K launcher (\(AOMLauncherShortcut.current.displayString) from any app)")
-        .accessibilityLabel("Search apps and commands")
+        .accessibilityLabel("Open Launcher")
     }
 
     private var header: some View {
@@ -177,6 +203,13 @@ struct AOMMenuBarPanel: View {
 
     @ViewBuilder private var urgent: some View {
         VStack(spacing: AOMSpace.x1) {
+            if model.recording {
+                urgentRow("record.circle", "Recording the screen", tint: AOMColor.recording, button: "Stop", model.stopRecording)
+            }
+            if model.keepAwake {
+                urgentRow("cup.and.saucer.fill", "Keep Awake \(model.keepAwakeRemaining ?? "on")", tint: AOMModule.focus.hue,
+                          button: "Turn Off", model.toggleKeepAwake)
+            }
             if model.focusRunning {
                 urgentRow("timer", "Focus session running", tint: AOMModule.focus.hue, button: "End", model.endFocus)
             }
@@ -212,12 +245,10 @@ struct AOMMenuBarPanel: View {
                 .help("Settings…")
                 .accessibilityLabel("Settings")
             Spacer()
+            // 6.7: Quit lives in the full menu (and ⌘Q), not next to Settings.
             Button { actions.showAllCommands() } label: { Image(systemName: "ellipsis") }
-                .help("All commands — the full menu (also ⌥-click the icon)")
-                .accessibilityLabel("All commands")
-            Button { actions.quit() } label: { Image(systemName: "power") }
-                .help("Quit All of MacOS")
-                .accessibilityLabel("Quit All of MacOS")
+                .help("All commands and Quit — the full menu (also ⌥-click the icon)")
+                .accessibilityLabel("All commands and Quit")
         }
         .controlSize(.small)
     }

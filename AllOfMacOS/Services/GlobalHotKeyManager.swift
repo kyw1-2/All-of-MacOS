@@ -122,3 +122,12 @@ final class GlobalHotKeyManager {
         }
     }
 }
+
+extension AOMLauncherShortcut {
+    /// 6.7 (report L5): the launcher's key is shown (empty launcher, menu bar
+    /// panel) only while the registration really holds; a key another app
+    /// took is not advertised as the way in.
+    @MainActor static var isRegistered: Bool {
+        current != .off && GlobalHotKeyManager.shared.status == .active
+    }
+}

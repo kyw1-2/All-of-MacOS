@@ -28,6 +28,11 @@ final class FolderRulesPageModel: ObservableObject {
     @Published var showsInlinePreview = false
     @Published var testResult: FolderRulePreviewItem?
     @Published var testFile: URL?
+    /// 6.7 (Codex report A1): the exact rule `turnOnPreview` was made for;
+    /// an edit after the preview needs a new one before Turn On.
+    private var turnOnPreviewRule: FolderRule?
+    /// 6.7 (report A2): only the latest test may show its result.
+    private var testTicket = 0
     let toast = AOMToastModel()
     let engine: FolderRulesEngine
 
@@ -185,13 +190,25 @@ final class FolderRulesPageModel: ObservableObject {
         Task { [weak self] in
             guard let self else { return }
             let result = await engine.preview(rule)
-            if draft?.id == rule.id { turnOnPreview = result }
+            if draft?.id == rule.id {
+                turnOnPreview = result
+                turnOnPreviewRule = rule
+            }
         }
     }
 
     /// Turn On after the preview: the listed items run without asking again.
     func confirmTurnOn() {
         guard let rule = draft, let shown = turnOnPreview, shown.ruleID == rule.id else { return }
+        guard rule == turnOnPreviewRule else {
+            // The conditions or actions changed after the list was made:
+            // approving it would let the new rule act on the old list.
+            turnOnPreview = nil
+            turnOnPreviewRule = nil
+            toast.show("The rule changed after the preview. Check the new list before turning it on.", tone: .warning)
+            setEnabled(true)
+            return
+        }
         if rule != draftBase {
             draftBase = rule
             engine.update(rule)
@@ -199,11 +216,12 @@ final class FolderRulesPageModel: ObservableObject {
         let keys = Set(shown.willRun.map(\.id))
         engine.setRule(rule.id, enabled: true, approving: keys)
         turnOnPreview = nil
+        turnOnPreviewRule = nil
         let count = shown.willRun.count
         toast.show(count == 0 ? "“\(rule.name)” is on" : "“\(rule.name)” is on and handles \(count) \(count == 1 ? "item" : "items") now")
     }
 
-    func cancelTurnOn() { turnOnPreview = nil }
+    func cancelTurnOn() { turnOnPreview = nil; turnOnPreviewRule = nil }
 
     // MARK: Preview and test
 
@@ -223,10 +241,13 @@ final class FolderRulesPageModel: ObservableObject {
     func test(_ file: URL) {
         guard let rule = draft else { return }
         testFile = file
+        testTicket &+= 1
+        let ticket = testTicket
         Task { [weak self] in
             guard let self else { return }
             let result = await engine.test(rule, file: file)
-            guard draft?.id == rule.id else { return }
+            // A newer file (or an edited rule) answers for itself.
+            guard ticket == testTicket, testFile == file, draft?.id == rule.id else { return }
             testResult = result
             if result == nil { toast.show("“\(file.lastPathComponent)” can't be tested: rules skip hidden items and links.", tone: .warning) }
         }

@@ -24,10 +24,23 @@ final class AOMLauncherController: NSObject, NSWindowDelegate {
     /// 9 rows of 44 pt, the 52 pt search field and the 36 pt action bar.
     static let size = CGSize(width: 720, height: 490)
 
+    /// 6.7 (report L4): never larger than the screen it opens on, with a
+    /// 16 pt margin; the rows scroll.
+    static func size(fitting visible: CGRect) -> CGSize {
+        CGSize(width: min(size.width, max(360, visible.width - 32)).rounded(),
+               height: min(size.height, max(280, visible.height - 32)).rounded())
+    }
+
+    /// The size of the panel on screen now.
+    private(set) var panelSize = AOMLauncherController.size
+
     private var panel: AOMLauncherPanel?
     private var clickMonitor: Any?
     private var previousApp: NSRunningApplication?
     private var hiding = false
+
+    /// The app that was in front when the launcher opened (paste targets, "except" lists).
+    var frontApp: NSRunningApplication? { previousApp.flatMap { $0.isTerminated ? nil : $0 } }
 
     var isVisible: Bool { panel?.isVisible == true && !hiding }
 
@@ -44,6 +57,7 @@ final class AOMLauncherController: NSObject, NSWindowDelegate {
             previousApp = PaletteSession.previousApp()
         }
         let panel = self.panel ?? makePanel()
+        panelSize = Self.size(fitting: Self.screenUnderPointer()?.visibleFrame ?? CGRect(origin: .zero, size: Self.size))
         let presented = Binding<Bool>(get: { [weak self] in self?.isVisible ?? false },
                                       set: { [weak self] open in if !open { self?.dismiss(restoringFocus: true) } })
         let root = QuickCommandPalette(isPresented: presented, host: .launcher)
@@ -51,7 +65,7 @@ final class AOMLauncherController: NSObject, NSWindowDelegate {
             .accentColor(appState.accentColorChoice.color)
             .tint(appState.accentColorChoice.color)
         let hosting = NSHostingView(rootView: root)
-        hosting.frame = NSRect(origin: .zero, size: Self.size)
+        hosting.frame = NSRect(origin: .zero, size: panelSize)
         panel.contentView = hosting
         place(panel)
         panel.alphaValue = 0
@@ -63,7 +77,7 @@ final class AOMLauncherController: NSObject, NSWindowDelegate {
         if Self.activatesApp || PresetManager.isUIPreview { NSApp.activate(ignoringOtherApps: true) }
         panel.makeKeyAndOrderFront(nil)
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = PresetManager.isUIPreview ? 0 : 0.12
+            context.duration = PresetManager.isUIPreview ? 0 : QuickCommandPalette.reducesMotion ? 0.05 : 0.12
             context.timingFunction = CAMediaTimingFunction(name: .easeOut)
             panel.animator().alphaValue = 1
         }
@@ -117,15 +131,20 @@ final class AOMLauncherController: NSObject, NSWindowDelegate {
 
     /// Upper middle of the screen with the pointer (Raycast's place).
     static func frame(on visible: CGRect) -> CGRect {
-        let x = visible.midX - size.width / 2
-        let y = max(visible.minY, visible.maxY - size.height - max(64, visible.height * 0.16))
+        let size = size(fitting: visible)
+        let x = min(max(visible.minX, visible.midX - size.width / 2), visible.maxX - size.width)
+        let y = max(visible.minY, visible.maxY - size.height - min(max(64, visible.height * 0.16),
+                                                                    max(0, visible.height - size.height)))
         return CGRect(x: x.rounded(), y: y.rounded(), width: size.width, height: size.height)
     }
 
-    private func place(_ panel: NSPanel) {
+    private static func screenUnderPointer() -> NSScreen? {
         let mouse = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
-        guard let visible = screen?.visibleFrame else { return }
+        return NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
+    }
+
+    private func place(_ panel: NSPanel) {
+        guard let visible = Self.screenUnderPointer()?.visibleFrame else { return }
         panel.setFrame(Self.frame(on: visible), display: true)
     }
 

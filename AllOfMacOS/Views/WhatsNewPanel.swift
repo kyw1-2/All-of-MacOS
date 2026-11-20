@@ -23,13 +23,20 @@ enum WhatsNew {
     /// Highlights of the current version, bundled so the panel works offline.
     /// Items that alter defaults people already use say so with a note.
     static let items: [Item] = [
+        Item(symbol: "xmark.octagon", title: "Kill Apps and Uninstall App, Inside the Launcher",
+             detail: "Type killapps (or 앱 종료) and ↩: the running apps, heaviest first, with their memory. ↩ quits the normal way and the list stays; ⌘K holds Force Quit…, Hide and Show in Finder. Type uninstall (or 앱 삭제): pick an app, review it with its leftovers, tick what goes, ⌘↩ moves it to the Trash. Every destructive step asks in the panel with Cancel selected, and esc goes back one screen.",
+             module: .systemTools, note: "New in the launcher"),
+        Item(symbol: "rectangle.stack", title: "More Launcher Screens",
+             detail: "Sound Devices (output, input, volume), Clipboard History (every entry; ↩ pastes into the app you were in), Window Management, Keep Awake (15 minutes to 8 hours) and System Commands (Lock, Sleep, Restart…, Empty Trash…, Eject All Disks, dark mode, Do Not Disturb). System commands are also found from the root search."),
+        Item(symbol: "square.grid.2x2", title: "Workspace Opens on Now",
+             detail: "What is running — a recording, Keep Awake, a focus session, a muted mic, a paused clipboard — is listed first with the button that ends it, then what needs you. The tool directory is one click away under All Tools. The menu bar panel shows the same sessions and keeps them current while it is open."),
         Item(symbol: "magnifyingglass", title: "⌥Space Opens ⌘K Anywhere",
              detail: "The palette is now a launcher of its own, Raycast-style: press ⌥Space in any app and it appears in the upper middle of the screen, without AOM's window. Actions go back to the app you were in. Change or turn off the key in Settings › Shortcuts › Launcher; aom://open-launcher opens it from a deck key.",
              note: "New shortcut"),
         Item(symbol: "square.on.square.dashed", title: "A Glass Window",
              detail: "Pages let the desktop show through, cards are frosted with a light edge, quick actions lift under the pointer, and the menu bar panel starts with a search bar. Settings › General › Translucent window turns it off; Reduce Transparency and Increase Contrast keep it opaque."),
         Item(symbol: "app.badge", title: "Manage Apps from ⌘K",
-             detail: "An app found in ⌘K now offers Hide, Quit, Force Quit… and Uninstall… after Show in Finder (⌘K on the row, or right-click). ↩ still opens and ⌘↩ still shows it in Finder. Uninstall… opens System Tools' review with the app's leftovers; Force Quit asks first.",
+             detail: "An app found in ⌘K now offers Hide, Quit, Force Quit… and Uninstall… after Show in Finder (⌘K on the row, or right-click). ↩ still opens and ⌘↩ still shows it in Finder. Uninstall… opens the review in the launcher; Force Quit asks there first.",
              module: .systemTools),
         Item(symbol: "timer", title: "Keep Awake for 30 Minutes, an Hour or with the Display On",
              detail: "Type 30분, 1시간 or 화면 켜기 in ⌘K. A new duration replaces the running one without a gap, and the battery stop rule applies when you start it, not only at the next power change.",

@@ -41,12 +41,30 @@ struct QuickCommandPalette: View {
     @State private var appeared = false
     @StateObject private var resultsCache = PaletteResultsCache()
     @FocusState private var isFieldFocused: Bool
+    /// 6.7: the screens pushed over the root search, the question one of
+    /// them asks, and what they load.
+    @State private var navigation = PaletteNavigation()
+    @State private var confirmation: PaletteConfirmation?
+    /// The selected row to give back once a popped screen's query is restored.
+    @State private var pendingSelection: String?
+    @StateObject private var screens = PaletteRouteModels()
 
     enum Host: Equatable { case window, launcher }
 
     struct PaletteAction {
+        /// 6.7: what the launcher does around the action. `.close` (the
+        /// default) hides the panel first; `.stay` runs it in place (a
+        /// quicklink that waits for its search, a quit that keeps the list);
+        /// `.push` opens one of the launcher's screens.
+        enum Effect: Equatable {
+            case close, stay, push(PaletteRoute)
+        }
+
         let title: String
         var symbol: String? = nil
+        var effect: Effect = .close
+        /// Drawn in red (Force Quit, Move to Trash, Empty Trash).
+        var isDestructive = false
         let run: () -> Void
     }
 
@@ -83,6 +101,19 @@ struct QuickCommandPalette: View {
         var isDimmed = false
         /// 5.0: a destination's own mark (pages, Settings categories).
         var identity: AOMIdentity?
+        /// 6.7: the header a launcher screen groups its rows under.
+        var group: String?
+        /// 6.7: names typed for this row ("killapps", "앱 삭제"); an exact
+        /// alias ranks with a title prefix.
+        var aliases: [String] = []
+        /// 6.7: a checklist row (the uninstall review): ticked or not.
+        var checked: Bool?
+
+        /// Opens a launcher screen rather than running something.
+        var pushes: Bool {
+            if case .push = primary.effect { return true }
+            return false
+        }
 
         /// The palette stays a launcher, not a context menu. App rows keep
         /// their whole fixed list (6.5: Hide, Quit, Force Quit, Uninstall).
@@ -139,6 +170,9 @@ struct QuickCommandPalette: View {
             case clearQuery
             /// The query is empty: dismiss the palette.
             case close
+            /// 6.7: on a launcher screen, back to the one below (its search
+            /// and selection come back), whatever is typed here.
+            case pop
         }
 
         static func trimmedQuery(_ query: String) -> String {
@@ -147,12 +181,22 @@ struct QuickCommandPalette: View {
 
         /// Esc backs out one level: clear the query first, then close.
         static func escapeOutcome(query: String) -> EscapeOutcome {
-            trimmedQuery(query).isEmpty ? .close : .clearQuery
+            escapeOutcome(query: query, depth: 0)
+        }
+
+        /// Esc on a pushed screen pops it (Raycast); at the root it clears
+        /// the query, then closes.
+        static func escapeOutcome(query: String, depth: Int) -> EscapeOutcome {
+            if depth > 0 { return .pop }
+            return trimmedQuery(query).isEmpty ? .close : .clearQuery
         }
 
         /// Lower rank sorts first; nil means the item does not match.
         static func rank(of item: PaletteItem, matching query: String) -> Int? {
-            if item.title.lowercased().hasPrefix(query.lowercased()) { return 0 }
+            let needle = query.lowercased()
+            if item.aliases.contains(where: { $0.lowercased() == needle }) { return 0 }
+            if item.title.lowercased().hasPrefix(needle) { return 0 }
+            if needle.count >= 3, item.aliases.contains(where: { $0.lowercased().hasPrefix(needle) }) { return 2 }
             if item.title.localizedCaseInsensitiveContains(query) { return 1 }
             if item.subtitle.localizedCaseInsensitiveContains(query) { return 2 }
             if !item.keywords.isEmpty,
@@ -196,6 +240,22 @@ struct QuickCommandPalette: View {
                 ordered.insert(ordered.remove(at: index), at: 0)
             }
             return items.filter { $0.placement == .pinned } + ordered + items.filter { $0.placement == .fallback }
+        }
+
+        /// 6.7: a launcher screen's rows keep their groups in order; within
+        /// a group, matches rank like the root's (prefix, contains, keywords,
+        /// fuzzy), stable. An empty query lists everything as built.
+        static func filtered(_ items: [PaletteItem], query: String) -> [PaletteItem] {
+            let trimmed = trimmedQuery(query)
+            guard !trimmed.isEmpty else { return items }
+            var groupOrder: [String: Int] = [:]
+            for item in items where groupOrder[item.group ?? ""] == nil { groupOrder[item.group ?? ""] = groupOrder.count }
+            return items.enumerated().compactMap { offset, item -> (item: PaletteItem, key: (Int, Int, Int))? in
+                guard let level = rank(of: item, matching: trimmed) else { return nil }
+                return (item, (groupOrder[item.group ?? ""] ?? 0, level, offset))
+            }
+            .sorted { $0.key < $1.key }
+            .map(\.item)
         }
 
         /// The action ⌘1…⌘3 or a click in the Actions panel runs, clamped.
@@ -245,6 +305,48 @@ struct QuickCommandPalette: View {
         let keywords: String
     }
 
+    /// 6.7: a root command that opens a launcher screen.
+    struct ScreenCommand {
+        let id: String
+        let route: PaletteRoute
+        let subtitle: String
+        let aliases: [String]
+        var keywords = ""
+    }
+
+    static let screenCommands: [ScreenCommand] = [
+        .init(id: "system.screen.killApps", route: .killApps,
+              subtitle: "Quit or force quit a running app · 앱 종료",
+              aliases: ["killapps", "kill apps", "kill app", "kill", "quit apps", "quit app", "force quit",
+                        "앱 종료", "강제 종료", "종료", "앱 끄기"],
+              keywords: "process activity monitor memory 메모리 작업 관리자"),
+        .init(id: "system.screen.uninstall", route: .uninstallApps,
+              subtitle: "Review an app and its leftovers, then move them to the Trash · 앱 삭제",
+              aliases: ["uninstall", "uninstall app", "uninstall apps", "unistall", "unistall app", "uninstal",
+                        "remove app", "delete app", "앱 삭제", "앱 제거", "삭제", "제거"],
+              keywords: "appcleaner pearcleaner leftovers 잔여 파일 trash"),
+        .init(id: "audio.screen.devices", route: .soundDevices,
+              subtitle: "Output, input and volume · 사운드 출력·입력",
+              aliases: ["sound", "output", "input", "audio output", "speaker", "출력", "입력", "스피커", "사운드"],
+              keywords: "airpods homepod airplay microphone 마이크 볼륨 volume 홈팟 에어팟"),
+        .init(id: "clipboard.screen.history", route: .clipboard,
+              subtitle: "Search everything you copied and paste it · 클립보드 기록",
+              aliases: ["clipboard", "clipboard history", "clip", "클립보드", "복사 기록"],
+              keywords: "paste history copied 붙여넣기"),
+        .init(id: "window.screen.layouts", route: .windowLayouts,
+              subtitle: "Halves, quarters, thirds and pins for the front window · 창 배치",
+              aliases: ["window", "windows", "tile", "layout", "창", "창 배치", "창 정렬"],
+              keywords: "rectangle moom snap 분할 maximize"),
+        .init(id: "system.screen.keepAwake", route: .keepAwake,
+              subtitle: "Keep the Mac awake for a while · 잠자기 방지",
+              aliases: ["keep awake", "caffeinate", "caffeine", "amphetamine", "잠자기 방지", "카페인"],
+              keywords: "sleep timer awake 깨어 있기"),
+        .init(id: "system.screen.commands", route: .system,
+              subtitle: "Lock, sleep, restart, empty Trash, dark mode … · 시스템 명령",
+              aliases: ["system", "system commands", "시스템", "시스템 명령"],
+              keywords: "lock sleep restart shut down log out trash eject dark mode 잠금 재시동"),
+    ]
+
     /// Layouts WindowManager already performs (halves, quarters, thirds).
     static let windowLayouts: [WindowLayout] = [
         .init(id: "topHalf", title: "Tile Window Top Half", subtitle: "Move the front window to the top half",
@@ -291,6 +393,8 @@ struct QuickCommandPalette: View {
             items += menuItems()
             items += bookmarkItems()
             items += fallbackItems()
+        } else {
+            items += suggestedApplicationItems()
         }
         return items
     }
@@ -330,7 +434,8 @@ struct QuickCommandPalette: View {
             guard !match.query.isEmpty, let url = PaletteQuicklinks.url(for: link, query: match.query) else {
                 return [PaletteItem(id: "quicklink.\(link.id)", title: "Search \(link.name)…",
                                     subtitle: "Type what to search for after “\(link.keyword) ”", icon: "link",
-                                    section: .quicklinks, primary: PaletteAction(title: "Type a Search") { isFieldFocused = true },
+                                    section: .quicklinks,
+                                    primary: PaletteAction(title: "Type a Search", effect: .stay) { isFieldFocused = true },
                                     placement: .pinned, accessory: link.keyword)]
             }
             return [PaletteItem(id: "quicklink.\(link.id)", title: "Search \(link.name) for “\(match.query)”",
@@ -347,7 +452,9 @@ struct QuickCommandPalette: View {
             PaletteItem(id: "quicklink.\(link.id)", title: link.name,
                         subtitle: PaletteQuicklinks.hasPlaceholder(link) ? "Type “\(link.keyword) ” and a search" : "Quicklink",
                         icon: "link", section: .quicklinks,
-                        primary: PaletteAction(title: PaletteQuicklinks.hasPlaceholder(link) ? "Use Quicklink" : "Open") {
+                        // 6.7 (report L1): the panel stays while the keyword waits for its search.
+                        primary: PaletteAction(title: PaletteQuicklinks.hasPlaceholder(link) ? "Use Quicklink" : "Open",
+                                               effect: PaletteQuicklinks.hasPlaceholder(link) ? .stay : .close) {
                             if PaletteQuicklinks.hasPlaceholder(link) {
                                 query = link.keyword + " "
                                 isFieldFocused = true
@@ -368,6 +475,16 @@ struct QuickCommandPalette: View {
                                    primary: PaletteAction(title: primaryTitle) { close(); run() }, secondaries: secondaries)
             // Search aliases (Korean names among them); `keys` is only the keycap.
             item.keywords = keywords
+            items.append(item)
+        }
+        // 6.7: commands that open a screen of their own come first, with the
+        // verbs people type for them (the Codex spec's aliases, typo included).
+        for screen in Self.screenCommands {
+            var item = PaletteItem(id: screen.id, title: screen.route.title, subtitle: screen.subtitle,
+                                   icon: screen.route.symbol, section: .commands,
+                                   primary: PaletteAction(title: "Open", symbol: "chevron.right", effect: .push(screen.route)) {})
+            item.aliases = screen.aliases
+            item.keywords = screen.keywords
             items.append(item)
         }
         // Keycaps mirror the user's real bindings; unbound commands show none.
@@ -455,7 +572,9 @@ struct QuickCommandPalette: View {
         }
         // 6.5: durations and the display from ⌘K (KeepingYouAwake's menu).
         // Each replaces a running session: the new assertion first, so a
-        // refusal leaves the old one running.
+        // refusal leaves the old one running. 6.7: the whole list is the
+        // Keep Awake screen; these three stay findable by name.
+        if isSearching {
         command("system.keepAwake.30", "Keep Awake for 30 Minutes", "Then the Mac may sleep again · 30분 잠자기 방지", "timer",
                 keywords: "30분 30 minutes 30m caffeine 잠자기") {
             awake.start(minutes: 30, keepDisplay: false)
@@ -467,6 +586,7 @@ struct QuickCommandPalette: View {
         command("system.keepAwake.display", "Keep Display On", "The display and the Mac stay awake until turned off · 화면 계속 켜기",
                 "sun.max", keywords: "화면 켜기 화면 유지 화면 계속 display screen awake caffeine") {
             awake.start(minutes: nil, keepDisplay: true)
+        }
         }
         if rules.whileExternalDisplay {
             // A manual Turn Off lasts until the next display or power change;
@@ -503,11 +623,15 @@ struct QuickCommandPalette: View {
         }
         items.append(PaletteItem(id: "quicklinks.edit", title: "Edit Quicklinks…",
                                  subtitle: "Keywords that search a site: g Google, n Naver, gh GitHub …", icon: "link.circle",
-                                 section: .commands, primary: PaletteAction(title: "Edit") { editingQuicklinks = true }))
+                                 section: .commands, primary: PaletteAction(title: "Edit", effect: .stay) { editingQuicklinks = true }))
         items.append(PaletteItem(id: "links.router", title: "Link Rules…",
                                  subtitle: "Open links in the right browser or app and remove tracking parameters",
                                  icon: "arrow.triangle.branch", section: .commands,
-                                 primary: PaletteAction(title: "Edit") { editingLinkRouter = true }))
+                                 primary: PaletteAction(title: "Edit", effect: .stay) { editingLinkRouter = true }))
+        // 6.7: Raycast's System Commands are found from the root search too.
+        if isSearching {
+            items += PaletteSystemCommand.all.map(systemCommandItem)
+        }
         // Every action is searchable, including capabilities which previously
         // existed only inside the automation picker. Opening creates a draft.
         if isSearching {
@@ -558,13 +682,25 @@ struct QuickCommandPalette: View {
                 subtitle: [entry.sourceName, AOMRelativeTime.string(entry.lastCopiedAt)].compactMap { $0 }.joined(separator: " · "),
                 icon: entry.kind.symbol, section: .clipboard,
                 primary: PaletteAction(title: "Copy", symbol: "doc.on.doc") {
-                    close(); _ = try? clipboardStore.write(entryIDs: [entry.id], plainText: false)
+                    close(); copyEntry(entry.id, plainText: false)
                 },
                 secondaries: entry.kind == .text || entry.kind == .link
                     ? [PaletteAction(title: "Copy as Plain Text", symbol: "textformat") {
-                        close(); _ = try? clipboardStore.write(entryIDs: [entry.id], plainText: true)
+                        close(); copyEntry(entry.id, plainText: true)
                     }]
                     : [])
+        }
+    }
+
+    /// 6.7 (report A3): a copy that fails says so instead of closing silently.
+    @discardableResult
+    private func copyEntry(_ id: UUID, plainText: Bool) -> Bool {
+        do {
+            _ = try clipboardStore.write(entryIDs: [id], plainText: plainText)
+            return true
+        } catch {
+            GestureHUD.shared.show(title: "Couldn't Copy", detail: error.localizedDescription)
+            return false
         }
     }
 
@@ -661,25 +797,55 @@ struct QuickCommandPalette: View {
     // BTT / Raycast launcher: installed apps, plus running apps elsewhere
     // (an external volume, Downloads). 6.5: Hide, Quit, Force Quit… and
     // Uninstall… after Show in Finder, so ↩ and ⌘↩ never change meaning.
+    private var runningAppURLs: [URL] {
+        NSWorkspace.shared.runningApplications.compactMap { $0.activationPolicy == .regular && !$0.isTerminated ? $0.bundleURL : nil }
+    }
+
     private func applicationItems() -> [PaletteItem] {
-        let running = NSWorkspace.shared.runningApplications
-        let runningKeys = Set(running.compactMap { $0.isTerminated ? nil : PaletteAppControl.runningKey($0) })
-        let apps = PaletteApplications.merged(PaletteApplications.all(),
-                                              running: running.compactMap { $0.activationPolicy == .regular ? $0.bundleURL : nil })
-        return PaletteApplications.matching(trimmed, in: apps).map { app in
-            let key = PaletteAppControl.installedKey(app.url)
-            let bundleID = PaletteApplications.bundleID(for: app.url)
-            let isRunning = runningKeys.contains(key)
-            let secondaries = PaletteAppControl.commands(isRunning: isRunning, bundleID: bundleID, path: key).map { command in
-                PaletteAction(title: command.title, symbol: command.symbol) { runAppCommand(command, app: app) }
+        let runningKeys = PaletteAppControl.runningKeys()
+        let apps = PaletteApplications.merged(PaletteApplications.all(), running: runningAppURLs)
+        return PaletteApplications.matching(trimmed, in: apps).map { applicationItem($0, runningKeys: runningKeys) }
+    }
+
+    /// 6.7 (report L3): apps picked from a search come back under
+    /// Suggestions in the empty launcher, as the commands always did.
+    private func suggestedApplicationItems() -> [PaletteItem] {
+        let apps = PaletteApplications.merged(PaletteApplications.all(), running: runningAppURLs)
+        let byID = Dictionary(apps.map { ("app.\($0.url.path)", $0) }, uniquingKeysWith: { first, _ in first })
+        let picked = PaletteKnowledgeStore.shared.knowledge.suggestions(among: Array(byID.keys), limit: 5, now: Date())
+        guard !picked.isEmpty else { return [] }
+        let runningKeys = PaletteAppControl.runningKeys()
+        return picked.compactMap { byID[$0] }.map { applicationItem($0, runningKeys: runningKeys) }
+    }
+
+    private func applicationItem(_ app: PaletteApplications.App, runningKeys: Set<String>) -> PaletteItem {
+        let key = PaletteAppControl.installedKey(app.url)
+        let bundleID = PaletteApplications.bundleID(for: app.url)
+        let isRunning = runningKeys.contains(key)
+        let secondaries = PaletteAppControl.commands(isRunning: isRunning, bundleID: bundleID, path: key).map { command in
+            appCommandAction(command, app: app)
+        }
+        return PaletteItem(id: "app.\(app.url.path)", title: app.name, subtitle: app.url.deletingLastPathComponent().path,
+                           icon: "app", section: .applications,
+                           primary: PaletteAction(title: "Open", symbol: "arrow.up.forward.app") {
+                               close(); NSWorkspace.shared.openApplication(at: app.url, configuration: .init())
+                           },
+                           secondaries: secondaries, accessory: isRunning ? "Running" : nil,
+                           image: session.icon(forPath: app.url.path), secondaryLimit: .max)
+    }
+
+    /// 6.7: Force Quit… asks in the panel and Uninstall… opens the review in
+    /// the panel (the Codex spec, test 14); the rest close it as before.
+    private func appCommandAction(_ command: PaletteAppControl.Command, app: PaletteApplications.App) -> PaletteAction {
+        switch command {
+        case .uninstall:
+            return PaletteAction(title: command.title, symbol: command.symbol, effect: .push(.uninstallReview(app.url))) {}
+        case .forceQuit:
+            return PaletteAction(title: command.title, symbol: command.symbol, effect: .stay, isDestructive: true) {
+                confirmForceQuit(PaletteAppControl.instances(of: app.url), name: app.name, path: PaletteAppControl.installedKey(app.url))
             }
-            return PaletteItem(id: "app.\(app.url.path)", title: app.name, subtitle: app.url.deletingLastPathComponent().path,
-                               icon: "app", section: .applications,
-                               primary: PaletteAction(title: "Open", symbol: "arrow.up.forward.app") {
-                                   close(); NSWorkspace.shared.openApplication(at: app.url, configuration: .init())
-                               },
-                               secondaries: secondaries, accessory: isRunning ? "Running" : nil,
-                               image: session.icon(forPath: app.url.path), secondaryLimit: .max)
+        default:
+            return PaletteAction(title: command.title, symbol: command.symbol) { runAppCommand(command, app: app) }
         }
     }
 
@@ -689,16 +855,31 @@ struct QuickCommandPalette: View {
         case .showInFinder: NSWorkspace.shared.activateFileViewerSelecting([app.url])
         case .hide: PaletteAppControl.hide(app.url, name: app.name)
         case .quit: PaletteAppControl.quit(app.url, name: app.name)
-        case .forceQuit:
-            // After the palette has gone, so the alert is the front window.
-            DispatchQueue.main.async { PaletteAppControl.forceQuit(app.url, name: app.name) }
-        case .uninstall:
-            // System Tools' own review: protection, quitting first, leftovers
-            // by folder, a final check before anything moves to the Trash.
-            appState.selectedMainTab = .tools
-            showAOM()
-            SystemToolsRequests.shared.requestUninstall(app.url)
+        case .forceQuit, .uninstall: break
         }
+    }
+
+    /// Force Quit inside the panel: the app's name and copy in the question,
+    /// Cancel selected, and the same instances checked again on confirm.
+    private func confirmForceQuit(_ instances: [NSRunningApplication], name: String, path: String?) {
+        let targets = instances.filter { !$0.isTerminated && !PaletteAppControl.isProtected($0.bundleIdentifier) }
+        guard !targets.isEmpty else {
+            screens.show("\(name) isn't running")
+            return
+        }
+        let place = path.map { (URL(fileURLWithPath: $0).deletingLastPathComponent().path as NSString).abbreviatingWithTildeInPath }
+        let count = targets.count > 1 ? " (\(targets.count) instances)" : ""
+        confirm(PaletteConfirmation(
+            title: "Force Quit “\(name)”\(count)?",
+            message: "\(name)\(place.map { " from \($0)" } ?? "") closes at once. Unsaved changes in it are lost.",
+            confirmTitle: "Force Quit \(name)", symbol: "exclamationmark.octagon.fill") {
+            var ended = 0
+            for target in targets where !target.isTerminated && target.bundleURL?.standardizedFileURL.path == path {
+                if target.forceTerminate() { ended += 1 }
+            }
+            GestureLog.shared.logFromAnyThread("Force quit \(name) from the launcher (\(ended) of \(targets.count))", level: .action)
+            screens.show(ended > 0 ? "Force quit \(name)" : "\(name) had already quit or changed; nothing was force quit")
+        })
     }
 
     private func menuItems() -> [PaletteItem] {
@@ -790,8 +971,17 @@ struct QuickCommandPalette: View {
     /// hover or arrow key (each rebuild ranked every row, the apps and, while
     /// searching, all 242 actions).
     private var results: [PaletteItem] {
-        resultsCache.items(for: .init(query: query, refresh: refreshToken, generation: generation)) {
-            PaletteSearch.results(for: allItems, query: query, knowledge: PaletteKnowledgeStore.shared.knowledge)
+        let route = navigation.current
+        return resultsCache.items(for: .init(query: query, refresh: refreshToken, generation: generation,
+                                             route: route.map { "\($0)" } ?? "")) {
+            let items: [PaletteItem]
+            if let route {
+                items = route == .confirm ? confirmationItems() : PaletteSearch.filtered(routeItems(route), query: query)
+            } else {
+                items = PaletteSearch.results(for: allItems, query: query, knowledge: PaletteKnowledgeStore.shared.knowledge)
+            }
+            screens.remember(items.map(\.id))
+            return items
         }
     }
 
@@ -805,13 +995,478 @@ struct QuickCommandPalette: View {
     /// the app that was in front is active again when the action runs.
     private func perform(_ action: PaletteAction?, of item: PaletteItem) {
         guard let action, !item.isDimmed else { return }
-        PaletteKnowledgeStore.shared.record(itemID: item.id, query: query)
+        // ⌘K learns root picks only: a row inside a screen (an app to kill,
+        // a confirmation) never becomes the default for a similar search.
+        if navigation.isRoot { PaletteKnowledgeStore.shared.record(itemID: item.id, query: query) }
+        switch action.effect {
+        case .push(let route):
+            push(route)
+            return
+        case .stay:
+            action.run()
+            sourcesChanged()
+            return
+        case .close:
+            break
+        }
         guard host == .launcher, !PaletteLauncherRouting.keepsPanel(item.id) else { action.run(); return }
         AOMLauncherController.shared.dismiss(restoringFocus: PaletteLauncherRouting.restoresFocus(id: item.id,
                                                                                                  section: item.section,
                                                                                                  action: action.title)) {
             action.run()
         }
+    }
+
+    // MARK: Screens
+
+    private func push(_ route: PaletteRoute) {
+        navigation.push(route, query: query, selection: selectedID ?? results.first?.id)
+        pendingSelection = nil
+        query = ""
+        selectedID = nil
+        showsActions = false
+        enter(route)
+        isFieldFocused = true
+        generation &+= 1
+    }
+
+    private func pop() {
+        guard let frame = navigation.pop() else { return }
+        leave(frame.route)
+        showsActions = false
+        if frame.returnQuery == query {
+            selectedID = frame.returnSelection
+        } else {
+            pendingSelection = frame.returnSelection
+            query = frame.returnQuery
+        }
+        isFieldFocused = true
+        generation &+= 1
+    }
+
+    /// What a screen starts when it opens.
+    private func enter(_ route: PaletteRoute) {
+        switch route {
+        case .killApps: screens.watchApps(true)
+        case .uninstallReview(let app): screens.beginUninstall(app)
+        case .soundDevices: screens.loadSound()
+        case .uninstallApps, .clipboard, .windowLayouts, .keepAwake, .system, .confirm: break
+        }
+    }
+
+    /// What it stops when it goes (a screen still lower on the stack keeps its own).
+    private func leave(_ route: PaletteRoute) {
+        switch route {
+        case .killApps where !navigation.frames.contains { $0.route == .killApps }:
+            screens.watchApps(false)
+        case .uninstallReview:
+            screens.endUninstall()
+        case .soundDevices:
+            screens.clearSound()
+        case .confirm:
+            confirmation = nil
+        default:
+            break
+        }
+    }
+
+    private func confirm(_ question: PaletteConfirmation) {
+        confirmation = question
+        push(.confirm)
+    }
+
+    /// The confirmation's two rows: Cancel first (selected), then the action.
+    private func confirmationItems() -> [PaletteItem] {
+        guard let question = confirmation else { return [] }
+        var cancel = PaletteItem(id: "confirm.cancel", title: "Cancel", subtitle: "Go back without changing anything",
+                                 icon: "arrow.uturn.backward", section: .commands,
+                                 primary: PaletteAction(title: "Cancel", effect: .stay) { pop() })
+        cancel.group = question.title
+        var accept = PaletteItem(id: "confirm.accept", title: question.confirmTitle, subtitle: question.message,
+                                 icon: question.symbol, section: .commands,
+                                 primary: PaletteAction(title: question.confirmTitle, effect: .stay,
+                                                        isDestructive: question.destructive) { acceptConfirmation() })
+        accept.group = question.title
+        return [cancel, accept]
+    }
+
+    private func acceptConfirmation() {
+        guard let question = confirmation else { return }
+        confirmation = nil
+        switch question.after {
+        case .pop:
+            pop()
+            question.run()
+        case .close(let restoresFocus):
+            guard host == .launcher else { close(); question.run(); return }
+            AOMLauncherController.shared.dismiss(restoringFocus: restoresFocus) { question.run() }
+        }
+    }
+
+    // MARK: Screen rows
+
+    private func routeItems(_ route: PaletteRoute) -> [PaletteItem] {
+        switch route {
+        case .killApps: return killAppItems()
+        case .uninstallApps: return uninstallListItems()
+        case .uninstallReview: return uninstallReviewItems()
+        case .soundDevices: return soundItems()
+        case .clipboard: return clipboardHistoryItems()
+        case .windowLayouts: return windowLayoutItems()
+        case .keepAwake: return keepAwakeItems()
+        case .system: return PaletteSystemCommand.all.map(systemCommandItem)
+        case .confirm: return confirmationItems()
+        }
+    }
+
+    private func screenRow(_ id: String, _ title: String, _ subtitle: String, icon: String, group: String?,
+                     section: Section = .commands, primary: PaletteAction, secondaries: [PaletteAction] = [],
+                     accessory: String? = nil, image: NSImage? = nil, dimmed: Bool = false) -> PaletteItem {
+        var item = PaletteItem(id: id, title: title, subtitle: subtitle, icon: icon, section: section,
+                               primary: primary, secondaries: secondaries, accessory: accessory, image: image,
+                               isDimmed: dimmed, secondaryLimit: .max)
+        item.group = group
+        return item
+    }
+
+    private func folder(of path: String?) -> String {
+        guard let path else { return "" }
+        return (URL(fileURLWithPath: path).deletingLastPathComponent().path as NSString).abbreviatingWithTildeInPath
+    }
+
+    // Kill Apps (Codex spec 03): ↩ quits the normal way and keeps the list,
+    // ⌘K holds Force Quit…, Hide, Switch To and Show in Finder.
+    private func killAppItems() -> [PaletteItem] {
+        let entries = PaletteKillApps.entries()
+        let front = session.target
+        let quittable = entries.filter { !$0.isProtected }
+        var items: [PaletteItem] = []
+        let now = Date()
+        for entry in entries {
+            let path = entry.path
+            let image = path.map { session.icon(forPath: $0) }
+            guard !entry.isProtected else {
+                items.append(screenRow(entry.id, entry.name, "AOM doesn't quit itself, Finder or the system's own hosts from here",
+                                 icon: "lock", group: "Can't quit from here", primary: PaletteAction(title: "Protected") {},
+                                 image: image, dimmed: true))
+                continue
+            }
+            let state = PaletteKillApps.quitState(askedAt: screens.quitting[entry.pid], now: now)
+            var accessory = [PaletteKillApps.memoryDescription(entry.memory), entry.isHidden ? "Hidden" : nil]
+                .compactMap { $0 }.joined(separator: " · ")
+            switch state {
+            case .quitting: accessory = "Quitting…"
+            case .stillRunning: accessory = "Still running · ⌘K to force quit"
+            case nil: break
+            }
+            var secondaries = [
+                PaletteAction(title: "Force Quit…", symbol: "exclamationmark.octagon", effect: .stay, isDestructive: true) {
+                    confirmForceQuit([PaletteKillApps.resolve(entry)].compactMap { $0 }, name: entry.name, path: entry.path)
+                },
+                PaletteAction(title: entry.isHidden ? "Unhide" : "Hide", symbol: entry.isHidden ? "eye" : "eye.slash", effect: .stay) {
+                    guard let app = PaletteKillApps.resolve(entry) else { screens.show("\(entry.name) has quit"); return }
+                    _ = entry.isHidden ? app.unhide() : app.hide()
+                },
+                PaletteAction(title: "Switch To \(entry.name)", symbol: "macwindow") {
+                    PaletteKillApps.resolve(entry)?.activate(options: [.activateAllWindows])
+                },
+            ]
+            if let path {
+                secondaries.append(PaletteAction(title: "Show in Finder", symbol: "folder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+                })
+            }
+            var item = screenRow(entry.id, entry.name, folder(of: path), icon: "app",
+                           group: "Running · \(quittable.count)",
+                           primary: PaletteAction(title: state == .stillRunning ? "Ask Again" : "Quit", symbol: "xmark.circle",
+                                                  effect: .stay) { quit(entry) },
+                           secondaries: secondaries, accessory: accessory.isEmpty ? nil : accessory, image: image)
+            item.keywords = entry.bundleID ?? ""
+            items.append(item)
+        }
+        // Bulk commands after the apps, so ↩ on open never starts with "all".
+        if !isSearching, quittable.count > 1 {
+            let others = quittable.filter { $0.pid != front?.pid }
+            let frontName = front?.name ?? "the Front App"
+            items.append(screenRow("kill.all", "Quit All Apps Except \(frontName)…",
+                             "\(others.count) app\(others.count == 1 ? "" : "s") are asked to quit; each can still ask to save",
+                             icon: "xmark.circle", group: "All apps",
+                             primary: PaletteAction(title: "Quit All…", effect: .stay) { confirmQuitAll(others, keeping: frontName) }))
+            items.append(screenRow("kill.hideOthers", "Hide All Apps Except \(frontName)", "Their windows come back when you switch to them",
+                             icon: "eye.slash", group: "All apps",
+                             primary: PaletteAction(title: "Hide Others") {
+                                 ActionExecutor.executeAction(TriggerAction(actionType: .hideOtherApps))
+                             }))
+        }
+        return items
+    }
+
+    private func quit(_ entry: PaletteKillApps.Entry) {
+        guard let app = PaletteKillApps.resolve(entry) else {
+            screens.show("\(entry.name) has already quit")
+            return
+        }
+        guard !PaletteAppControl.isProtected(app.bundleIdentifier) else { return }
+        if app.terminate() {
+            screens.markQuitting(entry.pid)
+            screens.show("Asked \(entry.name) to quit — it can still ask to save")
+        } else {
+            screens.show("\(entry.name) refused to quit · ⌘K for Force Quit…")
+        }
+    }
+
+    private func confirmQuitAll(_ entries: [PaletteKillApps.Entry], keeping front: String) {
+        guard !entries.isEmpty else { screens.show("No other app to quit"); return }
+        let names = entries.prefix(4).map(\.name).joined(separator: ", ") + (entries.count > 4 ? " and \(entries.count - 4) more" : "")
+        confirm(PaletteConfirmation(title: "Quit \(entries.count) App\(entries.count == 1 ? "" : "s")?",
+                                    message: "\(names) are asked to quit the normal way; \(front) stays open. An app with unsaved work can still ask.",
+                                    confirmTitle: "Quit \(entries.count) App\(entries.count == 1 ? "" : "s")",
+                                    symbol: "xmark.circle.fill", destructive: false) {
+            var asked = 0
+            for entry in entries {
+                guard let app = PaletteKillApps.resolve(entry), !PaletteAppControl.isProtected(app.bundleIdentifier) else { continue }
+                if app.terminate() { asked += 1; screens.markQuitting(entry.pid) }
+            }
+            screens.show("Asked \(asked) app\(asked == 1 ? "" : "s") to quit")
+        })
+    }
+
+    // Uninstall App (Codex spec 04): the installed apps it can remove, then
+    // a review in the panel with System Tools' rules.
+    private func uninstallListItems() -> [PaletteItem] {
+        let runningKeys = PaletteAppControl.runningKeys()
+        let apps = PaletteApplications.merged(PaletteApplications.all(), running: runningAppURLs).filter { app in
+            PaletteAppControl.isUninstallable(bundleID: PaletteApplications.bundleID(for: app.url),
+                                              path: PaletteAppControl.installedKey(app.url))
+        }
+        return apps.map { app in
+            let key = PaletteAppControl.installedKey(app.url)
+            var item = screenRow("uninstall.\(app.url.path)", app.name, folder(of: app.url.path), icon: "app",
+                           group: "Installed apps · \(apps.count)",
+                           primary: PaletteAction(title: "Review…", symbol: "list.bullet.rectangle",
+                                                  effect: .push(.uninstallReview(app.url))) {},
+                           secondaries: [PaletteAction(title: "Show in Finder", symbol: "folder") {
+                               NSWorkspace.shared.activateFileViewerSelecting([app.url])
+                           }],
+                           accessory: runningKeys.contains(key) ? "Running" : nil, image: session.icon(forPath: app.url.path))
+            item.keywords = PaletteApplications.bundleID(for: app.url) ?? ""
+            return item
+        }
+    }
+
+    private func uninstallReviewItems() -> [PaletteItem] {
+        guard let flow = screens.uninstall else { return [] }
+        let back = screenRow("uninstall.back", "Back to Installed Apps", "Nothing changes", icon: "chevron.left", group: nil,
+                       primary: PaletteAction(title: "Back", effect: .stay) { pop() })
+        switch flow.phase {
+        case .checking, .scanning, .quitting, .moving:
+            return []
+        case .needsQuit(let name):
+            return [screenRow("uninstall.quit", "Quit \(name) and Review", "\(name) is asked to quit the normal way first; it can still ask to save",
+                        icon: "xmark.circle", group: nil,
+                        primary: PaletteAction(title: "Quit and Review", effect: .stay) { flow.quitAndReview() }),
+                    back]
+        case .failed:
+            return [screenRow("uninstall.retry", "Check Again", "Run the checks and the scan once more", icon: "arrow.clockwise",
+                        group: nil, primary: PaletteAction(title: "Check Again", effect: .stay) { flow.start() }),
+                    back]
+        case .done(let outcome):
+            var items = outcome.failures.enumerated().map { index, failure in
+                screenRow("uninstall.failure.\(index)", failure, "Stayed where it was", icon: "exclamationmark.triangle",
+                    group: "Not moved", primary: PaletteAction(title: "Open Trash", effect: .stay) {}, dimmed: true)
+            }
+            items.append(screenRow("uninstall.done", "Done", "Back to the installed apps", icon: "checkmark", group: "Next",
+                             primary: PaletteAction(title: "Done", effect: .stay) { pop() }))
+            items.append(screenRow("uninstall.trash", "Open the Trash", "Put Back works for everything moved", icon: "trash",
+                             group: "Next", primary: PaletteAction(title: "Open Trash") {
+                                 NSWorkspace.shared.open(FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".Trash"))
+                             }))
+            return items
+        case .review:
+            let count = flow.chosen.count
+            let trashTitle = "Move \(count) Item\(count == 1 ? "" : "s") to Trash…"
+            return flow.candidates.map { candidate in
+                let ticked = flow.selected.contains(candidate.id)
+                let nameOnly = flow.isNameOnly(candidate)
+                let path = (candidate.url.deletingLastPathComponent().path as NSString).abbreviatingWithTildeInPath
+                var item = screenRow("review.\(candidate.id)", candidate.url.lastPathComponent,
+                               nameOnly ? "Matches the app's name only · \(path)" : path,
+                               icon: candidate.note == "App" ? "app" : "doc", group: candidate.note,
+                               primary: PaletteAction(title: ticked ? "Untick" : "Tick", effect: .stay) { flow.toggle(candidate.id) },
+                               secondaries: [
+                                   PaletteAction(title: trashTitle, symbol: "trash", effect: .stay, isDestructive: true) {
+                                       confirmTrash(flow)
+                                   },
+                                   PaletteAction(title: "Show in Finder", symbol: "folder") {
+                                       NSWorkspace.shared.activateFileViewerSelecting([candidate.url])
+                                   },
+                                   PaletteAction(title: "Tick All", symbol: "checklist.checked", effect: .stay) { flow.selectAll() },
+                                   PaletteAction(title: "Untick All", symbol: "checklist.unchecked", effect: .stay) { flow.selectNone() },
+                               ],
+                               accessory: SystemStatus.size(candidate.size),
+                               image: candidate.note == "App" ? session.icon(forPath: candidate.url.path) : nil)
+                item.checked = ticked
+                return item
+            }
+        }
+    }
+
+    private func confirmTrash(_ flow: PaletteUninstallFlow) {
+        let chosen = flow.chosen
+        guard !chosen.isEmpty else { screens.show("Tick at least one item first"); return }
+        let appIncluded = chosen.contains { $0.url == flow.app }
+        confirm(PaletteConfirmation(
+            title: "Move \(chosen.count) Item\(chosen.count == 1 ? "" : "s") to the Trash?",
+            message: "\(appIncluded ? "\(flow.name) and \(chosen.count - 1) leftover\(chosen.count == 2 ? "" : "s")" : "\(chosen.count) leftover\(chosen.count == 1 ? "" : "s")") · \(SystemStatus.size(flow.selectedSize)). Finder's Put Back can restore them.",
+            confirmTitle: "Move to Trash", symbol: "trash.fill") { flow.trash() })
+    }
+
+    // Sound devices (Raycast's Manage Sound Output/Input Devices).
+    private func soundItems() -> [PaletteItem] {
+        guard let sound = screens.sound else { return [] }
+        var items: [PaletteItem] = sound.outputs.map { device in
+            let current = device.id == sound.currentOutput
+            return screenRow("sound.out.\(device.uid)", device.name, current ? "Current output" : "Sound output",
+                       icon: current ? "speaker.wave.2.fill" : "speaker.wave.2", group: "Output",
+                       primary: PaletteAction(title: current ? "Current Output" : "Use for Sound Output", effect: .stay) {
+                           AudioOutputService.shared.select(name: device.name, uid: device.uid) { ok in
+                               DispatchQueue.main.async {
+                                   screens.show(ok ? "Sound output: \(device.name)" : "\(device.name) didn't take the output")
+                                   screens.loadSound()
+                               }
+                           }
+                       }, accessory: current ? "✓ Current" : nil)
+        }
+        items += sound.inputs.map { device in
+            let current = device.id == sound.currentInput
+            return screenRow("sound.in.\(device.uid)", device.name, current ? "Current input" : "Sound input",
+                       icon: current ? "mic.fill" : "mic", group: "Input",
+                       primary: PaletteAction(title: current ? "Current Input" : "Use for Sound Input", effect: .stay) {
+                           let ok = AudioOutputService.selectInput(uid: device.uid)
+                           screens.show(ok ? "Sound input: \(device.name)" : "\(device.name) didn't take the input")
+                           screens.loadSound()
+                       }, accessory: current ? "✓ Current" : nil)
+        }
+        items.append(screenRow("sound.mute", sound.isMuted ? "Unmute" : "Mute", "The current output · 음소거",
+                         icon: sound.isMuted ? "speaker.wave.2" : "speaker.slash", group: "Volume",
+                         primary: PaletteAction(title: sound.isMuted ? "Unmute" : "Mute", effect: .stay) {
+                             AudioOutputService.shared.toggleOutputMute { _ in DispatchQueue.main.async { screens.loadSound() } }
+                         }))
+        for level in [25, 50, 75, 100] {
+            var item = screenRow("sound.volume.\(level)", "Set Volume to \(level)%", "The current output", icon: "speaker.wave.\(level >= 75 ? 3 : level >= 50 ? 2 : 1)",
+                           group: "Volume", primary: PaletteAction(title: "Set \(level)%", effect: .stay) {
+                               AudioOutputService.shared.setVolume(percent: Double(level)) { ok in
+                                   DispatchQueue.main.async { screens.show(ok ? "Volume \(level)%" : "This output has no volume control") }
+                               }
+                           })
+            item.aliases = ["\(level)", "\(level)%"]
+            items.append(item)
+        }
+        return items
+    }
+
+    // Clipboard History (Raycast, Spotlight in macOS 26): every entry, not
+    // the root's 20; ↩ pastes into the app that was in front.
+    private func clipboardHistoryItems() -> [PaletteItem] {
+        let target = host == .launcher ? AOMLauncherController.shared.frontApp : PaletteSession.previousApp()
+        let canPaste = AXIsProcessTrusted() && target != nil
+        let pasteTitle = canPaste ? "Paste to \(target?.localizedName ?? "App")" : "Copy"
+        return clipboardStore.entries.prefix(1000).map { entry in
+            var secondaries = [PaletteAction(title: "Copy", symbol: "doc.on.doc") { copyEntry(entry.id, plainText: false) }]
+            if entry.kind == .text || entry.kind == .link {
+                secondaries.append(PaletteAction(title: "Copy as Plain Text", symbol: "textformat") { copyEntry(entry.id, plainText: true) })
+            }
+            var item = screenRow("cliphistory.\(entry.id.uuidString)", entry.title,
+                           [entry.sourceName, AOMRelativeTime.string(entry.lastCopiedAt)].compactMap { $0 }.joined(separator: " · "),
+                           icon: entry.kind.symbol, group: nil, section: .clipboard,
+                           primary: PaletteAction(title: pasteTitle, symbol: "doc.on.clipboard") {
+                               guard copyEntry(entry.id, plainText: false), canPaste, let target else { return }
+                               Self.paste(into: target, triesLeft: 10)
+                           },
+                           secondaries: secondaries)
+            item.keywords = entry.sourceName ?? ""
+            return item
+        }
+    }
+
+    /// ⌘V to the app once it is frontmost again (the panel gave focus back).
+    static func paste(into target: NSRunningApplication, triesLeft: Int) {
+        if NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier {
+            _ = ClipboardStackPasteMonitor.sendPaste(to: target)
+        } else if triesLeft > 0, !target.isTerminated {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { paste(into: target, triesLeft: triesLeft - 1) }
+        }
+    }
+
+    // Window Management: every layout WindowManager performs, grouped.
+    private func windowLayoutItems() -> [PaletteItem] {
+        func layout(_ id: String, _ title: String, _ subtitle: String, _ type: ActionType, _ group: String) -> PaletteItem {
+            screenRow("window.\(id)", title, subtitle, icon: type.iconName, group: group, section: .commands,
+                primary: PaletteAction(title: "Apply") { ActionExecutor.executeAction(TriggerAction(actionType: type)) })
+        }
+        var items = [
+            layout("left", "Left Half", "Move the front window to the left half", .snapWindowLeft, "Halves"),
+            layout("right", "Right Half", "Move the front window to the right half", .snapWindowRight, "Halves"),
+            layout("maximize", "Maximize", "Fill the visible screen", .maximizeWindow, "Whole screen"),
+        ]
+        for entry in Self.windowLayouts {
+            let group = entry.id.contains("Third") ? "Thirds" : entry.id.contains("Half") ? "Halves"
+                : entry.id == "center" ? "Whole screen" : "Quarters"
+            var item = layout(entry.id, entry.title.replacingOccurrences(of: "Tile Window ", with: ""), entry.subtitle, entry.type, group)
+            item.keywords = entry.keywords
+            items.append(item)
+        }
+        let order = ["Halves", "Quarters", "Thirds", "Whole screen"]
+        items = items.enumerated().sorted {
+            ((order.firstIndex(of: $0.element.group ?? "") ?? 9), $0.offset) < ((order.firstIndex(of: $1.element.group ?? "") ?? 9), $1.offset)
+        }.map(\.element)
+        items.append(screenRow("window.pinFront", "Pin Front Window", "Keep it above the others", icon: "pin", group: "Pins & windows",
+                         primary: PaletteAction(title: "Pin") { ActionExecutor.executeAction(TriggerAction(actionType: .togglePinFrontWindow)) }))
+        items.append(screenRow("window.unpinAll", "Unpin All Windows", "Remove every live pin", icon: "pin.slash", group: "Pins & windows",
+                         primary: PaletteAction(title: "Unpin All") { ActionExecutor.executeAction(TriggerAction(actionType: .unpinAllWindows)) }))
+        items.append(screenRow("window.switcher", "Window Switcher", "Every window with thumbnails", icon: "rectangle.stack",
+                         group: "Pins & windows", primary: PaletteAction(title: "Show") { WindowSwitcherController.shared.show() }))
+        return items
+    }
+
+    // Keep Awake: durations (KeepingYouAwake, Amphetamine), the display rule.
+    private func keepAwakeItems() -> [PaletteItem] {
+        let awake = KeepAwakeService.shared
+        let rules = KeepAwakeRules.shared
+        var items: [PaletteItem] = []
+        if awake.isActive {
+            items.append(screenRow("awake.off", "Turn Off Keep Awake", "Running \(awake.remainingDescription ?? "")", icon: "cup.and.saucer.fill",
+                             group: "Now", primary: PaletteAction(title: "Turn Off") { awake.stop() }))
+        }
+        for choice in PaletteKeepAwakeChoices.all {
+            var item = screenRow(choice.id, choice.title, choice.keepDisplay ? "The display stays on too, until turned off" : "Then the Mac may sleep again",
+                           icon: choice.keepDisplay ? "sun.max" : "timer", group: "Keep the Mac awake",
+                           primary: PaletteAction(title: "Start") { awake.start(minutes: choice.minutes, keepDisplay: choice.keepDisplay) })
+            item.aliases = choice.aliases
+            items.append(item)
+        }
+        items.append(screenRow("awake.rule", "While a Display Is Connected", "Turn Keep Awake on whenever an external display is connected",
+                         icon: "display.2", group: "Rules",
+                         primary: PaletteAction(title: rules.whileExternalDisplay ? "Turn Off Rule" : "Turn On Rule", effect: .stay) {
+                             rules.whileExternalDisplay.toggle()
+                             screens.show(rules.whileExternalDisplay ? "Rule on: a display keeps the Mac awake" : "Rule off")
+                         }, accessory: rules.whileExternalDisplay ? "On" : "Off"))
+        return items
+    }
+
+    private func systemCommandItem(_ command: PaletteSystemCommand) -> PaletteItem {
+        let action: PaletteAction
+        if let words = command.confirmation {
+            action = PaletteAction(title: "Run…", effect: .stay, isDestructive: true) {
+                confirm(PaletteConfirmation(title: words.title, message: words.message, confirmTitle: words.button,
+                                            after: .close(restoresFocus: true)) { command.run() })
+            }
+        } else {
+            action = PaletteAction(title: "Run") { command.run() }
+        }
+        var item = screenRow(command.id, command.title, command.subtitle, icon: command.symbol, group: command.group, primary: action)
+        item.aliases = command.aliases
+        return item
     }
 
     private func sectionTitle(_ section: Section) -> String {
@@ -826,9 +1481,13 @@ struct QuickCommandPalette: View {
 
     var body: some View {
         let items = results
-        let selected = items.first { $0.id == selectedID } ?? items.first
-        let size = host == .launcher ? AOMLauncherController.size
+        // A row that went away (an app that quit) hands the selection to its neighbour.
+        let selected = items.first { $0.id == selectedID }
+            ?? screens.neighbor(of: selectedID).flatMap { id in items.first { $0.id == id } }
+            ?? items.first
+        let size = host == .launcher ? AOMLauncherController.shared.panelSize
             : CGSize(width: AOMSize.paletteWidth, height: AOMFeatureSize.paletteHeight)
+        let header = routeHeader
         ZStack {
             if host == .window {
                 Color.black.opacity(0.18)
@@ -840,10 +1499,16 @@ struct QuickCommandPalette: View {
             VStack(spacing: 0) {
                 searchField(count: items.count)
                 AOMDivider()
-                if items.isEmpty {
-                    emptyState
-                } else {
+                if let header {
+                    routeHeaderView(header, fills: items.isEmpty)
+                    if !items.isEmpty { AOMDivider() }
+                } else if let notice = screens.notice, !navigation.isRoot {
+                    noticeLine(notice)
+                }
+                if !items.isEmpty {
                     resultList(items, selected: selected)
+                } else if header == nil {
+                    emptyState
                 }
                 AOMDivider()
                 actionBar(selected)
@@ -860,8 +1525,9 @@ struct QuickCommandPalette: View {
             }
             // Glass chrome draws its own shadow; nothing is added on top (c.4).
             .aomFloatingSurface(.panel, radius: PaletteMetrics.panelRadius, inWindow: host == .window)
-            // Raycast's entrance: 0.98 → 1 with the fade (report 04 §5.3).
-            .scaleEffect(appeared ? 1 : 0.98)
+            // Raycast's entrance: 0.98 → 1 with the fade (report 04 §5.3);
+            // 6.7 (report A4): a fade only with Reduce Motion.
+            .scaleEffect(appeared || Self.reducesMotion ? 1 : 0.98)
             .opacity(appeared ? 1 : 0)
             .background(alignment: .topLeading) {
                 // ⌘K inside the palette opens the Actions panel (Raycast).
@@ -879,7 +1545,9 @@ struct QuickCommandPalette: View {
         .aomAnimation(.quick, value: showsActions)
         .onAppear {
             appear()
-            withAnimation(PresetManager.isUIPreview ? nil : .smooth(duration: 0.22)) { appeared = true }
+            withAnimation(PresetManager.isUIPreview ? nil : Self.reducesMotion ? .linear(duration: 0.1) : .smooth(duration: 0.22)) {
+                appeared = true
+            }
         }
         // Every source of rows; hover and arrow keys reuse the cached list.
         .onReceive(clipboardStore.objectWillChange) { _ in sourcesChanged() }
@@ -889,14 +1557,18 @@ struct QuickCommandPalette: View {
         .onReceive(recentFiles.objectWillChange) { _ in sourcesChanged() }
         .onReceive(KeepAwakeService.shared.objectWillChange) { _ in sourcesChanged() }
         .onReceive(appState.objectWillChange) { _ in sourcesChanged() }
+        .onReceive(screens.objectWillChange) { _ in sourcesChanged() }
         .onDisappear {
             session.end()
             recentFiles.stop()
+            screens.end()
         }
         .onExitCommand {
-            // Esc goes back one level: the Actions panel, the query, then the palette.
+            // Esc goes back one level: the Actions panel, the screen (6.7),
+            // the query, then the palette.
             if showsActions { showsActions = false; return }
-            switch PaletteSearch.escapeOutcome(query: query) {
+            switch PaletteSearch.escapeOutcome(query: query, depth: navigation.depth) {
+            case .pop: pop()
             case .clearQuery: query = ""
             case .close: close()
             }
@@ -910,7 +1582,8 @@ struct QuickCommandPalette: View {
                 showsActions = false
                 perform(action, of: item)
             } else if press.modifiers.contains(.command) {
-                // ⌘↩ keeps running the first secondary, as before.
+                // ⌘↩ keeps running the first secondary, as before. A
+                // confirmation has none: ⌘↩ never skips its Cancel row.
                 perform(item.secondaries.first, of: item)
             } else {
                 perform(item.primary, of: item)
@@ -944,6 +1617,30 @@ struct QuickCommandPalette: View {
                                  date: now.addingTimeInterval(-600)),
            screenshot: PaletteFile(url: URL(fileURLWithPath: "/Users/Shared/Screenshot 2026-10-31.png"),
                                    name: "Screenshot 2026-10-31.png", date: now.addingTimeInterval(-300)))
+        // 6.7: `--aom-preview-palette-route killApps|uninstallApps|sound|clipboard|
+        // windows|keepAwake|system|confirm|review:<app path>` opens a screen.
+        if let index = arguments.lastIndex(of: "--aom-preview-palette-route"), arguments.indices.contains(index + 1) {
+            let name = arguments[index + 1]
+            let filter = arguments.lastIndex(of: "--aom-preview-palette-route-query").flatMap {
+                arguments.indices.contains($0 + 1) ? arguments[$0 + 1] : nil
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                switch name {
+                case "confirm":
+                    push(.killApps)
+                    confirmQuitAll(PaletteKillApps.entries().filter { !$0.isProtected }, keeping: session.target?.name ?? "Finder")
+                case let review where review.hasPrefix("review:"):
+                    push(.uninstallApps)
+                    push(.uninstallReview(URL(fileURLWithPath: String(review.dropFirst("review:".count)))))
+                default:
+                    let routes: [String: PaletteRoute] = ["killApps": .killApps, "uninstallApps": .uninstallApps,
+                                                          "sound": .soundDevices, "clipboard": .clipboard,
+                                                          "windows": .windowLayouts, "keepAwake": .keepAwake, "system": .system]
+                    if let route = routes[name] { push(route) }
+                }
+                if let filter { query = filter }
+            }
+        }
         if arguments.contains("--aom-preview-palette-actions") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showsActions = true }
         }
@@ -983,6 +1680,123 @@ struct QuickCommandPalette: View {
         selectedID = items[min(items.count - 1, max(0, current + offset))].id
     }
 
+    // MARK: Screen header
+
+    /// What a screen says above its rows: the question, the progress, the result.
+    struct RouteHeader {
+        var symbol: String
+        var tint: Color
+        var title: String
+        var detail: String
+        var busy = false
+        var image: NSImage?
+    }
+
+    static var reducesMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
+
+    private var routeHeader: RouteHeader? {
+        switch navigation.current {
+        case .confirm?:
+            guard let question = confirmation else { return nil }
+            return RouteHeader(symbol: question.symbol, tint: question.destructive ? AOMColor.danger : AOMColor.warning,
+                               title: question.title, detail: question.message)
+        case .uninstallReview?:
+            guard let flow = screens.uninstall else { return nil }
+            let icon = session.icon(forPath: flow.app.path)
+            switch flow.phase {
+            case .checking:
+                return RouteHeader(symbol: "magnifyingglass", tint: AOMModule.systemTools.hue, title: "Checking \(flow.name)…",
+                                   detail: "Whether it may be removed and whether a copy is open.", busy: true, image: icon)
+            case .needsQuit(let name):
+                return RouteHeader(symbol: "xmark.circle", tint: AOMColor.warning, title: "Quit \(name) First?",
+                                   detail: "\(name) is open. AOM asks it to quit the normal way (it can still ask to save), then lists what would move to the Trash. Nothing moves until you confirm.",
+                                   image: icon)
+            case .quitting(let name):
+                return RouteHeader(symbol: "hourglass", tint: AOMColor.warning, title: "Waiting for \(name) to Quit…",
+                                   detail: "If it asks about unsaved work, answer it in \(name). Nothing is moved meanwhile.", busy: true, image: icon)
+            case .scanning:
+                return RouteHeader(symbol: "magnifyingglass", tint: AOMModule.systemTools.hue, title: "Looking for \(flow.name)'s Leftovers…",
+                                   detail: "~/Library: Application Support, Caches, Preferences, Containers, Saved State, Logs …", busy: true, image: icon)
+            case .review:
+                let count = flow.chosen.count
+                return RouteHeader(symbol: "trash", tint: AOMColor.danger, title: "Uninstall \(flow.name)",
+                                   detail: "\(count) of \(flow.candidates.count) ticked · \(SystemStatus.size(flow.selectedSize)). ↩ ticks a row, ⌘↩ moves the ticked items to the Trash (Put Back works). Items that only share the app's name start unticked.",
+                                   image: icon)
+            case .moving:
+                return RouteHeader(symbol: "trash", tint: AOMColor.danger, title: "Moving to the Trash…",
+                                   detail: "\(flow.chosen.count) item\(flow.chosen.count == 1 ? "" : "s").", busy: true, image: icon)
+            case .done(let outcome):
+                return RouteHeader(symbol: outcome.failures.isEmpty ? "checkmark.circle.fill" : "exclamationmark.triangle.fill",
+                                   tint: outcome.failures.isEmpty ? AOMColor.success : AOMColor.warning,
+                                   title: outcome.failures.isEmpty ? "\(flow.name) Is in the Trash" : "Some Items Stayed",
+                                   detail: outcome.summary + ".", image: icon)
+            case .failed(let title, let detail):
+                return RouteHeader(symbol: "exclamationmark.triangle.fill", tint: AOMColor.warning, title: title, detail: detail, image: icon)
+            }
+        case .soundDevices? where screens.sound == nil:
+            return RouteHeader(symbol: "hifispeaker.2", tint: AOMModule.audio.hue, title: "Reading Sound Devices…",
+                               detail: "Outputs, inputs and the current volume.", busy: true)
+        default:
+            return nil
+        }
+    }
+
+    private func routeHeaderView(_ header: RouteHeader, fills: Bool) -> some View {
+        HStack(alignment: .top, spacing: AOMSpace.x3) {
+            ZStack(alignment: .bottomTrailing) {
+                if let image = header.image {
+                    Image(nsImage: image).resizable().interpolation(.high).frame(width: 40, height: 40)
+                } else {
+                    Image(systemName: header.symbol)
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 40, height: 40)
+                        .background(header.tint, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+                if header.image != nil {
+                    Image(systemName: header.symbol)
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 18, height: 18)
+                        .background(header.tint, in: Circle())
+                        .offset(x: 4, y: 4)
+                }
+            }
+            .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: AOMSpace.x1) {
+                HStack(spacing: AOMSpace.x2) {
+                    Text(header.title).font(AOMFont.headline).foregroundStyle(AOMColor.text)
+                    if header.busy { ProgressView().controlSize(.small).scaleEffect(0.8) }
+                }
+                Text(header.detail)
+                    .font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let notice = screens.notice {
+                    Text(notice).font(AOMFont.caption.weight(.medium)).foregroundStyle(AOMColor.accent)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, AOMSpace.x4)
+        .padding(.vertical, AOMSpace.x3)
+        .frame(maxWidth: .infinity, maxHeight: fills ? .infinity : nil, alignment: .topLeading)
+        .background(header.tint.opacity(contrast == .increased ? 0.14 : 0.06))
+        .accessibilityElement(children: .combine)
+    }
+
+    /// The result of an action that kept the screen ("Asked Safari to quit").
+    private func noticeLine(_ text: String) -> some View {
+        HStack(spacing: AOMSpace.x2) {
+            Image(systemName: "info.circle").foregroundStyle(AOMColor.accent).accessibilityHidden(true)
+            Text(text).font(AOMFont.caption.weight(.medium)).foregroundStyle(AOMColor.text).lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, AOMSpace.x4)
+        .frame(height: 28)
+        .background(AOMColor.accent.opacity(0.08))
+        .accessibilityAddTraits(.updatesFrequently)
+    }
+
     // MARK: Pieces
 
     private func searchField(count: Int) -> some View {
@@ -995,7 +1809,24 @@ struct QuickCommandPalette: View {
                 .foregroundStyle(AOMColor.textSecondary)
                 .frame(width: PaletteMetrics.rowBadge)
                 .accessibilityHidden(true)
-            if let match = PaletteQuicklinks.match(query, in: quicklinks.links) {
+            if let route = navigation.current {
+                // 6.7: where you are, as Raycast's navigation title; click to go back.
+                Button { pop() } label: {
+                    HStack(spacing: AOMSpace.x1) {
+                        Image(systemName: "chevron.left").font(AOMFont.caption.weight(.bold))
+                        Text(navigation.breadcrumb.last ?? route.title).font(AOMFont.token.weight(.semibold)).lineLimit(1)
+                    }
+                    .foregroundStyle(route == .confirm ? AOMColor.dangerText : AOMColor.accent)
+                    .padding(.horizontal, AOMSpace.x2)
+                    .frame(minHeight: AOMSize.tokenHeight)
+                    .background((route == .confirm ? AOMColor.danger : AOMColor.accent).opacity(contrast == .increased ? 0.22 : 0.12),
+                                in: Capsule())
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Back (esc)")
+                .accessibilityLabel("Back from \(route.title)")
+            } else if let match = PaletteQuicklinks.match(query, in: quicklinks.links) {
                 // The matched quicklink reads as a token before the search.
                 Text(match.link.name)
                     .font(AOMFont.token.weight(.medium))
@@ -1005,14 +1836,22 @@ struct QuickCommandPalette: View {
                     .background(AOMColor.accent.opacity(contrast == .increased ? 0.22 : 0.12), in: Capsule())
                     .accessibilityLabel("Quicklink \(match.link.name)")
             }
-            TextField("Search apps, commands, menus, files, or calculate…", text: $query)
+            TextField(navigation.current?.placeholder ?? "Search apps, commands, menus, files, or calculate…", text: $query)
                 .textFieldStyle(.plain)
                 // Raycast's search line is the largest type in the panel.
                 .font(host == .launcher ? PaletteMetrics.launcherQueryFont : AOMFont.pageStatus.weight(.regular))
                 .focused($isFieldFocused)
                 .onChange(of: query) { _, _ in
-                    selectedID = nil
+                    // A popped screen gives its selected row back with its query.
+                    if let restore = pendingSelection {
+                        selectedID = restore
+                        pendingSelection = nil
+                    } else {
+                        selectedID = nil
+                    }
                     showsActions = false
+                    // A confirmation is answered, not searched.
+                    if navigation.current?.isSearchable == false, !query.isEmpty { query = "" }
                 }
                 .accessibilityLabel("Search")
             if recentFiles.isLoading {
@@ -1024,7 +1863,7 @@ struct QuickCommandPalette: View {
                 Text("\(count) result\(count == 1 ? "" : "s")")
                     .font(AOMFont.caption.monospacedDigit())
                     .foregroundStyle(AOMColor.textTertiary)
-            } else if host == .launcher, AOMLauncherShortcut.current != .off {
+            } else if host == .launcher, navigation.isRoot, AOMLauncherShortcut.isRegistered {
                 // The key that brings this back from any app.
                 HStack(spacing: AOMSpace.x0_5 + 1) {
                     ForEach(AOMLauncherShortcut.current.keycaps, id: \.self) { AOMKeycap(text: $0) }
@@ -1036,6 +1875,27 @@ struct QuickCommandPalette: View {
         .frame(height: host == .launcher ? PaletteMetrics.launcherSearchHeight : AOMSize.rowDetail)
     }
 
+    /// 6.7: "No search results" and "nothing to list" read differently,
+    /// and a screen never falls back to a web search.
+    private var emptyTitle: String {
+        switch navigation.current {
+        case nil: return "No results for “\(query)”"
+        case .killApps?: return isSearching ? "No running app matches “\(query)”" : "No app AOM can quit is running"
+        case .uninstallApps?: return isSearching ? "No installed app matches “\(query)”" : "No app AOM can uninstall"
+        case .clipboard?: return isSearching ? "Nothing copied matches “\(query)”" : "Clipboard history is empty"
+        case let route?: return isSearching ? "Nothing in \(route.title) matches “\(query)”" : "Nothing here yet"
+        }
+    }
+
+    private var emptyDetail: String {
+        switch navigation.current {
+        case nil: return "Try an automation name, an app, a menu item or a sum such as 12 × 11."
+        case .killApps?: return "Only apps with a Dock icon are listed; Finder and AOM itself are never quit from here."
+        case .uninstallApps?: return "Apps that come with macOS and All of MacOS itself aren't listed."
+        default: return "esc goes back to the previous screen."
+        }
+    }
+
     private var emptyState: some View {
         VStack(spacing: AOMSpace.x2) {
             Image(systemName: "magnifyingglass")
@@ -1043,8 +1903,8 @@ struct QuickCommandPalette: View {
                 .foregroundStyle(AOMColor.textSecondary)
                 .padding(.bottom, AOMSpace.x1)
                 .accessibilityHidden(true)
-            Text("No results for “\(query)”").font(AOMFont.headline).foregroundStyle(AOMColor.text)
-            Text("Try an automation name, an app, a menu item or a sum such as 12 × 11.")
+            Text(emptyTitle).font(AOMFont.headline).foregroundStyle(AOMColor.text)
+            Text(emptyDetail)
                 .font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
                 .multilineTextAlignment(.center)
             // The empty state needs a mouse-reachable way out too.
@@ -1066,7 +1926,7 @@ struct QuickCommandPalette: View {
                     ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                         if showsHeader(at: index, in: items) {
                             // Sentence case, no tracking (c.2).
-                            Text(item.placement == .fallback ? "Search with" : item.isSuggestion ? "Suggestions" : sectionTitle(item.section))
+                            Text(headerTitle(item))
                                 .font(AOMFont.caption.weight(.semibold))
                                 .foregroundStyle(AOMColor.textSecondary)
                                 .padding(.horizontal, AOMSpace.x2)
@@ -1088,9 +1948,19 @@ struct QuickCommandPalette: View {
 
     /// Section titles while browsing; while searching only where the pinned
     /// rows and the fallbacks start, since the middle is one ranked list.
+    private func headerTitle(_ item: PaletteItem) -> String {
+        if !navigation.isRoot { return item.group ?? "" }
+        return item.placement == .fallback ? "Search with" : item.isSuggestion ? "Suggestions" : sectionTitle(item.section)
+    }
+
     private func showsHeader(at index: Int, in items: [PaletteItem]) -> Bool {
         let item = items[index]
         let previous = index > 0 ? items[index - 1] : nil
+        // A screen groups its rows by `group`, searching or not.
+        if !navigation.isRoot {
+            guard let group = item.group, !group.isEmpty, navigation.current != .confirm else { return false }
+            return previous?.group != group
+        }
         if !isSearching {
             guard let previous else { return true }
             return previous.isSuggestion != item.isSuggestion || (!item.isSuggestion && previous.section != item.section)
@@ -1101,8 +1971,9 @@ struct QuickCommandPalette: View {
 
     private func row(_ item: PaletteItem, selected: Bool) -> some View {
         // The hover lives in the row (6.5): moving the pointer redraws one
-        // row, not the palette and its search.
-        PaletteRowButton(selected: selected) {
+        // row, not the palette and its search. 6.7: a destructive answer is
+        // selected in red.
+        PaletteRowButton(selected: selected, tint: item.primary.isDestructive && navigation.current == .confirm ? AOMColor.danger : nil) {
             selectedID = item.id
             perform(item.primary, of: item)
         } label: {
@@ -1163,6 +2034,12 @@ struct QuickCommandPalette: View {
         case "audio": return AOMModule.audio.hue
         case "system": return AOMModule.systemTools.hue
         case "files": return AOMModule.files.hue
+        // 6.7: the launcher screens' rows.
+        case "kill", "uninstall", "review": return AOMModule.systemTools.hue
+        case "sound": return AOMModule.audio.hue
+        case "cliphistory": return AOMModule.clipboard.hue
+        case "awake": return AOMModule.focus.hue
+        case "confirm": return id == "confirm.accept" ? AOMColor.danger : AOMBrand.graphite
         default: return nil
         }
     }
@@ -1183,10 +2060,18 @@ struct QuickCommandPalette: View {
 
     private func standardRow(_ item: PaletteItem, selected: Bool) -> some View {
         HStack(spacing: AOMSpace.x2) {
+            if let checked = item.checked {
+                Image(systemName: checked ? "checkmark.square.fill" : "square")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(selected ? Color.white : checked ? AOMColor.accent : AOMColor.textSecondary)
+                    .frame(width: 18)
+                    .accessibilityHidden(true)
+            }
             badge(item, selected: selected)
             Text(item.title)
                 .font(AOMFont.body.weight(.medium))
-                .foregroundStyle(selected ? Color.white : AOMColor.text)
+                .foregroundStyle(selected ? Color.white
+                                 : item.primary.isDestructive && navigation.current == .confirm ? AOMColor.dangerText : AOMColor.text)
                 .lineLimit(1)
                 .layoutPriority(1)
             Text(item.subtitle)
@@ -1200,7 +2085,7 @@ struct QuickCommandPalette: View {
                     .font(AOMFont.caption)
                     .foregroundStyle(selected ? Color.white.opacity(0.8) : AOMColor.textTertiary)
                     .lineLimit(1)
-            } else if isSearching, item.placement == .ranked {
+            } else if isSearching, navigation.isRoot, item.placement == .ranked, !item.pushes {
                 Text(sectionTitle(item.section))
                     .font(AOMFont.caption)
                     .foregroundStyle(selected ? Color.white.opacity(0.8) : AOMColor.textSecondary)
@@ -1212,6 +2097,13 @@ struct QuickCommandPalette: View {
                         AOMKeycap(text: part, onSelection: selected)
                     }
                 }
+            }
+            if item.pushes {
+                // Raycast: a command that opens a screen.
+                Image(systemName: "chevron.right")
+                    .font(AOMFont.caption.weight(.semibold))
+                    .foregroundStyle(selected ? Color.white.opacity(0.85) : AOMColor.textTertiary)
+                    .accessibilityHidden(true)
             }
         }
         .opacity(item.isDimmed ? 0.55 : 1)
@@ -1248,7 +2140,8 @@ struct QuickCommandPalette: View {
     /// The selected item's actions with their keys, Raycast-style.
     private func actionBar(_ item: PaletteItem?) -> some View {
         HStack(spacing: AOMSpace.x3) {
-            Text(item.map { sectionTitle($0.section) } ?? " ")
+            Text(navigation.current.map { _ in navigation.breadcrumb.joined(separator: " › ") }
+                 ?? item.map { sectionTitle($0.section) } ?? " ")
                 .font(AOMFont.caption)
                 .foregroundStyle(AOMColor.textSecondary)
                 .lineLimit(1)
@@ -1262,8 +2155,8 @@ struct QuickCommandPalette: View {
                     actionHint("Actions", keys: "⌘K", prominent: false) { toggleActions(item) }
                 }
             }
-            actionHint(isSearching || showsActions ? "Back" : "Close", keys: "esc", prominent: false) {
-                if showsActions { showsActions = false } else if isSearching { query = "" } else { close() }
+            actionHint(isSearching || showsActions || !navigation.isRoot ? "Back" : "Close", keys: "esc", prominent: false) {
+                if showsActions { showsActions = false } else if !navigation.isRoot { pop() } else if isSearching { query = "" } else { close() }
             }
         }
         .padding(.horizontal, AOMSpace.x4)
@@ -1367,6 +2260,13 @@ enum PaletteApplications {
         return apps
     }
 
+    /// 6.7: after an uninstall the list is read again on the next search.
+    static func invalidate() {
+        lock.lock(); defer { lock.unlock() }
+        cache = nil
+        bundleIDs.removeAll()
+    }
+
     private static var bundleIDs: [String: String?] = [:]
 
     /// Read once per path (the Info.plist), never a Library scan.
@@ -1381,30 +2281,51 @@ enum PaletteApplications {
 
     /// The installed list plus running apps that live outside the scanned
     /// folders (an external volume, Downloads), each copy once. Pure.
+    /// 6.7 (report L2): a running app is dropped only when that very copy
+    /// is listed already (by its path or the path a listed symlink points
+    /// to), not because it sits somewhere under a scanned folder — an app
+    /// in /Applications/Vendor/ used to vanish from the list.
     static func merged(_ installed: [App], running: [URL], folders: [URL] = folders) -> [App] {
-        let scanned = folders.map { $0.standardizedFileURL.path + "/" }
         var known = Set(installed.map { $0.url.standardizedFileURL.path })
+        known.formUnion(installed.map { $0.url.resolvingSymlinksInPath().standardizedFileURL.path })
         var extra: [App] = []
         for url in running where url.pathExtension == "app" {
             let path = url.standardizedFileURL.path
-            // Inside a scanned folder (or the system's own): already listed.
-            guard !path.hasPrefix("/System/"), !scanned.contains(where: { path.hasPrefix($0) }),
-                  known.insert(path).inserted else { continue }
+            // The system's own apps are listed from /System/Applications; an
+            // app inside another app's bundle is that app's helper.
+            guard !path.hasPrefix("/System/"), !isInsideAnotherBundle(path), known.insert(path).inserted else { continue }
             extra.append(App(name: url.deletingPathExtension().lastPathComponent, url: url))
         }
         return extra.isEmpty ? installed : installed + extra
     }
 
+    /// Pure: "/Applications/Xcode.app/Contents/Applications/Simulator.app".
+    static func isInsideAnotherBundle(_ path: String) -> Bool {
+        URL(fileURLWithPath: path).deletingLastPathComponent().pathComponents.contains { $0.lowercased().hasSuffix(".app") }
+    }
+
+    /// The folders' apps and, one level down, apps in plain subfolders
+    /// ("/Applications/Adobe Photoshop 2026/Adobe Photoshop 2026.app").
     static func scan(_ folders: [URL]) -> [App] {
         var seen = Set<URL>()
         var apps: [App] = []
+        func add(_ url: URL) {
+            let name = url.deletingPathExtension().lastPathComponent
+            guard seen.insert(url.resolvingSymlinksInPath().standardizedFileURL).inserted else { return }
+            apps.append(App(name: name, url: url))
+        }
+        let scannedPaths = Set(folders.map { $0.standardizedFileURL.path })
         for folder in folders {
-            let urls = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil,
+            let urls = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.isDirectoryKey],
                                                                      options: [.skipsHiddenFiles])) ?? []
-            for url in urls where url.pathExtension == "app" {
-                let name = url.deletingPathExtension().lastPathComponent
-                guard seen.insert(url.resolvingSymlinksInPath().standardizedFileURL).inserted else { continue }
-                apps.append(App(name: name, url: url))
+            for url in urls {
+                if url.pathExtension == "app" { add(url); continue }
+                // Utilities is scanned on its own; packages are not folders.
+                guard !scannedPaths.contains(url.standardizedFileURL.path), url.pathExtension.isEmpty,
+                      (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true else { continue }
+                let inner = (try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil,
+                                                                          options: [.skipsHiddenFiles])) ?? []
+                for app in inner where app.pathExtension == "app" { add(app) }
             }
         }
         return apps.sorted {
@@ -1459,6 +2380,8 @@ private enum PaletteMetrics {
 /// accent with a faint top light (Raycast's raised selection).
 private struct PaletteRowButton<Label: View>: View {
     let selected: Bool
+    /// The selection colour when not the accent (a destructive answer).
+    var tint: Color? = nil
     let action: () -> Void
     @ViewBuilder let label: () -> Label
     @State private var hovering = false
@@ -1471,7 +2394,7 @@ private struct PaletteRowButton<Label: View>: View {
                 .padding(.horizontal, AOMSpace.x2 + 2)
                 .background {
                     if selected {
-                        shape.fill(LinearGradient(colors: [AOMColor.selection, AOMColor.selection.opacity(0.88)],
+                        shape.fill(LinearGradient(colors: [tint ?? AOMColor.selection, (tint ?? AOMColor.selection).opacity(0.88)],
                                                   startPoint: .top, endPoint: .bottom))
                             .overlay(shape.strokeBorder(Color.white.opacity(contrast == .increased ? 0.5 : 0.18), lineWidth: 0.75))
                     } else if hovering {
@@ -1492,6 +2415,8 @@ final class PaletteResultsCache: ObservableObject {
         let query: String
         let refresh: Int
         let generation: Int
+        /// 6.7: the launcher screen the rows belong to ("" at the root).
+        var route: String = ""
     }
     private var key: Key?
     private var items: [QuickCommandPalette.PaletteItem] = []

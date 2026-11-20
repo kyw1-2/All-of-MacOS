@@ -1,3 +1,23 @@
+## [6.7.0] - 2026-11-20
+
+The launcher finishes what it starts. Follows the Codex launcher spec and UI/UX report of 2026-11-20 (`~/Documents/Codex/2026-11-20/aom/outputs/`), Raycast's System Commands, navigation and confirmAlert docs and macOS 26 Spotlight; the full report with sources and the defect ledger is `docs/design-6.7-launcher.md`.
+
+### Added
+- **Launcher screens (Raycast's navigation stack).** A command opens a screen in the same ⌥Space panel: the search field shows `‹ Screen`, esc goes back one screen with the search and the selected row the screen below had, and nothing brings AOM's window forward.
+- **Kill Apps** (`killapps`, `kill`, `quit apps`, `강제 종료`, `앱 종료`): the running apps, heaviest first with their memory. ↩ quits the normal way and the list stays (Quitting… → Still running after 10 s); ⌘K holds Force Quit…, Hide/Unhide, Switch To and Show in Finder; Quit All Apps Except the front app… and Hide Others at the end. AOM, Finder and the system's hosts are listed as protected. The list follows app launches, quits and hides live.
+- **Uninstall App** (`uninstall`, `unistall app`, `앱 삭제`, `앱 제거`): installed apps (not macOS's or AOM), then the review in the panel — quit first if open, bundle-ID leftovers ticked, name-only matches unticked, sizes, folders as groups — ⌘↩ moves the ticked items to the Trash after a confirmation, then the result with anything that stayed. Same checks, scan and final re-check as System Tools. An app row's Uninstall… now opens this review instead of switching to System Tools.
+- **Sound Devices** (outputs, inputs, mute, 25–100 %), **Clipboard History** (every entry; ↩ pastes into the app you were in), **Window Management** (halves, quarters, thirds, pins), **Keep Awake** (15 minutes to 8 hours, until off, display on, the display rule) and **System Commands** (Lock, Sleep, Sleep Displays, Screen Saver, Restart…/Shut Down… via macOS's own dialog, Log Out…, Empty Trash…, Eject All Disks, Hidden Files, Appearance, Do Not Disturb, Show Desktop, Hide Others, Mission Control, Notification/Control Center, Mute, Mic). System commands are found from the root search too.
+- **In-panel confirmation** for Force Quit, Quit All, Move to Trash, Log Out and Empty Trash: the question on top, Cancel selected, the action in red; a held ↩ does not repeat into it.
+- **Workspace opens on Now**: a Running now card lists a recording, Keep Awake, a focus session, a muted mic, a paused clipboard or paused automations with the button that ends each; the tool directory moved to All Tools.
+- Menu bar panel: "Open Launcher…" (it was a search-looking button), recording and Keep Awake rows with Stop/Turn Off.
+
+### Fixed (Codex report L1–L5, A1–A5)
+- L1 a quicklink waiting for its search closed the launcher; L2 running apps in a subfolder of /Applications were missing (subfolders are scanned now; helpers inside another app stay out); L3 apps opened from a search never came back under Suggestions; L4 the panel could exceed a small screen; L5 the launcher key was shown even when its registration had failed.
+- A1 Folder Rules could approve a changed rule with the old preview's list; A2 a slow earlier test result could replace the newer file's; A3 a failed clipboard copy closed the launcher silently; A4 the launcher ignored Reduce Motion; A5 the menu bar panel kept stale state while open.
+
+### Removed
+- The power button next to Settings in the menu bar panel (Quit is in the … menu and ⌘Q). Keep Awake's 30-minute, 1-hour and display rows leave the root list (Keep Awake screen; still found by name).
+
 ## [6.6.0] - 2026-11-19
 
 Follows the Raycast reports on Oracle (`/data/work/rea/aom-ux-20261117/report/03_raycast_클론_AOM_설계.md`, `04_raycast_uiux_복제_AOM64_통합.md`) that 6.5.0 had left out, a 14-item code review (each item checked against the source first), and the HomePod crackle measured on this Mac.

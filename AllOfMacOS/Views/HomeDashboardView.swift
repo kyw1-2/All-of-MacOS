@@ -65,7 +65,12 @@ struct AOMHomeView: View {
     @State private var showsCustomize = false
     @State private var directoryQuery = ""
     @State private var focusDirectorySearch = false
-    @State private var showsOverview = false
+    /// 6.7: Workspace opens on Now — what is running, what needs you, what
+    /// you did last (the Codex report, p. 3) — and All Tools is the
+    /// directory. The choice is remembered.
+    @AppStorage("AOMWorkspaceShowsNow") private var showsOverview = true
+    @State private var focusRunning = false
+    @State private var micMuted = false
     /// The Productivity modules' `attention` lines, polled with the rest of
     /// the status so a module's countdown never redraws the whole page.
     @State private var moduleAttention: [AOMModule: String] = [:]
@@ -102,8 +107,8 @@ struct AOMHomeView: View {
                 WorkspaceBanner(engineOn: appState.globalEnabled,
                                 automations: triggers.filter(\.isEnabled).count) {
                     Picker("Workspace view", selection: $showsOverview) {
-                        Text("Explore").tag(false)
-                        Text("My Workspace").tag(true)
+                        Text("Now").tag(true)
+                        Text("All Tools").tag(false)
                     }
                     .pickerStyle(.segmented).labelsHidden().frame(width: AOMSize.workspaceModeWidth)
                     .controlSize(.regular)
@@ -113,6 +118,9 @@ struct AOMHomeView: View {
                 // a permission, a recording) or in My Workspace.
                 if showsOverview || recording.isRecording || !snapshot.hero.isRunning {
                     hero(snapshot)
+                }
+                if showsOverview {
+                    runningNow
                 }
                 if showsOverview && snapshot.showsSetup {
                     setupCard(snapshot)
@@ -228,6 +236,122 @@ struct AOMHomeView: View {
             if let text = status.attention, !text.isEmpty { attention[status.module] = text }
         }
         if attention != moduleAttention { moduleAttention = attention }
+        let focus = FocusModule.isSessionActive
+        if focus != focusRunning { focusRunning = focus }
+        let mic = MicMuteController.shared.isMuted
+        if mic != micMuted { micMuted = mic }
+    }
+
+    // MARK: Running now
+
+    /// 6.7: one row per session that is running, with the control that ends
+    /// it on the same line; a calm line and the launcher when nothing is.
+    private var runningNow: some View {
+        let rows = runningRows
+        return VStack(alignment: .leading, spacing: AOMSpace.x2) {
+            HStack(spacing: AOMSpace.x2) {
+                Text("Running now").font(AOMFont.headline)
+                if !rows.isEmpty {
+                    Text("\(rows.count)").font(AOMFont.caption.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(AOMColor.textSecondary)
+                        .padding(.horizontal, AOMSpace.x1 + 2).padding(.vertical, 1)
+                        .background(AOMColor.track, in: Capsule())
+                }
+                Spacer()
+                Button {
+                    AOMLauncherController.shared.show()
+                } label: {
+                    Label(AOMLauncherShortcut.isRegistered ? "Launcher  \(AOMLauncherShortcut.current.displayString)" : "Launcher",
+                          systemImage: "magnifyingglass")
+                }
+                .controlSize(.small)
+                .help("Kill Apps, Uninstall App, Sound Devices, System Commands and every AOM command")
+            }
+            if rows.isEmpty {
+                HStack(spacing: AOMSpace.x2) {
+                    Image(systemName: "checkmark.circle").foregroundStyle(AOMColor.success).accessibilityHidden(true)
+                    Text("Nothing is running. Recording, Keep Awake, focus sessions and a muted mic show here with the button that ends them.")
+                        .font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.vertical, AOMSpace.x1)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                        if index > 0 { AOMDivider().padding(.leading, 40) }
+                        HStack(spacing: AOMSpace.x3) {
+                            Image(systemName: row.symbol)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .frame(width: 26, height: 26)
+                                .background(row.tint, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                                .accessibilityHidden(true)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(row.title).font(AOMFont.body.weight(.medium))
+                                Text(row.detail).font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary).lineLimit(1)
+                            }
+                            Spacer(minLength: AOMSpace.x2)
+                            Button(row.button, action: row.run).controlSize(.small)
+                        }
+                        .padding(.vertical, AOMSpace.x2)
+                        .accessibilityElement(children: .combine)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .aomCard()
+    }
+
+    private struct RunningRow: Identifiable {
+        let id: String
+        let symbol: String
+        let tint: Color
+        let title: String
+        let detail: String
+        let button: String
+        let run: () -> Void
+    }
+
+    private var runningRows: [RunningRow] {
+        var rows: [RunningRow] = []
+        if recording.isRecording {
+            rows.append(.init(id: "recording", symbol: "record.circle", tint: AOMColor.recording, title: "Recording the screen",
+                              detail: "Stop saves it to Capture history", button: "Stop") {
+                Task { _ = try? await recording.stopRecording(); toast.show("Recording saved") }
+            })
+        }
+        if keepAwake.isActive {
+            rows.append(.init(id: "awake", symbol: "cup.and.saucer.fill", tint: AOMModule.focus.hue, title: "Keep Awake",
+                              detail: "The Mac stays awake \(keepAwake.remainingDescription ?? "")", button: "Turn Off") {
+                keepAwake.stop()
+            })
+        }
+        if focusRunning {
+            rows.append(.init(id: "focus", symbol: "timer", tint: AOMModule.focus.hue, title: "Focus session",
+                              detail: "Distracting apps are hidden while it runs", button: "End") {
+                FocusModule.toggleSession(); focusRunning = FocusModule.isSessionActive
+            })
+        }
+        if micMuted {
+            rows.append(.init(id: "mic", symbol: "mic.slash.fill", tint: AOMColor.recording, title: "Microphone muted",
+                              detail: "Apps hear silence until you unmute", button: "Unmute") {
+                MicMuteModule.toggleMute(); micMuted = MicMuteController.shared.isMuted
+            })
+        }
+        if clipboard.paused {
+            rows.append(.init(id: "clipboard", symbol: "pause.circle.fill", tint: AOMModule.clipboard.hue, title: "Clipboard history paused",
+                              detail: "New copies aren't saved", button: "Resume") {
+                clipboard.paused = false
+            })
+        }
+        if suppressionPaused {
+            rows.append(.init(id: "suppression", symbol: "pause.circle.fill", tint: AOMModule.automation.hue, title: "Automations paused",
+                              detail: suppressionDescription ?? "Triggers don't run", button: "Resume") {
+                TriggerSuppression.shared.resume(); suppressionPaused = false
+            })
+        }
+        return rows
     }
 
     /// Hides one part, tile or quick action as an undoable step, with Undo in
