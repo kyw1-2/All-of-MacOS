@@ -154,7 +154,7 @@ struct BatteryCareSection: View {
             }
             if model.helperOutdated {
                 HStack {
-                    Label("The battery helper running now is from an older AOM.", systemImage: "exclamationmark.triangle.fill")
+                    Label("The battery helper running now is from an older AOM; restart it once to use Discharge.", systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(AOMColor.warningText)
                     Button("Restart Helper") { model.restartHelper() }.controlSize(.small)
                 }.font(AOMFont.caption)

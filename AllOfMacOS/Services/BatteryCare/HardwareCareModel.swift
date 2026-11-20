@@ -103,8 +103,44 @@ final class HardwareCareModel: ObservableObject {
     func refreshHelper() {
         worker.async {
             let status = SMAppService.daemon(plistName: HardwareHelperIdentity.plist).status
-            DispatchQueue.main.async { self.apply(helperStatus: status) }
+            let outdated = status == .enabled && Self.helperIsOlderThanItsBinary()
+            DispatchQueue.main.async {
+                self.apply(helperStatus: status)
+                if outdated, !self.helperOutdated { self.helperOutdated = true }
+            }
         }
+    }
+
+    /// Pure: a helper process that started before its binary on disk was last
+    /// written is a previous version that launchd kept running after an update.
+    static func isOutdated(processStart: Date?, binaryModified: Date?) -> Bool {
+        guard let processStart, let binaryModified else { return false }
+        return processStart.addingTimeInterval(1) < binaryModified
+    }
+
+    /// 6.11: the running helper's start time (sysctl, readable for root's
+    /// processes) against the helper binary inside this AOM.
+    static func helperIsOlderThanItsBinary() -> Bool {
+        let binary = Bundle.main.bundleURL.appendingPathComponent("Contents/Library/HelperTools/AOMHardwareHelper")
+        let modified = (try? binary.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+        return isOutdated(processStart: processStart(named: "AOMHardwareHelper"), binaryModified: modified)
+    }
+
+    private static func processStart(named name: String) -> Date? {
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0]
+        var size = 0
+        guard sysctl(&mib, 4, nil, &size, nil, 0) == 0, size > 0 else { return nil }
+        var procs = [kinfo_proc](repeating: kinfo_proc(), count: size / MemoryLayout<kinfo_proc>.stride + 16)
+        size = procs.count * MemoryLayout<kinfo_proc>.stride
+        guard sysctl(&mib, 4, &procs, &size, nil, 0) == 0 else { return nil }
+        for proc in procs.prefix(size / MemoryLayout<kinfo_proc>.stride) {
+            var comm = proc.kp_proc.p_comm
+            let command = withUnsafeBytes(of: &comm) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+            guard command == name || name.hasPrefix(command) && command.count >= 15 else { continue }
+            let start = proc.kp_proc.p_un.__p_starttime
+            return Date(timeIntervalSince1970: TimeInterval(start.tv_sec) + TimeInterval(start.tv_usec) / 1_000_000)
+        }
+        return nil
     }
 
     private func refreshHelperNow() {
