@@ -121,7 +121,19 @@ jobs:
           tag="aom-v${version}-b${build}-g${short}"
           mkdir -p build/releases
           dmg="$PWD/build/releases/All-of-MacOS-${version}-b${build}-g${short}-AOM-Dev.dmg"
-          hdiutil create -quiet -volname "All of MacOS ${version}" -srcfolder "$app" -format UDZO "$dmg"
+          # hdiutil create fails intermittently on hosted runners (exit 1 with
+          # -quiet hid why; 6.7.0 and 6.8.0 both needed a rerun). Retry, with
+          # the error shown, a few times.
+          created=0
+          for attempt in 1 2 3 4; do
+            rm -f "$dmg"
+            if hdiutil create -volname "All of MacOS ${version}" -srcfolder "$app" -format UDZO "$dmg"; then
+              created=1; break
+            fi
+            echo "hdiutil create failed (attempt $attempt); retrying in $((attempt * 10)) s"
+            sleep $((attempt * 10))
+          done
+          test "$created" = 1
           hdiutil verify "$dmg"
           test "$(stat -f %z "$dmg")" -lt 2147483648
           checksum="$(shasum -a 256 "$dmg" | awk '{print $1}')"
