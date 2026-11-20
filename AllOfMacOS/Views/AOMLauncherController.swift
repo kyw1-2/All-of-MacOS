@@ -38,6 +38,9 @@ final class AOMLauncherController: NSObject, NSWindowDelegate {
     private var clickMonitor: Any?
     private var previousApp: NSRunningApplication?
     private var hiding = false
+    /// 6.8 (Codex review): bumped by every show, so a close animation that
+    /// ends after a new open never hides or empties the new panel.
+    private var presentation = 0
 
     /// The app that was in front when the launcher opened (paste targets, "except" lists).
     var frontApp: NSRunningApplication? { previousApp.flatMap { $0.isTerminated ? nil : $0 } }
@@ -50,6 +53,10 @@ final class AOMLauncherController: NSObject, NSWindowDelegate {
 
     func show() {
         guard !isVisible, let appState = AppDelegate.current?.appState ?? AppState.current else { return }
+        presentation &+= 1
+        hiding = false
+        // Raycast's "auto-switch input source": type commands in English.
+        PaletteInputSource.switchToEnglish()
         let own = ProcessInfo.processInfo.processIdentifier
         if let front = NSWorkspace.shared.frontmostApplication, front.processIdentifier != own {
             previousApp = front
@@ -90,12 +97,19 @@ final class AOMLauncherController: NSObject, NSWindowDelegate {
         guard let panel, panel.isVisible, !hiding else { then?(); return }
         hiding = true
         stopWatchingClicks()
+        // The input source comes back only on a plain cancel to the app you
+        // were in; an action may open another app, which keeps English.
+        let restoresInput = restoringFocus && then == nil
+        if !restoresInput { PaletteInputSource.forget() }
+        let ticket = presentation
         let target = restoringFocus ? previousApp : nil
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = 0.08
             panel.animator().alphaValue = 0
         }, completionHandler: { [weak self] in
             MainActor.assumeIsolated {
+                // Reopened during the fade: the new panel stays.
+                guard self?.presentation == ticket else { then?(); return }
                 panel.orderOut(nil)
                 panel.alphaValue = 1
                 // Tears the palette down: its Spotlight queries and menu
@@ -103,6 +117,11 @@ final class AOMLauncherController: NSObject, NSWindowDelegate {
                 panel.contentView = nil
                 self?.hiding = false
                 if let target, !target.isTerminated { target.activate(options: []) }
+                if restoresInput {
+                    // After the app has the keyboard again: switching while the
+                    // panel still resigns can change only the menu bar's flag.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { PaletteInputSource.restore() }
+                }
                 if let then {
                     DispatchQueue.main.asyncAfter(deadline: .now() + (target == nil ? 0 : 0.06), execute: then)
                 }

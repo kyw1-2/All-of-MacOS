@@ -158,12 +158,26 @@ enum CleanupTools {
     /// Each leftover with how it matched (see `LeftoverMatcher.matchKind`).
     static func leftoverMatches(bundleID: String, appName: String, library: URL)
         -> [(candidate: CleanupCandidate, kind: LeftoverMatcher.MatchKind)] {
+        leftoverScan(bundleID: bundleID, appName: appName, library: library).matches
+    }
+
+    /// One pass over the leftover folders: the matches, and (6.8) the
+    /// folders that exist but could not be listed — TCC-protected ones are
+    /// asked once, and the review can say what it did not check.
+    static func leftoverScan(bundleID: String, appName: String, library: URL)
+        -> (matches: [(candidate: CleanupCandidate, kind: LeftoverMatcher.MatchKind)], unreadable: [String]) {
         let matcher = LeftoverMatcher(bundleID: bundleID, appName: appName)
         var found: [(candidate: CleanupCandidate, kind: LeftoverMatcher.MatchKind)] = []
+        var unreadable: [String] = []
         var seen = Set<String>()
         for location in LeftoverMatcher.locations {
             let folder = library.appendingPathComponent(location.path, isDirectory: true)
-            guard let names = try? FileManager.default.contentsOfDirectory(atPath: folder.path) else { continue }
+            guard let names = try? FileManager.default.contentsOfDirectory(atPath: folder.path) else {
+                var isDirectory: ObjCBool = false
+                if FileManager.default.fileExists(atPath: folder.path, isDirectory: &isDirectory), isDirectory.boolValue,
+                   !unreadable.contains(location.label) { unreadable.append(location.label) }
+                continue
+            }
             for entry in names.sorted() {
                 guard let kind = matcher.matchKind(entry, allowNameMatch: location.matchesName) else { continue }
                 let url = folder.appendingPathComponent(entry)
@@ -171,7 +185,7 @@ enum CleanupTools {
                 found.append((CleanupCandidate(url: url, size: allocatedSize(url), note: location.label), kind))
             }
         }
-        return found
+        return (found, unreadable)
     }
 
     /// The uninstaller's review (design-3.4.0 b.16): the app first, then
@@ -184,16 +198,20 @@ enum CleanupTools {
         let preselected: Set<String>
         /// Leftovers that matched only by the app's name.
         let nameOnly: Set<String>
+        /// 6.8: folders that exist but could not be read (not checked).
+        var unreadable: [String] = []
     }
 
     static func uninstallReview(for app: URL, library: URL,
                                 isRunning: (String) -> Bool = { !NSRunningApplication.runningApplications(withBundleIdentifier: $0).isEmpty }) throws -> UninstallReview {
         let identity = try checkUninstallTarget(app, isRunning: isRunning)
-        let matches = leftoverMatches(bundleID: identity.id, appName: identity.name, library: library)
+        let scan = leftoverScan(bundleID: identity.id, appName: identity.name, library: library)
+        let matches = scan.matches
         let byName = Set(matches.filter { $0.kind == .name }.map(\.candidate.id))
         let items = [CleanupCandidate(url: app, size: allocatedSize(app), note: "App")] + matches.map(\.candidate)
         return UninstallReview(bundleID: identity.id, items: items,
-                               preselected: Set(items.map(\.id)).subtracting(byName), nameOnly: byName)
+                               preselected: Set(items.map(\.id)).subtracting(byName), nameOnly: byName,
+                               unreadable: scan.unreadable)
     }
 
     // MARK: - Large files

@@ -56,8 +56,33 @@ enum AOMOverlayActivation {
                                      suppressUntil: suppressReopenUntil)
     }
 
+    /// 6.8: a capture starts without touching AOM's windows, so AOM itself
+    /// can be captured (the user asked for it) and nothing vanishes when the
+    /// shortcut is pressed. Only a Dock reopen is held off meanwhile.
+    static func beginCapture() {
+        MainActor.assumeIsolated { suppressReopenUntil = Date().addingTimeInterval(3) }
+    }
+
+    /// Pure: in a front-to-back window list (CGWindowList order) of the
+    /// windows above ours, the normal-layer window of another app that sits
+    /// directly above it — the last one listed.
+    static func windowDirectlyAbove(in above: [[String: Any]], ownPID: pid_t) -> CGWindowID? {
+        above.last { info in
+            (info[kCGWindowLayer as String] as? Int) == 0 && (info[kCGWindowOwnerPID as String] as? pid_t) != ownPID
+        }.flatMap { $0[kCGWindowNumber as String] as? CGWindowID }
+    }
+
+    /// The other app's window directly above `window` now, if any.
+    static func windowDirectlyAbove(_ window: NSWindow) -> CGWindowID? {
+        guard window.windowNumber > 0,
+              let list = CGWindowListCopyWindowInfo([.optionOnScreenAboveWindow, .excludeDesktopElements],
+                                                    CGWindowID(window.windowNumber)) as? [[String: Any]] else { return nil }
+        return windowDirectlyAbove(in: list, ownPID: ProcessInfo.processInfo.processIdentifier)
+    }
+
     /// Hides the main window immediately for screen captures so it does not
-    /// obstruct the desktop or appear inside captured frames.
+    /// obstruct the desktop or appear inside captured frames. 6.8: no longer
+    /// used by captures (see `beginCapture`); kept for explicit callers.
     static func hideMainWindow() {
         MainActor.assumeIsolated {
             suppressReopenUntil = Date().addingTimeInterval(3)
@@ -77,22 +102,30 @@ enum AOMOverlayActivation {
     /// Activate for a general overlay flow (clipboard, annotation, hud) without
     /// bringing up a main window that was previously hidden.
     /// If the main window was already visible on screen, it is left untouched.
+    ///
+    /// 6.8: activation also raises a main window that was open *behind*
+    /// other apps ("the main window pops up"). When AOM was not the active
+    /// app, the window goes back directly under the window that covered it.
     static func activateForOverlay() {
         MainActor.assumeIsolated {
             let window = mainWindow
             let wasVisible = window?.isVisible ?? false
+            let coveredBy = (wasVisible && !NSApp.isActive) ? window.flatMap(windowDirectlyAbove) : nil
             suppressReopenUntil = Date().addingTimeInterval(3)
             NSApp.activate(ignoringOtherApps: true)
             guard let window else { return }
-            if shouldRestoreHiddenMainWindow(wasVisible: wasVisible, isVisibleNow: window.isVisible) {
-                window.orderOut(nil)
-            }
+            putBack(window, wasVisible: wasVisible, coveredBy: coveredBy)
             // SwiftUI can re-order the window on the next display cycle.
-            DispatchQueue.main.async {
-                if shouldRestoreHiddenMainWindow(wasVisible: wasVisible, isVisibleNow: window.isVisible) {
-                    window.orderOut(nil)
-                }
-            }
+            DispatchQueue.main.async { putBack(window, wasVisible: wasVisible, coveredBy: coveredBy) }
+        }
+    }
+
+    @MainActor
+    private static func putBack(_ window: NSWindow, wasVisible: Bool, coveredBy: CGWindowID?) {
+        if shouldRestoreHiddenMainWindow(wasVisible: wasVisible, isVisibleNow: window.isVisible) {
+            window.orderOut(nil)
+        } else if let coveredBy, window.isVisible, !window.isKeyWindow {
+            window.order(.below, relativeTo: Int(coveredBy))
         }
     }
 }

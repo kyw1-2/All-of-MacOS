@@ -19,6 +19,8 @@ struct AOMMenuBarPanelActions {
     var close: () -> Void
     /// 6.5: the launcher bar at the top of the panel.
     var openLauncher: () -> Void = { MainActor.assumeIsolated { AOMLauncherController.shared.show() } }
+    /// 6.8: the panel's height changed (a session row came or went).
+    var resized: () -> Void = {}
 }
 
 @MainActor
@@ -96,9 +98,10 @@ struct AOMMenuBarPanel: View {
     @ObservedObject var model: AOMMenuBarPanelModel
     let actions: AOMMenuBarPanelActions
 
-    private static let quickKinds: [WorkspaceQuickActionKind] = [
-        .captureArea, .captureWindow, .recordScreen, .copyText, .clipboardHistory, .windowSwitcher
-    ]
+    /// 6.8 (6.7 report §5): the first three quick actions of the user's own
+    /// Workspace order (Customize Workspace), labelled — not a fixed six.
+    @ObservedObject private var layout = AOMWorkspaceLayout.shared
+    private var quickKinds: [WorkspaceQuickActionKind] { Array(layout.visibleQuickActions.prefix(3)) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: AOMSpace.x3) {
@@ -120,24 +123,26 @@ struct AOMMenuBarPanel: View {
                 tile("Mute Mic", model.micMuted ? "mic.slash.fill" : "mic", AOMColor.recording, on: model.micMuted,
                      model.toggleMic)
             }
-            VStack(alignment: .leading, spacing: AOMSpace.x1) {
-                Text("Quick actions").font(AOMFont.caption.weight(.semibold)).foregroundStyle(AOMColor.textSecondary)
+            if !quickKinds.isEmpty {
                 HStack(spacing: AOMSpace.x1) {
-                    ForEach(Self.quickKinds) { kind in
+                    ForEach(quickKinds) { kind in
                         AOMMenuBarQuickButton(kind: kind) {
                             actions.close()
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { kind.run() }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { kind.run() }
                         }
                     }
                 }
             }
-            Divider()
+            Divider().opacity(0.6)
             footer
         }
         .padding(AOMSpace.x3 + 2)
         .frame(width: 356)
         .aomButtonDefaults()
+        // 6.8: its own surface; the panel no longer borrows NSPopover's chrome.
+        .aomFloatingSurface(.panel, radius: 18, inWindow: false)
         .onAppear { model.refresh() }
+        .onChange(of: model.hasActiveSessions) { _, _ in DispatchQueue.main.async { actions.resized() } }
         .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in model.refresh() }
     }
 
@@ -172,7 +177,8 @@ struct AOMMenuBarPanel: View {
             .contentShape(shape)
         }
         .buttonStyle(.plain)
-        .help("⌘K launcher (\(AOMLauncherShortcut.current.displayString) from any app)")
+        .help(AOMLauncherShortcut.isRegistered ? "The launcher — \(AOMLauncherShortcut.current.displayString) from any app"
+                                                : "The launcher (no global key is registered; set one in Settings › Shortcuts)")
         .accessibilityLabel("Open Launcher")
     }
 
@@ -299,7 +305,7 @@ private struct AOMMenuBarTile: View {
     }
 }
 
-/// One everyday action as an icon button with its name in the tooltip.
+/// One pinned action: its icon over its name (Control Center's buttons).
 private struct AOMMenuBarQuickButton: View {
     let kind: WorkspaceQuickActionKind
     let run: () -> Void
@@ -307,9 +313,13 @@ private struct AOMMenuBarQuickButton: View {
 
     var body: some View {
         Button(action: run) {
-            AOMAppIcon(AOMIdentity(symbol: kind.symbol, color: kind.module.hue), size: 30)
+            VStack(spacing: 3) {
+                AOMAppIcon(AOMIdentity(symbol: kind.symbol, color: kind.module.hue), size: 26)
+                Text(kind.title).font(.system(size: 10, weight: .medium)).foregroundStyle(AOMColor.textSecondary)
+                    .lineLimit(1).minimumScaleFactor(0.8)
+            }
                 .frame(maxWidth: .infinity)
-                .frame(height: 40)
+                .frame(height: 52)
                 .background(hovering ? AOMColor.rowHover : Color.clear,
                             in: RoundedRectangle(cornerRadius: AOMRadius.well + 2, style: .continuous))
                 .contentShape(Rectangle())

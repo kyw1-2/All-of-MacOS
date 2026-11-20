@@ -62,7 +62,7 @@ final class SelectionOverlayController {
 
     func present() {
         Self.activeController = self
-        AOMOverlayActivation.hideMainWindow()
+        AOMOverlayActivation.beginCapture()
         // The display query overlaps the user's drag instead of following it.
         ScreenCaptureService.shared.prewarm()
         let screens = NSScreen.screens
@@ -110,12 +110,12 @@ final class SelectionOverlayController {
 
     /// Edges of other apps' visible windows plus every display frame.
     private static func snapGuides(screens: [NSScreen]) -> SelectionGeometry.SnapGuides {
-        let ownPID = ProcessInfo.processInfo.processIdentifier
         let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
             as? [[String: Any]] ?? []
         let windows = info.compactMap { window -> CGRect? in
+            // 6.8: AOM's own normal windows snap too (its overlays are not layer 0).
             guard (window[kCGWindowLayer as String] as? Int) == 0,
-                  (window[kCGWindowOwnerPID as String] as? pid_t) != ownPID,
+                  (window[kCGWindowOwnerPID as String] as? pid_t) != nil,
                   let bounds = window[kCGWindowBounds as String] as? [String: Any],
                   let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary),
                   rect.width >= 50, rect.height >= 50 else { return nil }
@@ -1051,7 +1051,6 @@ private struct SelectionView: View {
 
     private func detectWindowUnderPointer(localPoint: CGPoint) {
         let globalPt = globalRect(for: CGRect(origin: localPoint, size: .zero)).origin
-        let ownPID = ProcessInfo.processInfo.processIdentifier
 
         let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
         guard let infoList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
@@ -1061,7 +1060,9 @@ private struct SelectionView: View {
 
         for info in infoList {
             guard let layer = info[kCGWindowLayer as String] as? Int, layer == 0 else { continue }
-            guard let ownerPID = info[kCGWindowOwnerPID as String] as? pid_t, ownerPID != ownPID else { continue }
+            // 6.8: AOM's own main and Settings windows can be picked as well;
+            // the selection overlay and other panels are above layer 0.
+            guard info[kCGWindowOwnerPID as String] is pid_t else { continue }
             guard let boundsDict = info[kCGWindowBounds as String] as? [String: Any],
                   let rect = CGRect(dictionaryRepresentation: boundsDict as CFDictionary) else { continue }
             guard rect.width >= 50, rect.height >= 50 else { continue }

@@ -228,6 +228,24 @@ final class PaletteUninstallFlow: ObservableObject {
     @Published private(set) var phase: Phase = .checking
     @Published private(set) var review: CleanupTools.UninstallReview?
     @Published private(set) var selected: Set<String> = []
+    /// ~/Library folders that exist but could not be read (6.8, Codex
+    /// review): reported as "not checked", never as "nothing there".
+    @Published private(set) var unreadable: [String] = []
+
+    /// 6.8 (Codex review U2): the last result, kept outside the screen so a
+    /// move that finishes after the panel closed is still shown — on the
+    /// Uninstall App screen and in a HUD.
+    struct Recent: Equatable {
+        let app: URL
+        let name: String
+        let outcome: CleanupTools.TrashOutcome
+        let date: Date
+    }
+    static private(set) var recent: Recent? {
+        didSet { recentDidChange.send() }
+    }
+    /// The Uninstall App screen redraws when a result lands while it is open.
+    static let recentDidChange = PassthroughSubject<Void, Never>()
     private var bundleID: String?
     private var generation = 0
     private let library: URL
@@ -303,6 +321,7 @@ final class PaletteUninstallFlow: ObservableObject {
                 guard let self, ticket == self.generation else { return }
                 switch result {
                 case .success(let review):
+                    self.unreadable = review.unreadable
                     self.review = review
                     self.selected = review.preselected
                     self.phase = .review
@@ -329,26 +348,75 @@ final class PaletteUninstallFlow: ObservableObject {
         guard !chosen.isEmpty else { return }
         phase = .moving
         let ticket = generation
-        let app = self.app
+        let app = self.app, name = self.name
+        let includesApp = chosen.contains { $0.url == app }
         Task.detached(priority: .userInitiated) {
             let result = Result { () throws -> CleanupTools.TrashOutcome in
-                _ = try CleanupTools.checkUninstallTarget(app, expectedID: review.bundleID) {
+                let isRunning: (String) -> Bool = {
                     !NSRunningApplication.runningApplications(withBundleIdentifier: $0).filter { !$0.isTerminated }.isEmpty
+                }
+                if includesApp || FileManager.default.fileExists(atPath: app.path) {
+                    _ = try CleanupTools.checkUninstallTarget(app, expectedID: review.bundleID, isRunning: isRunning)
+                } else if isRunning(review.bundleID) {
+                    // A retry after the app itself already went: its data
+                    // still must not move while a copy of it runs.
+                    throw CleanupTools.UninstallRefusal.running(name)
                 }
                 return CleanupTools.moveToTrash(chosen)
             }
             await MainActor.run { [weak self] in
                 PaletteApplications.invalidate()
-                guard let self, ticket == self.generation else { return }
                 switch result {
                 case .success(let outcome):
+                    PaletteUninstallFlow.recent = Recent(app: app, name: name, outcome: outcome, date: Date())
+                    GestureLog.shared.logFromAnyThread("Uninstall \(name) from the launcher: \(outcome.summary)", level: .action)
+                    guard let self, ticket == self.generation else {
+                        // The screen closed meanwhile: the result still shows.
+                        GestureHUD.shared.show(title: Self.title(for: outcome, app: app, name: name), detail: outcome.summary)
+                        return
+                    }
                     self.phase = .done(outcome)
-                    GestureLog.shared.logFromAnyThread("Uninstall \(self.name) from the launcher: \(outcome.summary)", level: .action)
                 case .failure(let error):
+                    guard let self, ticket == self.generation else {
+                        GestureHUD.shared.show(title: "Nothing Was Moved", detail: error.localizedDescription)
+                        return
+                    }
                     self.phase = .failed(title: "Nothing Was Moved", detail: error.localizedDescription)
                 }
             }
         }
+    }
+
+    /// Pure (Codex review U1): the result names the app only when the app
+    /// itself was moved; leftovers alone keep the app installed.
+    nonisolated static func title(for outcome: CleanupTools.TrashOutcome, app: URL, name: String) -> String {
+        let appMoved = outcome.moved.contains { $0.standardizedFileURL == app.standardizedFileURL }
+        let count = outcome.moved.count
+        if outcome.moved.isEmpty { return "Nothing Was Moved" }
+        if !outcome.failures.isEmpty { return "\(count) Moved, \(outcome.failures.count) Stayed" }
+        if appMoved { return "\(name) Is in the Trash" }
+        return "\(count) Leftover\(count == 1 ? "" : "s") in the Trash · \(name) Stays Installed"
+    }
+
+    /// The items that did not move and still exist, ticked for another try
+    /// (Codex review U3). Items already moved are never moved twice.
+    func retryFailed() {
+        guard case .done(let outcome) = phase, let review else { return }
+        let moved = Set(outcome.moved.map(\.standardizedFileURL))
+        let remaining = chosen.filter { !moved.contains($0.url.standardizedFileURL) && FileManager.default.fileExists(atPath: $0.url.path) }
+        guard !remaining.isEmpty else { return }
+        // The list itself shrinks to what is left: nothing already in the
+        // Trash stays listed (unticked) as if it were still here.
+        let ids = Set(remaining.map(\.id))
+        self.review = CleanupTools.UninstallReview(bundleID: review.bundleID, items: remaining, preselected: ids,
+                                                   nameOnly: review.nameOnly.intersection(ids), unreadable: review.unreadable)
+        selected = ids
+        phase = .review
+    }
+
+    var canRetry: Bool {
+        guard case .done(let outcome) = phase else { return false }
+        return !outcome.failures.isEmpty
     }
 }
 
@@ -595,14 +663,21 @@ final class PaletteRouteModels: ObservableObject {
 
     // Sound
 
+    private var soundTicket = 0
+
+    /// 6.8 (Codex review): only the latest read may land, so an older read
+    /// finishing late never puts the previous device back.
     func loadSound() {
+        soundTicket &+= 1
+        let ticket = soundTicket
         Task { [weak self] in
             let devices = await PaletteSoundDevices.load()
-            self?.sound = devices
+            guard let self, ticket == self.soundTicket else { return }
+            self.sound = devices
         }
     }
 
-    func clearSound() { sound = nil }
+    func clearSound() { soundTicket &+= 1; sound = nil }
 
     func end() {
         watchApps(false)

@@ -1,3 +1,17 @@
+## [6.8.0] - 2026-11-20
+
+Windows stay where they are, AOM can capture itself, and the launcher fixes from Codex's independent 6.7 review (`~/Documents/Codex/2026-11-20/aom/work/v67/`). Battery, AI, System Tools and Automation follow as separate releases.
+
+### Fixed
+- **The main window no longer pops up.** A click on the menu bar icon used to activate AOM to show its popover, and activation brought the main window in front of the app you were in. The menu bar panel is now a non-activating panel (as Bartender, iStat Menus and Raycast do): it takes clicks and keys while your app stays active. Every overlay (clipboard, Quick Access, annotation, alerts) that has to activate AOM now puts a main window that was behind another app back under that app's window.
+- **AOM can capture itself.** Captures hid AOM's main window on purpose, and window capture (hover, picker, frontmost, Capture Window) skipped every AOM window. AOM's normal windows — main, Settings, editors — can now be captured like any app's; its own overlays are still left out.
+- Launcher (Codex review): one click on a Kill Apps row quit the app — inside a screen a click now selects and a second click or ↩ acts; Quit All Except the front app could include every app when the front app was unknown (it is now captured when the launcher opens, and the row is hidden without it); "Force quit X" was reported before the app had ended (now after it does, as a HUD at the root); moving only leftovers said the app was in the Trash; closing during a move lost the result (it now shows as a HUD and under Last uninstall); a partial failure can be retried for what stayed, and the list shrinks to it; a filter typed in the review hid Done; "Move 0 Items"; checkbox rows had no ticked value for VoiceOver; folders the scan couldn't read were not mentioned (one pass now reports them); protected rows looked runnable; "commands" matched every row of a screen; Clipboard History matched titles only (it now uses the main window's matcher: body text, `from:`, `type:`); a paste that never reached the app was silent; a late sound-device read could show the previous device; opening the launcher right after closing it could blank it; the menu bar's help named a key that was not registered.
+
+### Added
+- **The launcher types in English** (Raycast's auto-switch input source): with a Korean (or any non-Latin) input source the launcher switches to your ABC/U.S. layout while it is open, and switches back when you cancel. After a command runs (it may open another app) the input source stays English. `defaults write com.kyw.allofmacos AOMLauncherSwitchesToEnglish -bool false` turns it off.
+- A rounder launcher, as Raycast's: 26 pt panel corners, 12 pt rows, 16 pt Actions panel.
+- Menu bar panel: its own glass surface; Quick actions are the first three of your Workspace order (Customize Workspace), with labels.
+
 ## [6.7.0] - 2026-11-20
 
 The launcher finishes what it starts. Follows the Codex launcher spec and UI/UX report of 2026-11-20 (`~/Documents/Codex/2026-11-20/aom/outputs/`), Raycast's System Commands, navigation and confirmAlert docs and macOS 26 Spotlight; the full report with sources and the defect ledger is `docs/design-6.7-launcher.md`.

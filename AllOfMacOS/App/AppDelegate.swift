@@ -638,32 +638,26 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    /// 6.8: a non-activating panel (`AOMStatusPanelController`): a click on
+    /// the icon no longer activates AOM, so its main window stays where it was.
     @MainActor private func toggleStatusPanel() {
-        if let popover = statusPopover, popover.isShown {
-            popover.performClose(nil)
-            return
-        }
+        let controller = AOMStatusPanelController.shared
+        if controller.isShown { controller.close(); return }
         guard let button = statusItem?.button else { return }
         let model = AOMMenuBarPanelModel(appState: appState)
-        let popover = NSPopover()
-        popover.behavior = .transient
-        popover.animates = true
         let actions = AOMMenuBarPanelActions(
             openWindow: { [weak self] in self?.showMainWindow() },
             openSettings: { [weak self] in self?.openSettings() },
-            showAllCommands: { [weak self, weak popover] in
-                popover?.performClose(nil)
+            showAllCommands: { [weak self] in
+                controller.close()
                 DispatchQueue.main.async { self?.showClassicStatusMenu() }
             },
             quit: { NSApp.terminate(nil) },
-            close: { [weak popover] in popover?.performClose(nil) })
-        popover.contentViewController = NSHostingController(
-            rootView: AOMMenuBarPanel(model: model, actions: actions)
-                .tint(appState?.accentColorChoice.color ?? .accentColor))
-        statusPopover = popover
-        NSApp.activate(ignoringOtherApps: true)
-        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-        popover.contentViewController?.view.window?.makeKey()
+            close: { controller.close() },
+            resized: { controller.fitToContent() })
+        controller.show(AOMMenuBarPanel(model: model, actions: actions)
+                            .tint(appState?.accentColorChoice.color ?? .accentColor),
+                        under: button)
     }
 
     /// Builds the status menu fresh for each click (state, frontmost app).

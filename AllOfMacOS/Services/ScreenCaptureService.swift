@@ -337,11 +337,14 @@ final class ScreenCaptureService {
             let content = try await shareableContent()
             let frontApp = NSWorkspace.shared.frontmostApplication
 
-            if let frontApp, frontApp.processIdentifier != ownPID {
+            // 6.8: with AOM itself in front, its own main or Settings window
+            // is the target (normal layer only, never one of its overlays).
+            if let frontApp {
+                let isOwn = frontApp.processIdentifier == ownPID
                 let appWindows = content.windows.filter { w in
                     guard w.isOnScreen, let app = w.owningApplication else { return false }
                     guard app.processID == frontApp.processIdentifier else { return false }
-                    guard w.windowLayer == 0 || (w.windowLayer > 0 && w.windowLayer < 10) else { return false }
+                    guard w.windowLayer == 0 || (!isOwn && w.windowLayer > 0 && w.windowLayer < 10) else { return false }
                     guard w.frame.width >= 100, w.frame.height >= 100 else { return false }
                     return true
                 }
@@ -374,7 +377,8 @@ final class ScreenCaptureService {
 
         let candidates = content.windows.filter { window in
             guard window.isOnScreen, let app = window.owningApplication else { return false }
-            guard app.processID != ownPID else { return false }
+            // 6.8: AOM's own normal windows count; its overlays do not.
+            guard app.processID != ownPID || window.windowLayer == 0 else { return false }
             // Ignore the desktop, the menu bar and tiny helper windows: they are
             // technically windows but nobody means to capture them.
             guard window.frame.width >= 40, window.frame.height >= 40 else { return false }
@@ -392,7 +396,7 @@ final class ScreenCaptureService {
         let ownPID = ProcessInfo.processInfo.processIdentifier
         return content.windows.filter { window in
             guard window.isOnScreen, let app = window.owningApplication else { return false }
-            guard app.processID != ownPID else { return false }
+            guard app.processID != ownPID || window.windowLayer == 0 else { return false }
             return window.frame.width >= 40 && window.frame.height >= 40
         }
         }
