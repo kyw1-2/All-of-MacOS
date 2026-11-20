@@ -15,7 +15,7 @@ final class SMCWriteSession {
     private let smc: SMCWriting
     private let journal: URL
     private var entries: [String: Entry] = [:]
-    static let keys: Set<String> = Set(["CH0B", "CH0C", "CHTE", "FS! "] +
+    static let keys: Set<String> = Set(["CH0B", "CH0C", "CHTE", "CHIE", "FS! "] +
         (0..<4).flatMap { ["F\($0)Md", "F\($0)Tg"] })
 
     init(smc: SMCWriting, journal: URL) throws {

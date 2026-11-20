@@ -97,6 +97,8 @@ final class AOMMenuBarPanelModel: ObservableObject {
 struct AOMMenuBarPanel: View {
     @ObservedObject var model: AOMMenuBarPanelModel
     let actions: AOMMenuBarPanelActions
+    /// 6.10: the battery line (AlDente's menu bar controls).
+    @ObservedObject private var battery = HardwareCareModel.shared
 
     /// 6.8 (6.7 report §5): the first three quick actions of the user's own
     /// Workspace order (Customize Workspace), labelled — not a fixed six.
@@ -123,6 +125,7 @@ struct AOMMenuBarPanel: View {
                 tile("Mute Mic", model.micMuted ? "mic.slash.fill" : "mic", AOMColor.recording, on: model.micMuted,
                      model.toggleMic)
             }
+            if battery.power?.percent != nil { batteryRow }
             if !quickKinds.isEmpty {
                 HStack(spacing: AOMSpace.x1) {
                     ForEach(quickKinds) { kind in
@@ -141,7 +144,7 @@ struct AOMMenuBarPanel: View {
         .aomButtonDefaults()
         // 6.8: its own surface; the panel no longer borrows NSPopover's chrome.
         .aomFloatingSurface(.panel, radius: 18, inWindow: false)
-        .onAppear { model.refresh() }
+        .onAppear { model.refresh(); battery.refreshBattery() }
         .onChange(of: model.hasActiveSessions) { _, _ in DispatchQueue.main.async { actions.resized() } }
         .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in model.refresh() }
     }
@@ -180,6 +183,45 @@ struct AOMMenuBarPanel: View {
         .help(AOMLauncherShortcut.isRegistered ? "The launcher — \(AOMLauncherShortcut.current.displayString) from any app"
                                                 : "The launcher (no global key is registered; set one in Settings › Shortcuts)")
         .accessibilityLabel("Open Launcher")
+    }
+
+    private var batteryRow: some View {
+        let power = battery.power
+        return HStack(spacing: AOMSpace.x2) {
+            Image(systemName: power?.isCharging == true ? "battery.100percent.bolt" : "battery.75percent")
+                .foregroundStyle(battery.dischargeTarget != nil ? AOMColor.warning : AOMColor.success)
+                .frame(width: 20)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(power?.percent.map { "Battery \($0)%" } ?? "Battery").font(AOMFont.body.weight(.medium))
+                Text(BatteryCareSection.stateLine(power: power, limit: battery.nativeLimit, discharging: battery.dischargeTarget,
+                                                  topUp: battery.topUpRestore != nil))
+                    .font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary).lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            Menu {
+                Button("Hold Here") { battery.holdHere() }
+                Button("Top Up to 100%") { battery.topUp() }.disabled(!battery.canTopUp)
+                Divider()
+                ForEach(HardwareCareModel.limits, id: \.self) { limit in
+                    Button { battery.setLimit(limit) } label: {
+                        Text("Limit \(limit)%" + (battery.nativeLimit == limit ? "  ✓" : ""))
+                    }
+                }
+                Button("No Limit") { battery.setLimit(nil) }
+                Divider()
+                if battery.dischargeTarget != nil {
+                    Button("Stop Discharge") { battery.stopDischarge() }
+                } else {
+                    ForEach([80, 60], id: \.self) { target in
+                        Button("Discharge to \(target)%") { battery.discharge(to: target) }
+                    }
+                }
+            } label: { Text(battery.nativeLimit.map { "\($0)%" } ?? "No limit").font(AOMFont.caption) }
+            .menuStyle(.borderlessButton).fixedSize()
+        }
+        .padding(.horizontal, AOMSpace.x2 + AOMSpace.x0_5)
+        .frame(height: 40)
+        .background(AOMColor.surface.opacity(0.6), in: RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous))
     }
 
     private var header: some View {

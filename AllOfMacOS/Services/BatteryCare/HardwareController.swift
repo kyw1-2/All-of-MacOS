@@ -11,7 +11,9 @@ final class HardwareController {
     private var fan: FanPreset = .auto
     private var batteryKeys: [String] = []
     private var quietSuspended = false
-    private static let batteryKeys: Set<String> = ["CH0B", "CH0C", "CHTE"]
+    private var dischargeTarget = 80
+    private var discharge = DischargePolicy()
+    private static let batteryKeys: Set<String> = ["CH0B", "CH0C", "CHTE", "CHIE"]
     private static let fanKeys = SMCWriteSession.keys.subtracting(batteryKeys)
 
     init(smc: SMCWriting, journal: URL, readSample: @escaping () -> HardwareSample, thermalPressure: @escaping () -> Bool) throws {
@@ -21,12 +23,27 @@ final class HardwareController {
         writes = try SMCWriteSession(smc: smc, journal: journal)
     }
 
-    func configure(battery: BatteryCareMode, fan: FanPreset) throws {
+    func configure(battery: BatteryCareMode, fan: FanPreset, dischargeTarget: Int? = nil) throws {
         // Release the previous policy before taking ownership of another.
         try stop()
         self.battery = battery
         self.fan = fan
-        if battery != .off {
+        if battery == .discharge {
+            // macOS 26+ firmware: the adapter key. Never taken from another utility.
+            guard let target = dischargeTarget, (10...95).contains(target) else {
+                throw HardwareControlError.unavailable("Choose a discharge target")
+            }
+            guard readSample().batteryPercent != nil else { throw HardwareControlError.unavailable("No readable battery") }
+            guard let value = try? smc.read("CHIE"), value.bytes.count == 1 else {
+                throw HardwareControlError.unavailable("This Mac's firmware has no adapter control (CHIE)")
+            }
+            guard value.bytes == [0] else {
+                throw HardwareControlError.unavailable("The adapter is already controlled by another utility")
+            }
+            self.dischargeTarget = target
+            discharge = DischargePolicy()
+            batteryKeys = ["CHIE"]
+        } else if battery != .off {
             let sample = readSample()
             guard sample.batteryPercent != nil else { throw HardwareControlError.unavailable("No readable battery") }
             let b = try? smc.read("CH0B")
@@ -47,7 +64,14 @@ final class HardwareController {
 
     func tick() throws {
         let sample = readSample()
-        if battery != .off {
+        if battery == .discharge {
+            guard let percent = sample.batteryPercent else {
+                throw HardwareControlError.unavailable("Battery telemetry was lost")
+            }
+            let cut = discharge.cutsAdapter(percent: percent, target: dischargeTarget, onAC: sample.onAC)
+            let current = try smc.read("CHIE")
+            try writes.write("CHIE", SMCValue(type: current.type, bytes: [cut ? 0x08 : 0x00]))
+        } else if battery != .off {
             guard let percent = sample.batteryPercent else {
                 throw HardwareControlError.unavailable("Battery telemetry was lost")
             }
@@ -110,6 +134,7 @@ final class HardwareController {
         policy = BatteryCarePolicy()
         quietSuspended = false
         batteryKeys = []
+        discharge = DischargePolicy()
         try writes.restore()
     }
 }

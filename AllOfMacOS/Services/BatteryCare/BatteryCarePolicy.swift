@@ -2,6 +2,31 @@ import Foundation
 
 enum BatteryCareMode: String, Codable, CaseIterable {
     case off, limit80, bypass
+    /// 6.10: the adapter is cut (`CHIE`) so the Mac runs on its battery
+    /// down to a target, as AlDente's Discharge does on macOS 26+ firmware.
+    case discharge
+
+    /// The helper protocol carries the target in the mode string: "discharge-70".
+    static func parse(_ text: String) -> (mode: BatteryCareMode, target: Int?)? {
+        if text.hasPrefix("discharge-") {
+            guard let target = Int(text.dropFirst("discharge-".count)), (10...95).contains(target) else { return nil }
+            return (.discharge, target)
+        }
+        return BatteryCareMode(rawValue: text).map { ($0, nil) }
+    }
+}
+
+/// Pure: whether the adapter stays cut. Discharge starts only on AC and runs
+/// until the battery reaches the target (the adapter reads as gone while it
+/// is cut, so AC is not asked again); it never runs below 10 %.
+struct DischargePolicy {
+    private(set) var active = false
+
+    mutating func cutsAdapter(percent: Int, target: Int, onAC: Bool) -> Bool {
+        if percent <= max(10, target) { active = false; return false }
+        if !active, onAC { active = true }
+        return active
+    }
 }
 
 struct BatteryCarePolicy {

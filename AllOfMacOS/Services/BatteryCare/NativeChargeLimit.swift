@@ -71,15 +71,32 @@ final class NativeChargeLimit {
     }
 
     func limit80(_ on: Bool) throws -> State {
+        on ? try setLimit(80) : try disableLimit()
+    }
+
+    /// 6.10: any limit macOS takes (80–100 %), read back before reporting.
+    func setLimit(_ percent: Int) throws -> State {
+        guard (80...100).contains(percent) else {
+            throw HardwareControlError.unavailable("macOS limits charging between 80% and 100%")
+        }
         var error: NSError?
-        let ok = on ? set(client, NSSelectorFromString("setMCLLimit:error:"), 80, &error)
-                    : disable(client, NSSelectorFromString("disableMCL:"), &error)
+        let ok = set(client, NSSelectorFromString("setMCLLimit:error:"), UInt8(percent), &error)
         if let error { throw error }
         guard ok else { throw HardwareControlError.unavailable("macOS refused the charging limit") }
         let state = try state()
-        guard on ? (state.enabled && state.percent == 80) : !state.enabled else {
-            throw HardwareControlError.unavailable("macOS has not confirmed the charging limit")
+        guard state.enabled, state.percent == percent else {
+            throw HardwareControlError.unavailable("macOS has not confirmed the \(percent)% limit")
         }
+        return state
+    }
+
+    func disableLimit() throws -> State {
+        var error: NSError?
+        let ok = disable(client, NSSelectorFromString("disableMCL:"), &error)
+        if let error { throw error }
+        guard ok else { throw HardwareControlError.unavailable("macOS refused to turn the limit off") }
+        let state = try state()
+        guard !state.enabled else { throw HardwareControlError.unavailable("macOS has not confirmed the limit is off") }
         return state
     }
 }

@@ -186,3 +186,96 @@ final class AOM69AITests: XCTestCase {
         XCTAssertEqual(PaletteAIChat.withHistory("Hi", [][...]), "Hi")
     }
 }
+
+/// 6.10: battery care on macOS 27 firmware (native limit, Hold Here, Top Up,
+/// Discharge through CHIE).
+final class AOM610BatteryTests: XCTestCase {
+    private final class FakeSMC: SMCWriting {
+        var values: [String: SMCValue]
+        var writes: [(String, [UInt8])] = []
+        init(_ values: [String: SMCValue]) { self.values = values }
+        func read(_ key: String) throws -> SMCValue {
+            guard let value = values[key] else { throw HardwareControlError.unavailable("SMC \(key) operation failed (0, 132)") }
+            return value
+        }
+        func write(_ key: String, value: SMCValue) throws { values[key] = value; writes.append((key, value.bytes)) }
+    }
+
+    func testHoldUsesMacOSStepsAndNeverGoesBelow80() {
+        XCTAssertEqual(BatteryTelemetry.holdLimit(for: 83), 85)
+        XCTAssertEqual(BatteryTelemetry.holdLimit(for: 80), 80)
+        XCTAssertEqual(BatteryTelemetry.holdLimit(for: 62), 80, "macOS 27 can't hold below 80%")
+        XCTAssertEqual(BatteryTelemetry.holdLimit(for: 100), 100)
+    }
+
+    func testTelemetryFromThisMacsRegistryValues() {
+        // Values ioreg showed on this Mac on 2026-11-20 (held at 80% on a 65 W adapter).
+        let t = BatteryTelemetry.from([
+            "CurrentCapacity": 80, "IsCharging": false, "ExternalConnected": true, "FullyCharged": false, "CycleCount": 537,
+            "BatteryData": ["DesignCapacity": 4382, "AppleRawMaxCapacity": 3623],
+            "AdapterDetails": ["Watts": 65], "ChargerData": ["NotChargingReason": 16777216],
+            "PowerTelemetryData": ["SystemPowerIn": 11732, "SystemLoad": 11732, "BatteryPower": 0],
+        ])
+        XCTAssertEqual(t.percent, 80)
+        XCTAssertEqual(t.health, 83)
+        XCTAssertEqual(t.adapterRating, 65)
+        XCTAssertEqual(t.batteryWatts, 0)
+        XCTAssertEqual(BatteryCareSection.stateLine(power: t, limit: 80, discharging: nil, topUp: false),
+                       "Not charging — held at 80%, running on the adapter")
+        var charging = t
+        charging.isCharging = true
+        XCTAssertEqual(BatteryCareSection.stateLine(power: charging, limit: nil, discharging: nil, topUp: true), "Charging to 100% (top up)")
+    }
+
+    func testDischargeModeIsParsedWithItsTarget() {
+        XCTAssertEqual(BatteryCareMode.parse("discharge-70")?.mode, .discharge)
+        XCTAssertEqual(BatteryCareMode.parse("discharge-70")?.target, 70)
+        XCTAssertNil(BatteryCareMode.parse("discharge-5"), "never below 10%")
+        XCTAssertEqual(BatteryCareMode.parse("limit80")?.mode, .limit80)
+        XCTAssertNil(BatteryCareMode.parse("nonsense"))
+    }
+
+    func testDischargeRunsFromACToTheTargetEvenWhileTheAdapterReadsGone() {
+        var policy = DischargePolicy()
+        XCTAssertFalse(policy.cutsAdapter(percent: 90, target: 70, onAC: false), "never starts on battery")
+        XCTAssertTrue(policy.cutsAdapter(percent: 90, target: 70, onAC: true))
+        XCTAssertTrue(policy.cutsAdapter(percent: 80, target: 70, onAC: false), "the cut adapter reads as unplugged")
+        XCTAssertFalse(policy.cutsAdapter(percent: 70, target: 70, onAC: false))
+        XCTAssertFalse(policy.cutsAdapter(percent: 75, target: 70, onAC: false), "does not restart by itself")
+    }
+
+    func testTheControllerCutsAndRestoresCHIEOnThisFirmware() throws {
+        // macOS 27.3 here: CH0B/CH0C/CHTE are gone (132), CHIE answers [0].
+        let smc = FakeSMC(["CHIE": SMCValue(type: "hex_", bytes: [0])])
+        var sample = HardwareSample()
+        sample.batteryPercent = 90
+        sample.onAC = true
+        let journal = FileManager.default.temporaryDirectory.appendingPathComponent("aom610-\(UUID().uuidString).plist")
+        defer { try? FileManager.default.removeItem(at: journal) }
+        let controller = try HardwareController(smc: smc, journal: journal, readSample: { sample }, thermalPressure: { false })
+        XCTAssertThrowsError(try controller.configure(battery: .limit80, fan: .auto), "the old charge keys don't exist here")
+        try controller.configure(battery: .discharge, fan: .auto, dischargeTarget: 70)
+        XCTAssertEqual(smc.values["CHIE"]?.bytes, [0x08], "adapter cut")
+        sample.batteryPercent = 70
+        sample.onAC = false
+        try controller.tick()
+        XCTAssertEqual(smc.values["CHIE"]?.bytes, [0x00], "adapter back at the target")
+        sample.batteryPercent = 85
+        try controller.configure(battery: .discharge, fan: .auto, dischargeTarget: 70)
+        XCTAssertEqual(smc.values["CHIE"]?.bytes, [0x00], "on battery: does not start")
+        try controller.stop()
+        XCTAssertEqual(smc.values["CHIE"]?.bytes, [0x00])
+    }
+
+    func testAnotherUtilitysAdapterCutIsNeverTaken() throws {
+        let smc = FakeSMC(["CHIE": SMCValue(type: "hex_", bytes: [0x08])])
+        var sample = HardwareSample()
+        sample.batteryPercent = 90
+        sample.onAC = true
+        let journal = FileManager.default.temporaryDirectory.appendingPathComponent("aom610b-\(UUID().uuidString).plist")
+        defer { try? FileManager.default.removeItem(at: journal) }
+        let controller = try HardwareController(smc: smc, journal: journal, readSample: { sample }, thermalPressure: { false })
+        XCTAssertThrowsError(try controller.configure(battery: .discharge, fan: .auto, dischargeTarget: 70))
+        XCTAssertTrue(smc.writes.isEmpty)
+    }
+}

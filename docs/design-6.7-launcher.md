@@ -91,3 +91,10 @@
 - 부분 실패 후 "남은 항목만 재검토" 흐름(미구현), 메인 창 페이지 전환 p95(Codex 측정 524 ms; Audio·Automation 첫 렌더 분해는 다음 과제).
 
 미리보기 스크린숏은 `--aom-ui-preview` 격리 실행으로 확인했다(`--aom-preview-launcher --aom-preview-palette-route killApps|uninstallApps|sound|clipboard|windows|keepAwake|system|confirm|review:<앱 경로>`).
+
+## 7. 배터리 (6.10)
+
+- **원인(실측):** 이 Mac(macOS 27.3)의 SMC에는 충전 정지 키 `CH0B`·`CH0C`·`CHTE`가 없다(읽기 오류 132 = 키 없음). 남아 있는 충전 관련 키는 `CHIE`(어댑터 차단), `CHLT = [80, 5, 5]`(macOS 자체 80% 한도로 보임) 등이다. batt 이슈 #152에 따르면 macOS 27 펌웨어부터 충전 제어 키는 비공개 entitlement(`com.apple.private.iokit.soc-limit`) 뒤로 옮겨져 root도 쓸 수 없다. 그래서 6.4~6.9의 Bypass는 헬퍼가 매번 거부했다.
+- **대안:** 한도·Hold Here·Top Up은 macOS 기본 충전 한도(PowerUI MCL, 80–100%)로, 방전은 `CHIE = 0x08`(어댑터 차단, AlDente·batt와 같은 방식)로 구현했다. 80% 미만에서 충전을 멈추는 것은 이 펌웨어에서 불가능하다.
+- **헬퍼 교체:** 실행 중인 헬퍼는 11월 18일(6.4) 바이너리였다. 새 정책을 모르면 Restart Helper를 안내하고, 이후 버전부터는 유휴 상태에서 바이너리가 바뀌면 스스로 종료해 다음 요청 때 새 바이너리로 뜬다.
+- **미검증:** `CHIE` 쓰기는 root 헬퍼에서만 가능해 이 세션에서 실제로 쓰지 않았다(읽기만 확인). 처음 Discharge를 누를 때 헬퍼가 쓰기 후 다시 읽어 확인하며, 실패하면 그 사유가 표시된다.

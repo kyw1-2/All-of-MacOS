@@ -347,6 +347,10 @@ struct QuickCommandPalette: View {
               subtitle: "Claude Code or Codex answers here; ⇥ from any search asks it · AI 질문",
               aliases: ["ai", "ask", "ask ai", "claude", "claude code", "codex", "chatgpt", "질문", "물어보기", "에이아이"],
               keywords: "llm assistant agent quick ai 클로드 코덱스"),
+        .init(id: "battery.screen", route: .battery,
+              subtitle: "Charge limit, hold, top up and discharge · 배터리 (AlDente)",
+              aliases: ["battery", "배터리", "aldente", "charge limit", "충전 제한", "bypass", "바이패스"],
+              keywords: "hold top up discharge sailing 방전 완충 충전"),
         .init(id: "system.screen.commands", route: .system,
               subtitle: "Lock, sleep, restart, empty Trash, dark mode … · 시스템 명령",
               aliases: ["system", "system commands", "시스템", "시스템 명령"],
@@ -637,6 +641,7 @@ struct QuickCommandPalette: View {
         // 6.7: Raycast's System Commands are found from the root search too.
         if isSearching {
             items += PaletteSystemCommand.all.map(systemCommandItem)
+            items += batteryItems()
             items += PaletteAICommand.all.map(aiCommandItem)
         }
         // Every action is searchable, including capabilities which previously
@@ -1076,6 +1081,8 @@ struct QuickCommandPalette: View {
         case .killApps: screens.watchApps(true)
         case .uninstallReview(let app): screens.beginUninstall(app)
         case .soundDevices: screens.loadSound()
+        // Read once when the screen opens, never per keystroke.
+        case .battery: HardwareCareModel.shared.refreshBattery()
         case .uninstallApps, .clipboard, .windowLayouts, .keepAwake, .system, .ai, .confirm: break
         }
     }
@@ -1242,6 +1249,7 @@ struct QuickCommandPalette: View {
         case .windowLayouts: return windowLayoutItems()
         case .keepAwake: return keepAwakeItems()
         case .system: return PaletteSystemCommand.all.map(systemCommandItem)
+        case .battery: return batteryItems()
         case .ai: return aiItems()
         case .confirm: return confirmationItems()
         }
@@ -1626,6 +1634,47 @@ struct QuickCommandPalette: View {
         return items
     }
 
+    /// 6.10: AlDente's controls from the launcher. Each shows the result it
+    /// actually got (macOS's confirmation or refusal), when it arrives.
+    private func batteryItems() -> [PaletteItem] {
+        let battery = HardwareCareModel.shared
+        let report: (String) -> Void = { text in GestureHUD.shared.show(title: "Battery", detail: text) }
+        func row(_ id: String, _ title: String, _ subtitle: String, _ icon: String, _ aliases: [String],
+                 _ run: @escaping (@escaping (String) -> Void) -> Void) -> PaletteItem {
+            var item = screenRow(id, title, subtitle, icon: icon, group: "Battery",
+                                 primary: PaletteAction(title: "Run") { run(report) })
+            item.aliases = aliases
+            item.keywords = "battery 배터리 aldente 충전"
+            return item
+        }
+        let level = battery.power?.percent.map { "\($0)%" } ?? "—"
+        var items = [
+            row("battery.hold", "Hold Battery Here", "Stop charging at \(level) and run on the adapter (80% at least) · 바이패스",
+                "pause.circle", ["hold", "bypass", "hold here", "바이패스", "충전 멈춤", "충전 중지"]) { battery.holdHere(done: $0) },
+        ]
+        // Only when it can do something: a limit to lift, on the adapter.
+        if battery.canTopUp {
+            items.append(row("battery.topup", "Top Up Battery to 100%", "Once; your limit comes back when full · 완충", "arrow.up.circle",
+                             ["top up", "full charge", "완충", "100%"]) { battery.topUp(done: $0) })
+        }
+        for limit in HardwareCareModel.limits {
+            items.append(row("battery.limit.\(limit)", "Charge Limit \(limit)%", battery.nativeLimit == limit ? "In use" : "macOS's own limit",
+                             "battery.75percent", ["limit \(limit)", "충전 제한 \(limit)"]) { battery.setLimit(limit, done: $0) })
+        }
+        items.append(row("battery.limit.off", "Charge Limit Off", "Charge to 100% every time", "battery.100percent",
+                         ["no limit", "limit off", "충전 제한 끄기"]) { battery.setLimit(nil, done: $0) })
+        if battery.dischargeTarget != nil {
+            items.append(row("battery.stopDischarge", "Stop Discharge", "Give the adapter back", "stop.circle",
+                             ["stop discharge", "방전 중지"]) { battery.stopDischarge(done: $0) })
+        } else if battery.power?.externalConnected ?? false {
+            for target in [80, 60] {
+                items.append(row("battery.discharge.\(target)", "Discharge Battery to \(target)%", "Cut the adapter until \(target)% (hardware helper) · 방전",
+                                 "arrow.down.circle", ["discharge", "방전", "sailing"]) { battery.discharge(to: target, done: $0) })
+            }
+        }
+        return items
+    }
+
     private func systemCommandItem(_ command: PaletteSystemCommand) -> PaletteItem {
         let action: PaletteAction
         if let words = command.confirmation {
@@ -1799,6 +1848,8 @@ struct QuickCommandPalette: View {
 
     private func appear() {
         isFieldFocused = true
+        // One battery read per launcher open (its rows are found from the root search).
+        HardwareCareModel.shared.refreshBattery()
         session.begin()
         recentFiles.start()
         guard PresetManager.isUIPreview else { return }
@@ -2318,6 +2369,7 @@ struct QuickCommandPalette: View {
         case "cliphistory": return AOMModule.clipboard.hue
         case "ai": return AOMBrand.start
         case "awake": return AOMModule.focus.hue
+        case "battery": return AOMColor.success
         case "confirm": return id == "confirm.accept" ? AOMColor.danger : AOMBrand.graphite
         default: return nil
         }

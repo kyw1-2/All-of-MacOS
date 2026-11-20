@@ -73,15 +73,16 @@ final class HelperSession: NSObject, HardwareHelperProtocol {
 
     func configure(battery: String, fan: String, reply: @escaping (String?) -> Void) {
         state.queue.async {
-            guard let battery = BatteryCareMode(rawValue: battery), let fan = FanPreset(rawValue: fan) else {
+            guard let parsed = BatteryCareMode.parse(battery), let fan = FanPreset(rawValue: fan) else {
                 reply("Unknown hardware policy"); return
             }
+            let battery = parsed.mode
             guard consoleUserID() == self.uid, !self.state.sleeping, self.state.owner == nil || self.state.owner == self.id else {
                 reply("Hardware control is busy"); return
             }
             do {
                 try self.state.prepare()
-                try self.state.controller?.configure(battery: battery, fan: fan)
+                try self.state.controller?.configure(battery: battery, fan: fan, dischargeTarget: parsed.target)
                 self.state.failure = nil
                 if battery == .off && fan == .auto { self.state.stop() }
                 else {
@@ -187,4 +188,23 @@ termination.resume()
 let listener = NSXPCListener(machServiceName: HardwareHelperIdentity.name)
 listener.delegate = delegate
 listener.resume()
+
+// 6.10: an AOM update replaces this binary inside the app bundle, but launchd
+// keeps the old process running. While no policy is held, the helper exits
+// when its file on disk changed; the next request launches the new one.
+private func executableStamp() -> String? {
+    var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN) * 4)
+    guard proc_pidpath(getpid(), &buffer, UInt32(buffer.count)) > 0 else { return nil }
+    var info = stat()
+    guard stat(buffer, &info) == 0 else { return nil }
+    return "\(info.st_ino)-\(info.st_mtimespec.tv_sec)-\(info.st_size)"
+}
+let launchedStamp = executableStamp()
+let updateCheck = DispatchSource.makeTimerSource(queue: state.queue)
+updateCheck.schedule(deadline: .now() + 60, repeating: 60, leeway: .seconds(10))
+updateCheck.setEventHandler {
+    guard state.owner == nil, state.failure == nil, let launchedStamp, let now = executableStamp(), now != launchedStamp else { return }
+    exit(0)
+}
+updateCheck.resume()
 RunLoop.main.run()

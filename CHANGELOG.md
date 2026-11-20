@@ -1,3 +1,22 @@
+## [6.10.0] - 2026-11-20
+
+Battery care, rebuilt for what macOS 27 firmware still allows (`docs/design-6.7-launcher.md` §7).
+
+### Why Bypass never worked
+- On this Mac (macOS 27.3) the SMC keys the hardware helper wrote to pause charging — `CH0B`, `CH0C` and their macOS 26 successor `CHTE` — do not exist (key not found, 132). batt's maintainers report the same for macOS 27 firmware: Apple moved charge control behind a private entitlement that even root lacks. The helper refused every Bypass request ("unsupported or already owned"). Only `CHIE` (the adapter) still answers.
+
+### Added (AlDente-style)
+- **Charge limit 80 / 85 / 90 / 95 / 100 %** through macOS's own limit (it stays after AOM quits).
+- **Hold Here** — bypass as macOS 27 allows it: the limit at the current level (5 % steps, 80 % at least), so charging stops and the Mac runs on the adapter.
+- **Top Up to 100%** once; your limit comes back when the battery is full or the adapter is unplugged.
+- **Discharge to 80/70/60/50/40 %**: the helper cuts the adapter (`CHIE`) so the Mac runs on its battery; the adapter comes back at the target, on sleep, or if AOM quits, and an adapter another utility has cut is never taken over.
+- **Power flow** (adapter → Mac → battery, watts) and **health** (capacity vs design, cycles, temperature, adapter rating).
+- A **Battery** screen in the launcher (`battery`, `aldente`, `bypass`, `충전 제한`, `방전`…): Hold Battery Here, Top Up (only when there is a limit to lift and the adapter is in), Charge Limit 80–100 % / Off, Discharge to 80 / 60 %; each shows the result macOS actually confirmed. A battery line in the **menu bar panel** with the same controls.
+- **Restart Helper**: an AOM update left the 6.4 helper process running (since Nov 18); it is offered when the helper refuses a newer policy, and helpers from now on exit while idle when their binary was replaced, so launchd starts the new one.
+
+### Removed
+- The "Bypass" (SMC charge inhibit) and helper "80% limit" choices from the battery card: they cannot work on macOS 27 firmware. The code stays for Macs whose firmware still has the keys.
+
 ## [6.9.0] - 2026-11-20
 
 ### Added
