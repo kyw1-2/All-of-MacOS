@@ -780,13 +780,15 @@ private struct ApplicationAudioRow: View {
                 .accessibilityLabel(app.muted ? "Unmute \(app.name)" : "Mute \(app.name)")
                 .help(service.timedMuteEnds[app.bundleID].map { "Muted until \($0.formatted(date: .omitted, time: .standard))" }
                       ?? (app.muted ? "Unmute" : "Mute"))
-                Slider(value: Binding(get: { Double(gain) }, set: {
-                    gain = Float($0); service.setGain(gain, bundleID: app.bundleID)
-                }), in: 0...1)
-                .audioRowSlider()
+                // 7.0: SoundSource's single track — volume to the 100 % detent,
+                // Volume Overdrive in amber up to 400 %.
+                AOMOverdriveSlider(value: Binding(get: { Double(gain) * Double(app.overdrive) }, set: { setCombinedVolume($0) }),
+                                   isMuted: app.muted)
+                .frame(height: 18)
+                .frame(minWidth: AudioRowMetrics.sliderMinWidth, maxWidth: AudioRowMetrics.sliderMaxWidth)
+                .disabled(app.bundleID.isEmpty)
                 .accessibilityLabel("Volume for \(app.name)")
-                .accessibilityValue("\(Int((gain * 100).rounded())) percent")
-                RowValue(text: volumeLabel, tint: app.overdrive > 1.0001 ? AOMColor.warningText : AOMColor.textSecondary)
+                RowValue(text: volumeLabel, tint: app.overdrive > 1.0001 ? AOMCraftColor.overdriveAmber : AOMColor.textSecondary)
                     .help(app.overdrive > 1.0001 ? "Volume Overdrive \(Int((app.overdrive * 100).rounded()))%" : "Volume")
                 MagicBoostButton(isOn: app.magicBoost, label: "Magic Boost for \(app.name)") {
                     service.toggleMagicBoost(bundleID: app.bundleID)
@@ -798,6 +800,7 @@ private struct ApplicationAudioRow: View {
             }
             .audioRowPadding()
             .contentShape(Rectangle())
+            .aomCalmHover(radius: AOMCraftRadius.row)
             .contextMenu { contextMenu }
 
             if expanded { effects }
@@ -815,6 +818,20 @@ private struct ApplicationAudioRow: View {
         .onChange(of: app.gain) { _, value in gain = min(max(value, 0), 1) }
         .onChange(of: app.balance) { _, value in balance = AudioBalance.clamp(value) }
         .onChange(of: expanded) { _, shown in if shown { availableOutputs = AudioOutputService.devices() } }
+    }
+
+    /// 0…4 split as "Set App Volume" does: volume up to 1, overdrive beyond (5 % steps).
+    private func setCombinedVolume(_ value: Double) {
+        let clamped = AOMVolumeScale.clamped(value)
+        let nextGain = Float(min(clamped, 1))
+        if abs(nextGain - gain) > 0.0005 || (clamped >= 1 && gain < 1) {
+            gain = nextGain
+            service.setGain(nextGain, bundleID: app.bundleID)
+        }
+        let nextOverdrive = Float(max(1, (clamped * 20).rounded() / 20))
+        if abs(nextOverdrive - app.overdrive) > 0.001 {
+            service.setOverdrive(nextOverdrive, bundleID: app.bundleID)
+        }
     }
 
     /// Under the name: the live level while AOM processes the app, otherwise
