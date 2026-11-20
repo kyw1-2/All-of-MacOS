@@ -271,6 +271,31 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
 
     // MARK: Volume Overdrive and Timed Mute
 
+    /// Pure: 0…4 split as "Set App Volume" does — volume up to 1, Volume
+    /// Overdrive beyond it in 5 % steps.
+    nonisolated static func volumeSplit(_ value: Double) -> (gain: Float, overdrive: Float) {
+        let clamped = AOMVolumeScale.clamped(value)
+        return (Float(min(clamped, 1)), Float(max(1, (clamped * 20).rounded() / 20)))
+    }
+
+    /// 7.1: the one entry for the 0–400 % track (mixer panel and Audio page).
+    /// Changes are judged against what is stored, not the row's snapshot:
+    /// the rows refresh on the next main-queue turn, so a quick 100 → 400 →
+    /// 100 % drag compared 1 with a stale 1 and left 400 % saved (Codex audio
+    /// review, reproduced). Returns the gain now in effect.
+    @discardableResult
+    func setVolume(_ value: Double, bundleID: String) -> Float {
+        let split = Self.volumeSplit(value)
+        guard #available(macOS 14.2, *) else { return split.gain }
+        if abs(AppAudioEngine.storedGain(bundleID: bundleID) - split.gain) > 0.0005 {
+            setGain(split.gain, bundleID: bundleID)
+        }
+        if abs(AppAudioPreferences.overdrive(bundleID: bundleID) - split.overdrive) > 0.001 {
+            setOverdrive(split.overdrive, bundleID: bundleID)
+        }
+        return split.gain
+    }
+
     func setOverdrive(_ value: Float, bundleID: String) {
         guard #available(macOS 14.2, *), AppAudioPreferences.setOverdrive(value, bundleID: bundleID) else { return }
         objectWillChange.send()
@@ -1080,16 +1105,7 @@ struct MixerAppRow: View {
     /// 0…4: up to 1 is the app's volume, above it Volume Overdrive (as the
     /// "Set App Volume" action splits it), in 5 % steps for the effect.
     private func setCombinedVolume(_ value: Double) {
-        let clamped = AOMVolumeScale.clamped(value)
-        let nextGain = Float(min(clamped, 1))
-        if abs(nextGain - gain) > 0.0005 || (clamped >= 1 && gain < 1) {
-            gain = nextGain
-            service.setGain(nextGain, bundleID: app.bundleID)
-        }
-        let nextOverdrive = Float(max(1, (clamped * 20).rounded() / 20))
-        if abs(nextOverdrive - app.overdrive) > 0.001 {
-            service.setOverdrive(nextOverdrive, bundleID: app.bundleID)
-        }
+        gain = service.setVolume(value, bundleID: app.bundleID)
     }
 
     @ViewBuilder private var icon: some View {

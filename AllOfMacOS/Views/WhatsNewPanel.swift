@@ -23,6 +23,14 @@ enum WhatsNew {
     /// Highlights of the current version, bundled so the panel works offline.
     /// Items that alter defaults people already use say so with a note.
     static let items: [Item] = [
+        Item(symbol: "battery.100percent.bolt", title: "Battery Care Finishes on Its Own",
+             detail: "Discharge stops at its target and stays stopped, and Top Up puts your limit back at 100% — now even with AOM's window closed. Changing the fan during a discharge keeps its target.",
+             module: .systemTools, note: "Fixed"),
+        Item(symbol: "hifispeaker", title: "Steadier HomePod Audio",
+             detail: "A dead capture is caught and native playback restored, gaps fade back in instead of clicking, and each overload now notes memory, swap, load and heat — on an 8 GB Mac with heavy swap, quitting unused apps helps most (⌘K › Check HomePod Audio).",
+             module: .audio, note: "Fixed"),
+        Item(symbol: "menubar.rectangle", title: "Glass Menu Bar Panel",
+             detail: "The menu bar panel is Apple's Liquid Glass again, with darker text so it stays readable. Also fixed: the thumb wheel keeps its direction after sleep, the Hyper Key comes back after sleep or a permission change, and Folder Rules no longer restart a download's wait."),
         Item(symbol: "sparkles", title: "Ask AI, Streaming Natively",
              detail: "Ask AI now talks to models directly and streams every word: Apple Intelligence on this Mac (private, no key), Claude, GPT, DeepSeek or Ollama with your own key, or your local :8082 router. Your Claude Code and Codex stay — Claude Code is kept warm between questions, so only the first one waits. ⌘P picks a model, ⇥ moves to the next, ⌘R asks again, ⌘J opens AI Chat (or Terminal for an agent). Keys live in Settings › AI and the Keychain.",
              note: "New"),

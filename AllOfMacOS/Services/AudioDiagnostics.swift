@@ -149,6 +149,8 @@ struct AudioDynamicsReading: Equatable {
 /// lost. "One producer" means one thread at a time: a producer handed over
 /// under a lock (an app's transport during an output move) is fine.
 final class AudioEventRing {
+    /// 7.1: `extra` of a cycle gap whose output sample time wasn't valid.
+    static let unknownSampleTime = UInt64.max
     struct Record: Equatable {
         var host: UInt64
         var kind: UInt64
@@ -390,7 +392,8 @@ final class AudioEventLog {
     private static func event(kind: AudioEventKind, source: String, value: UInt64, extra: UInt64, at time: Date) -> Event {
         var event = Event(time: time, kind: kind, source: source, value: Int64(clamping: value))
         switch kind {
-        case .cycleGap: event.detail = "device sample time \(extra)"
+        case .cycleGap:
+            event.detail = extra == AudioEventRing.unknownSampleTime ? "device sample time unknown" : "device sample time \(extra)"
         case .limiterEngaged, .limiterReleased, .levelerEngaged, .levelerReleased:
             event.extra = extra
             event.detail = dynamicsDetail(kind: kind, extra: extra)
@@ -456,5 +459,46 @@ final class AudioEventLog {
         resetAt = now
         lock.unlock()
         record(.countersReset, source: "diagnostics")
+    }
+}
+
+/// 7.1: what the rest of the Mac was doing when an IO cycle missed its
+/// deadline. Live 7.0 diagnostics showed AirPlay overloads in bursts of 4–5
+/// within ~6 s while AOM's own render averaged 31 µs: the system stalls
+/// `AudioSystemLoad` already names (swap, heat), now recorded on each
+/// overload event with the load average and the kernel's memory-pressure
+/// level, so a burst can be matched to its cause afterwards.
+extension AudioSystemLoad {
+    /// Pure: the event detail for one reading.
+    static func describe(load: Double?, memoryPressure: Int32?, swappedGB: Double?,
+                         thermal: ProcessInfo.ThermalState) -> String {
+        var parts = ["kAudioDeviceProcessorOverload"]
+        if let load, load.isFinite { parts.append(String(format: "load %.1f", load)) }
+        switch memoryPressure {
+        case 1?: parts.append("memory normal")
+        case 2?: parts.append("memory warn")
+        case 4?: parts.append("memory critical")
+        default: break
+        }
+        if let swappedGB, swappedGB.isFinite { parts.append(String(format: "swap %.1f GB", swappedGB)) }
+        switch thermal {
+        case .nominal: parts.append("thermal nominal")
+        case .fair: parts.append("thermal fair")
+        case .serious: parts.append("thermal serious")
+        case .critical: parts.append("thermal critical")
+        @unknown default: break
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    /// Read on the listener queue, never the IO thread: four cheap syscalls.
+    static func overloadDetail() -> String {
+        var averages = [Double](repeating: 0, count: 3)
+        let load = getloadavg(&averages, 3) >= 1 ? averages[0] : nil
+        var level: Int32 = 0
+        var size = MemoryLayout<Int32>.size
+        let pressure = sysctlbyname("kern.memorystatus_vm_pressure_level", &level, &size, nil, 0) == 0 ? level : nil
+        let swapped = swapUsage().map { Double($0.used) / 1_073_741_824 }
+        return describe(load: load, memoryPressure: pressure, swappedGB: swapped, thermal: ProcessInfo.processInfo.thermalState)
     }
 }

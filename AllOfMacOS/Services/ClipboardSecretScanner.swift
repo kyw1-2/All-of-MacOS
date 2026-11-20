@@ -34,6 +34,10 @@ enum ClipboardSecretScanner {
         #"eyJ[A-Za-z0-9_-]{7,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"#,
         // Provider API keys: sk-…, GitHub, Slack, AWS, Google.
         #"sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}"#,
+        // 7.1: GitHub fine-grained tokens, AWS temporary (STS) key ids (with a
+        // digit, so "ASIAPACIFICREGION" stays text), Stripe live and restricted
+        // keys and webhook secrets, Hugging Face, npm, PyPI, Slack app tokens.
+        #"github_pat_[A-Za-z0-9_]{22,}|\bASIA(?=[0-9A-Z]*[0-9])[0-9A-Z]{16}\b|\b(?:sk|rk)_live_[A-Za-z0-9]{24,}|\bwhsec_[A-Za-z0-9]{24,}|\bhf_[A-Za-z0-9]{30,}|\bnpm_[A-Za-z0-9]{36}\b|\bpypi-AgE[A-Za-z0-9_-]{40,}|\bxapp-\d-[A-Z0-9]+-\d+-[a-z0-9]+"#,
         // Inline credentials: password=…, token: …, api_key=…, ?access_token=…,
         // and the same names as quoted keys: "password": "…", 'token': '…'.
         inlineCredentials,

@@ -298,10 +298,51 @@ final class HyperKeyTap {
     fileprivate var usedWhileHeld = false
     fileprivate var tapEscape = true
     var isRunning: Bool { tap != nil }
+    /// 7.1: what the settings ask for, so recovery can bring the tap back.
+    private var wantsEnabled = false
+    private var recoveryObservers: [(NotificationCenter, NSObjectProtocol)] = []
 
     func setEnabled(_ enabled: Bool, tapEscape: Bool) {
         self.tapEscape = tapEscape
+        wantsEnabled = enabled
+        if enabled { installRecovery() }
         enabled ? start() : stop()
+    }
+
+    /// 7.1: like the wheel reverser and the thumb-wheel interceptor. Before,
+    /// a tap that couldn't be created at launch (no Accessibility yet), or
+    /// that died when Accessibility was revoked and granted again, was never
+    /// rebuilt while hidutil still turned Caps Lock into F18: a dead key.
+    /// Sleep stops the tap; wake, Accessibility coming back or AOM becoming
+    /// active rebuilds an invalid tap and re-enables a disabled one.
+    private func installRecovery() {
+        guard recoveryObservers.isEmpty, !PresetManager.isRunningTests, !PresetManager.isUIPreview else { return }
+        let workspace = NSWorkspace.shared.notificationCenter
+        let events: [(NotificationCenter, Notification.Name, Bool)] = [
+            (.default, PermissionWatchdog.accessibilityLost, true),
+            (.default, PermissionWatchdog.accessibilityRecovered, false),
+            (.default, NSApplication.didBecomeActiveNotification, false),
+            (workspace, NSWorkspace.willSleepNotification, true),
+            (workspace, NSWorkspace.didWakeNotification, false),
+            (workspace, NSWorkspace.sessionDidBecomeActiveNotification, false),
+        ]
+        for (center, name, suspends) in events {
+            let token = center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                guard let self, self.wantsEnabled else { return }
+                if suspends { self.stop(); return }
+                self.recover()
+            }
+            recoveryObservers.append((center, token))
+        }
+    }
+
+    private func recover() {
+        if let port = tap, !CFMachPortIsValid(port) { stop() }
+        if tap == nil { start() }
+        else if let port = tap, !CGEvent.tapIsEnabled(tap: port) {
+            held = false; usedWhileHeld = false
+            CGEvent.tapEnable(tap: port, enable: true)
+        }
     }
 
     private func start() {

@@ -218,7 +218,9 @@ final class MouseWheelInterceptor {
             let token = center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 guard let self, self.wantsEnabled else { return }
                 if restart || suspend { self.stopObservation() }
-                if !suspend { self.setEnabled(true, volumeMode: self.volumeMode) }
+                // 7.1: keep the user's direction (the default `reversed: true`
+                // overwrote a wheel set to natural after every wake).
+                if !suspend { self.setEnabled(true, volumeMode: self.volumeMode, reversed: self.reversed) }
             }
             observers.append((center, token))
         }

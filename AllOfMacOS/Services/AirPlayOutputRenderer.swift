@@ -500,7 +500,7 @@ final class AirPlayOutputRenderer {
     private func processorOverloaded() {
         guard !stopped else { return }
         processorOverloads.add()
-        AudioEventLog.shared.record(.overload, source: eventName, detail: "kAudioDeviceProcessorOverload")
+        AudioEventLog.shared.record(.overload, source: eventName, detail: AudioSystemLoad.overloadDetail())
         // Health polling correlates sustained faults; one notification must
         // not schedule an immediate output/tap teardown.
     }

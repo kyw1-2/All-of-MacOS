@@ -122,6 +122,25 @@ struct FolderRuleStability {
     mutating func prune(keeping paths: Set<String>) {
         observations = observations.filter { paths.contains($0.key) }
     }
+
+    /// 7.1: a pass over some folders forgets only what it looked at. Before,
+    /// a Desktop event pruned every other folder's records, so a download
+    /// still settling in Downloads started its wait again each time.
+    /// Only folders that were listed count (a folder that failed to list
+    /// keeps its records), and a folder listed without subfolders covers its
+    /// own items only, so a watched folder nested inside it keeps its own.
+    mutating func prune(inFolders folders: [(url: URL, recursive: Bool)], keeping paths: Set<String>) {
+        observations = observations.filter { path, _ in
+            paths.contains(path) || !folders.contains { Self.covers($0.url, recursive: $0.recursive, path: path) }
+        }
+    }
+
+    /// Pure: whether a listing of `folder` would have seen `path`.
+    static func covers(_ folder: URL, recursive: Bool, path: String) -> Bool {
+        let prefix = folder.path.hasSuffix("/") ? folder.path : folder.path + "/"
+        guard path.hasPrefix(prefix) else { return false }
+        return recursive || !path.dropFirst(prefix.count).contains("/")
+    }
 }
 
 /// Rate limits and the loop guard.
@@ -385,6 +404,7 @@ final class FolderRulesRunner: @unchecked Sendable {
         var output = FolderRulePassOutput()
         let now = environment.now()
         var seenPaths: Set<String> = []
+        var listed: [(url: URL, recursive: Bool)] = []
         var runsThisPass = 0
         for folder in input.config.folders where input.folderIDs?.contains(folder.id) ?? true {
             let rules = input.config.rules(in: folder.id).filter { $0.isEnabled && $0.problems.isEmpty }
@@ -397,6 +417,7 @@ final class FolderRulesRunner: @unchecked Sendable {
                 continue
             case .success(let found):
                 entries = found
+                listed.append((folder.url, rules.contains(where: \.includeSubfolders)))
                 output.folderStates[folder.id] = .ok(items: found.count)
             }
             let sizes = rules.contains { $0.conditions.contains { $0.attribute == .size } }
@@ -431,7 +452,11 @@ final class FolderRulesRunner: @unchecked Sendable {
                 }
             }
         }
-        stability.prune(keeping: seenPaths)
+        if input.folderIDs != nil {
+            stability.prune(inFolders: listed, keeping: seenPaths)
+        } else {
+            stability.prune(keeping: seenPaths)
+        }
         memory.prune(now: now, ruleIDs: Set(input.config.rules.map(\.id)))
         return output
     }

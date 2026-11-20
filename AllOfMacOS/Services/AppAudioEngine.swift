@@ -334,6 +334,10 @@ final class AppAudioEngine {
     /// A muted process tap must never survive across system sleep with its
     /// aggregate IOProc no longer serviced. Keep the user's saved preferences.
     private var systemSleeping = false
+    /// 7.1: the delayed post-wake sync. A second wake inside its 1.5 s used to
+    /// leave the first one queued, which then synced early (before the second
+    /// wake's devices had settled) and again 1.5 s later.
+    private var wakeWork: DispatchWorkItem?
     private var sleepObservers: [NSObjectProtocol] = []
 
     private init() {
@@ -353,6 +357,7 @@ final class AppAudioEngine {
         sleepObservers.append(workspaceCenter.addObserver(
             forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
                 guard let self else { return }
+                self.wakeWork?.cancel(); self.wakeWork = nil
                 self.systemSleeping = true
                 self.stopAll()
                 AudioEventLog.shared.record(.outputStopped, source: "system",
@@ -365,8 +370,11 @@ final class AppAudioEngine {
                 // The output topology and tap process objects settle after wake.
                 // A delayed sync prevents immediately muting an app against a
                 // still-disconnected HomePod or Bluetooth endpoint.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-                    guard let self, !self.systemSleeping, self.isEnabled else { return }
+                self.wakeWork?.cancel()
+                let work = DispatchWorkItem { [weak self] in
+                    guard let self else { return }
+                    self.wakeWork = nil
+                    guard !self.systemSleeping, self.isEnabled else { return }
                     self.errors.removeAll()
                     self.retryAfter.removeAll()
                     self.failedProcessIDs.removeAll()
@@ -374,6 +382,8 @@ final class AppAudioEngine {
                     AudioOutputService.invalidateDeviceCache()
                     self.scheduleSync()
                 }
+                self.wakeWork = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
         })
         // Process objects can exist before playback starts; the process-list
         // notification alone does not tell us when those streams become usable.

@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import IOKit.ps
 import ServiceManagement
 
 /// The view owns sampling demand. The helper lease runs only while a policy is
@@ -43,6 +44,12 @@ final class HardwareCareModel: ObservableObject {
     private var generation = 0
     private var timeout: DispatchWorkItem?
     private var terminating = false
+    /// 7.1: while a Top Up or a Discharge is running, power-source changes
+    /// sample the battery even with no battery view open (the 8 s sampler
+    /// runs only while one is). Before, closing the window left Top Up's
+    /// limit off for good and a Discharge cycling at its target.
+    private var powerSource: CFRunLoopSource?
+    private var backgroundTimer: Timer?
 
     func appear() {
         guard !PresetManager.isUIPreview, !PresetManager.isRunningTests else { return }
@@ -204,7 +211,10 @@ final class HardwareCareModel: ObservableObject {
         guard !busy else { return }
         busy = true
         message = ""
-        configureHelper(battery: helperBattery, fan: preset) { _ in }
+        // 7.1 (Codex review): a running discharge keeps its own target; the
+        // request used to go without it and the helper fell back to 80 %.
+        configureHelper(battery: helperBattery, fan: preset,
+                        target: helperBattery == .discharge ? dischargeTarget : nil) { _ in }
     }
 
     private func proxy() throws -> HardwareHelperProtocol {
@@ -261,7 +271,6 @@ final class HardwareCareModel: ObservableObject {
         guard !PresetManager.isUIPreview, !PresetManager.isRunningTests else { done?("Not available in previews"); return }
         guard !busy else { done?("Another battery change is still running"); return }
         busy = true
-        if endingTopUp { setTopUpRestore(nil) }
         worker.async {
             if !self.nativeChecked { self.native = NativeChargeLimit(); self.nativeChecked = true }
             let result = Result { () throws -> NativeChargeLimit.State in
@@ -274,6 +283,9 @@ final class HardwareCareModel: ObservableObject {
                 self.busy = false
                 switch result {
                 case .success(let state):
+                    // 7.1: the Top Up ends once the limit is really back; a
+                    // failed restore keeps it, so the next sample tries again.
+                    if endingTopUp { self.setTopUpRestore(nil) }
                     self.nativeLimit = state.enabled ? state.percent : nil
                     self.battery = state.enabled && state.percent == 80 ? .limit80 : .off
                     self.message = state.enabled ? "Charging stops at \(state.percent)% (macOS's own limit)" : "Charge limit off"
@@ -314,6 +326,41 @@ final class HardwareCareModel: ObservableObject {
     private func setTopUpRestore(_ value: Int?) {
         topUpRestore = value
         if let value { UserDefaults.standard.set(value, forKey: Self.topUpKey) } else { UserDefaults.standard.removeObject(forKey: Self.topUpKey) }
+        updateBackgroundWatch()
+    }
+
+    /// Pure: whether a running operation needs the battery watched.
+    static func needsBackgroundWatch(topUpRestore: Int?, dischargeTarget: Int?, terminating: Bool) -> Bool {
+        !terminating && (topUpRestore != nil || dischargeTarget != nil)
+    }
+
+    /// Starts or stops the background watch: IOKit's power-source
+    /// notification (no polling) plus a 60 s fallback, each running the
+    /// same sample and follow-up the open views use.
+    func updateBackgroundWatch() {
+        guard !PresetManager.isUIPreview, !PresetManager.isRunningTests else { return }
+        let needed = Self.needsBackgroundWatch(topUpRestore: topUpRestore, dischargeTarget: dischargeTarget,
+                                               terminating: terminating)
+        if needed, powerSource == nil {
+            let context = Unmanaged.passUnretained(self).toOpaque()
+            if let source = IOPSNotificationCreateRunLoopSource({ context in
+                guard let context else { return }
+                let model = Unmanaged<HardwareCareModel>.fromOpaque(context).takeUnretainedValue()
+                DispatchQueue.main.async { model.sampleNow() }
+            }, context)?.takeRetainedValue() {
+                powerSource = source
+                CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+            }
+            let timer = Timer(timeInterval: 60, repeats: true) { [weak self] _ in self?.sampleNow() }
+            timer.tolerance = 10
+            backgroundTimer = timer
+            RunLoop.main.add(timer, forMode: .common)
+            sampleNow()
+        } else if !needed, powerSource != nil || backgroundTimer != nil {
+            if let source = powerSource { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
+            powerSource = nil
+            backgroundTimer?.invalidate(); backgroundTimer = nil
+        }
     }
 
     /// Cuts the adapter through the helper until the battery reaches `target`.
@@ -328,6 +375,7 @@ final class HardwareCareModel: ObservableObject {
         message = ""
         configureHelper(battery: .discharge, fan: fan, target: target) { success in
             self.dischargeTarget = success ? target : nil
+            self.updateBackgroundWatch()
             if success { self.message = "Discharging to \(target)%: the adapter is cut; it comes back at \(target)%, on sleep, or if AOM quits" }
             done?(self.message)
             self.sampleNow()
@@ -337,6 +385,7 @@ final class HardwareCareModel: ObservableObject {
     func stopDischarge(reached: Int? = nil, done: ((String) -> Void)? = nil) {
         guard dischargeTarget != nil else { done?("No discharge is running"); return }
         dischargeTarget = nil
+        updateBackgroundWatch()
         busy = true
         configureHelper(battery: .off, fan: fan) { _ in
             self.message = reached.map { "Reached \($0)%; the adapter is back" } ?? "Discharge stopped; the adapter is back"
@@ -459,6 +508,7 @@ final class HardwareCareModel: ObservableObject {
         if helperBattery != .off { battery = .off }
         helperBattery = .off
         dischargeTarget = nil
+        updateBackgroundWatch()
         fan = .auto
         busy = false
         message = reason
@@ -466,6 +516,7 @@ final class HardwareCareModel: ObservableObject {
 
     func stop() {
         terminating = true
+        updateBackgroundWatch()
         sampling?.invalidate(); sampling = nil
         lease?.invalidate(); lease = nil
         timeout?.cancel(); timeout = nil

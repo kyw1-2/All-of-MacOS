@@ -1,3 +1,26 @@
+## [7.1.0] - 2026-11-21
+
+Fixes from an outside audit of 6.11/7.0, checked line by line against the code, and from Codex's audio review (`~/Documents/Codex/2026-11-21/new-chat/outputs/AOM-오디오-검수보고서.pdf`). What was adopted, rejected and why: `docs/review-7.1-audit.md`.
+
+### Fixed
+- **Battery — Discharge stops for good at its target.** With no battery view open the app never ended the discharge, and the helper's policy re-cut the adapter as soon as the battery charged back to target + 1 % (70 ↔ 71 %). The policy now latches; a new discharge starts fresh.
+- **Battery — Top Up and Discharge finish with the window closed.** While one runs, power-source changes (IOKit notification, plus a 60 s fallback) sample the battery; a Top Up interrupted by quitting resumes its watch at launch. A Top Up's limit is cleared only once macOS confirms it is back (a failed restore retries), and changing the fan mid-discharge keeps the discharge target (it fell back to 80 %).
+- **Volume track (7.0):** a quick 100 → 400 → 100 % drag left 400 % saved — the mixer and the Audio page compared with a stale row. Both now set volume through one function that compares with what is stored.
+- **HomePod, queued path:** a confirmed capture gap's fade-in waited for silence to end only if fewer than 32 silent frames followed; one silent frame after the gap's own zeros cancelled it and the next sound started as a step. The fade now waits for the first real sample.
+- **HomePod, direct path:** the watchdog treated a running IOProc as capturing even when the tap delivered no buffer (the muted tap then kept the app silent). Capture and output are now separate facts, so a dead tap restores native playback after 5 s. Gap events record the real output sample time ("unknown" instead of a fake 0).
+- **Audio after wake:** a second wake within 1.5 s no longer leaves the first wake's reconnect queued to fire early.
+- **UGREEN thumb wheel:** a wheel set to natural direction no longer flips back to reversed after wake, Accessibility recovery or AOM coming to the front.
+- **Hyper Key:** the Caps Lock tap is rebuilt after wake, Accessibility coming back or AOM becoming active (it had no recovery: a tap that failed or died left Caps Lock sending a bare F18).
+- **Folder Rules:** a pass over one folder no longer forgets the files another folder is still waiting on (downloads restarted their settle wait on every Desktop event); a folder that failed to list, or a watched folder nested in a non-recursive one, keeps its records.
+- **Clipboard privacy:** GitHub fine-grained tokens, AWS STS key ids, Stripe live/restricted keys and webhook secrets, Hugging Face, npm, PyPI and Slack app tokens are recognised as secrets.
+- **Paste from the shelf:** activation is requested again at 150 and 400 ms when the first request is dropped (Space switch, Electron).
+
+### Changed
+- **Menu bar panel:** Apple's Liquid Glass is back (7.0 had made it frosted); text keeps the darker launcher ink.
+
+### Diagnostics
+- Each audio overload event now records the load average, the kernel's memory-pressure level, swap in use and the thermal state. On this Mac at the time of the audit: 9.96 of 11 GB swap, memory pressure "warn", load 13–14 and kernel_task at 88 % — the conditions under which audio threads miss their 2.67 ms deadline.
+
 ## [7.0.0] - 2026-11-20
 
 "Craft & Fluidity": the 7.0 plan (Phases 1–4) with Codex's review of it (`~/Documents/Codex/2026-11-20/dlrj-x20/outputs/`), wired into the app. Design notes: `docs/design-7.0-craft.md`.

@@ -21,9 +21,16 @@ enum BatteryCareMode: String, Codable, CaseIterable {
 /// is cut, so AC is not asked again); it never runs below 10 %.
 struct DischargePolicy {
     private(set) var active = false
+    /// 7.1: the target was reached. Without this latch the restored adapter
+    /// read as on-AC at target + 1 % and the cut started again: a 70 ↔ 71 %
+    /// micro-cycle for as long as the helper kept ticking (the app's own
+    /// stop only ran while a battery view was open). A new discharge makes
+    /// a new policy.
+    private(set) var completed = false
 
     mutating func cutsAdapter(percent: Int, target: Int, onAC: Bool) -> Bool {
-        if percent <= max(10, target) { active = false; return false }
+        if completed { return false }
+        if percent <= max(10, target) { active = false; completed = true; return false }
         if !active, onAC { active = true }
         return active
     }

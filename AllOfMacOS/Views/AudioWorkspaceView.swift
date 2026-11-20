@@ -822,16 +822,7 @@ private struct ApplicationAudioRow: View {
 
     /// 0…4 split as "Set App Volume" does: volume up to 1, overdrive beyond (5 % steps).
     private func setCombinedVolume(_ value: Double) {
-        let clamped = AOMVolumeScale.clamped(value)
-        let nextGain = Float(min(clamped, 1))
-        if abs(nextGain - gain) > 0.0005 || (clamped >= 1 && gain < 1) {
-            gain = nextGain
-            service.setGain(nextGain, bundleID: app.bundleID)
-        }
-        let nextOverdrive = Float(max(1, (clamped * 20).rounded() / 20))
-        if abs(nextOverdrive - app.overdrive) > 0.001 {
-            service.setOverdrive(nextOverdrive, bundleID: app.bundleID)
-        }
+        gain = service.setVolume(value, bundleID: app.bundleID)
     }
 
     /// Under the name: the live level while AOM processes the app, otherwise

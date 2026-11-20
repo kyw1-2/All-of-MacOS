@@ -34,6 +34,11 @@ final class AudioDropoutSoftener {
     private var runFollowsAudio = false
     private var lastSamplePeak: Float = 0
     private var fadeInRemaining = 0
+    /// 7.1 (Codex audio review, reproduced): a confirmed gap's fade-in waits
+    /// for the first non-zero sample. The gap's own zeros had already pushed
+    /// `run` past `minimumRun`, so one more silent frame cancelled the fade and
+    /// the next sound started as a step (0 → 0.5 in the reproduction).
+    private var fadeArmed = false
     private var rate = 0.0
     private var fade = 96
     private var maximumHole = 4080
@@ -60,7 +65,7 @@ final class AudioDropoutSoftener {
     /// The lifetime counter stays monotonic for diagnostics.
     func reset() {
         cursor = 0; primed = 0; run = 0
-        runFollowsAudio = false; lastSamplePeak = 0; fadeInRemaining = 0
+        runFollowsAudio = false; lastSamplePeak = 0; fadeInRemaining = 0; fadeArmed = false
     }
 
     /// A timestamp-confirmed missing packet can be shorter than minimumRun.
@@ -79,7 +84,7 @@ final class AudioDropoutSoftener {
         softened += 1
     }
 
-    func fadeInNextAudio() { fadeInRemaining = fade }
+    func fadeInNextAudio() { fadeArmed = true; fadeInRemaining = 0 }
 
     /// Writes exactly `frames` stereo frames, delayed by `delayFrames`.
     /// Initial output is silence; every subsequent input frame is retained,
@@ -120,9 +125,13 @@ final class AudioDropoutSoftener {
                 }
                 // Single exact-zero crossings still advance a recovery fade.
                 // Only a confirmed new hole cancels it.
-                if run >= Self.minimumRun { fadeInRemaining = 0 }
-                else if fadeInRemaining > 0 { fadeInRemaining -= 1 }
+                // An armed gap fade waits for sound; silence never cancels it.
+                if !fadeArmed {
+                    if run >= Self.minimumRun { fadeInRemaining = 0 }
+                    else if fadeInRemaining > 0 { fadeInRemaining -= 1 }
+                }
             } else {
+                if fadeArmed { fadeArmed = false; fadeInRemaining = fade }
                 if shapesUnverifiedHoles, run >= Self.minimumRun, run <= maximumHole,
                    runFollowsAudio, peak >= Self.discontinuityThreshold {
                     softened += 1

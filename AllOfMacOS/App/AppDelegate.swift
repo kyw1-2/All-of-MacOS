@@ -224,6 +224,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             KeepAwakeRules.shared.start()
             if !PresetManager.isRunningTests {
                 InputRemapService.shared.apply()
+                // 7.1: a Top Up that was running when AOM quit still ends at 100 %.
+                HardwareCareModel.shared.updateBackgroundWatch()
                 // After the menu bar and audio settle, so an update never opens on a busy launch.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 4) { MainActor.assumeIsolated { WhatsNew.presentIfUpdated() } }
             }

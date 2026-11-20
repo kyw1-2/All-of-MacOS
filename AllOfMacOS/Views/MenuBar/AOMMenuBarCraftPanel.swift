@@ -215,6 +215,9 @@ struct AOMMenuBarCraftPanel: View {
         }
         .padding(14)
         .frame(width: 340)
-        .aomLauncherSurface(radius: AOMCraftRadius.floatingPanel)
+        // 7.1: Apple's Liquid Glass again (macOS 26+; a material before, an
+        // opaque surface with Reduce Transparency or Increase Contrast). The
+        // text keeps the launcher ink, so it stays readable on the glass.
+        .aomFloatingGlass(radius: AOMCraftRadius.floatingPanel)
     }
 }

@@ -219,6 +219,11 @@ final class AirPlayDirectStream: AppAudioActivitySource {
     private let framesRendered = AudioAtomicCounter()
     private let framesCaptured = AudioAtomicCounter()
     private let lastCallbackTick = AudioAtomicCounter()
+    /// 7.1 (Codex audio review): the last cycle whose tap buffer was there,
+    /// silent or not. Output callbacks alone used to count as capturing, so a
+    /// tap that stopped delivering (no buffer, zero bytes) while the IOProc
+    /// ran looked healthy — and the muted tap kept the app silent.
+    private let lastInputTick = AudioAtomicCounter()
     private let ioGaps = AudioAtomicCounter()
     private let ioGapFrames = AudioAtomicCounter()
     private let overloads = AudioAtomicCounter()
@@ -352,7 +357,7 @@ final class AirPlayDirectStream: AppAudioActivitySource {
         let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
             guard let self, self.stopRequested.load() == 0 else { return }
             self.overloads.add()
-            AudioEventLog.shared.record(.overload, source: name, detail: "kAudioDeviceProcessorOverload")
+            AudioEventLog.shared.record(.overload, source: name, detail: AudioSystemLoad.overloadDetail())
         }
         if AudioObjectAddPropertyListenerBlock(aggregateID, &overload, queue, block) == noErr {
             listeners.append((overload, block))
@@ -398,7 +403,11 @@ final class AirPlayDirectStream: AppAudioActivitySource {
         if missing > 0 {
             ioGaps.add()
             ioGapFrames.add(UInt64(missing))
-            events.push(.cycleGap, value: UInt64(missing), host: start)
+            // The real output sample time, or "unknown" (the event used to
+            // read "device sample time 0" for every direct gap).
+            let valid = stamp.mFlags.contains(.sampleTimeValid) && stamp.mSampleTime.isFinite && stamp.mSampleTime >= 0
+            events.push(.cycleGap, value: UInt64(missing),
+                        extra: valid ? UInt64(min(stamp.mSampleTime, 9.0e15)) : AudioEventRing.unknownSampleTime, host: start)
             fade.restart()
         }
         if stopRequested.load() != 0 { fade.stop() }
@@ -416,6 +425,7 @@ final class AirPlayDirectStream: AppAudioActivitySource {
             let tap = inputs[inputBufferOffset]
             if tap.mNumberChannels > 0, tap.mData != nil, tap.mDataByteSize > 0 {
                 framesCaptured.add(UInt64(Int(tap.mDataByteSize) / (4 * Int(tap.mNumberChannels))))
+                lastInputTick.store(start)
             }
         }
         // The app's chain: EQ, Magic Boost, volume, balance, Overdrive.
@@ -461,14 +471,21 @@ final class AirPlayDirectStream: AppAudioActivitySource {
 
     // MARK: Control side
 
-    /// A callback in the last 0.25 s; the device clock is the capture clock,
-    /// so capturing and rendering are the same fact.
+    /// Capturing: a tap buffer in the last 0.25 s. Rendering: a callback in
+    /// the last 0.25 s. 7.1: two facts — the IOProc can keep running on the
+    /// device clock while the tap delivers nothing, which the watchdog must
+    /// see as a capture failure (it restores native playback after 5 s).
     var activity: (captured: UInt64, rendered: UInt64, peak: Float, recent: Bool, rendering: Bool) {
-        let last = lastCallbackTick.load()
         let now = mach_absolute_time()
-        let recent = last > 0 && Double(now &- last) * secondsPerTick < 0.25
+        let rendering = Self.isRecent(lastCallbackTick.load(), now: now, secondsPerTick: secondsPerTick)
+        let capturing = Self.isRecent(lastInputTick.load(), now: now, secondsPerTick: secondsPerTick)
         return (framesCaptured.load(), framesRendered.load(),
-                Float(bitPattern: UInt32(truncatingIfNeeded: peakBits.load())), recent, recent)
+                Float(bitPattern: UInt32(truncatingIfNeeded: peakBits.load())), capturing, rendering)
+    }
+
+    /// Pure: a tick within the last 0.25 s.
+    static func isRecent(_ tick: UInt64, now: UInt64, secondsPerTick: Double) -> Bool {
+        tick > 0 && now >= tick && Double(now &- tick) * secondsPerTick < 0.25
     }
 
     var statistics: [String: Any] {
