@@ -152,7 +152,7 @@ struct AOMMenuBarCraftPanel: View {
                     Text("Open Launcher…")
                         .font(.system(size: 12.5, weight: .medium))
                         .foregroundStyle(AOMCraftColor.ink)
-                    Text("Ask AI, Kill Apps, Clipboard …")
+                    Text("Ask AI · Kill Apps")
                         .font(.system(size: 11))
                         .foregroundStyle(AOMCraftColor.inkTertiary)
                         .lineLimit(1)
