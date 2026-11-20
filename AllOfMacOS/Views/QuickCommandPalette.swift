@@ -48,6 +48,7 @@ struct QuickCommandPalette: View {
     /// The selected row to give back once a popped screen's query is restored.
     @State private var pendingSelection: String?
     @StateObject private var screens = PaletteRouteModels()
+    @ObservedObject private var ai = PaletteAIChat.shared
 
     enum Host: Equatable { case window, launcher }
 
@@ -342,6 +343,10 @@ struct QuickCommandPalette: View {
               subtitle: "Keep the Mac awake for a while · 잠자기 방지",
               aliases: ["keep awake", "caffeinate", "caffeine", "amphetamine", "잠자기 방지", "카페인"],
               keywords: "sleep timer awake 깨어 있기"),
+        .init(id: "ai.screen.ask", route: .ai,
+              subtitle: "Claude Code or Codex answers here; ⇥ from any search asks it · AI 질문",
+              aliases: ["ai", "ask", "ask ai", "claude", "claude code", "codex", "chatgpt", "질문", "물어보기", "에이아이"],
+              keywords: "llm assistant agent quick ai 클로드 코덱스"),
         .init(id: "system.screen.commands", route: .system,
               subtitle: "Lock, sleep, restart, empty Trash, dark mode … · 시스템 명령",
               aliases: ["system", "system commands", "시스템", "시스템 명령"],
@@ -632,6 +637,7 @@ struct QuickCommandPalette: View {
         // 6.7: Raycast's System Commands are found from the root search too.
         if isSearching {
             items += PaletteSystemCommand.all.map(systemCommandItem)
+            items += PaletteAICommand.all.map(aiCommandItem)
         }
         // Every action is searchable, including capabilities which previously
         // existed only inside the automation picker. Opening creates a draft.
@@ -950,6 +956,12 @@ struct QuickCommandPalette: View {
 
     private func fallbackItems() -> [PaletteItem] {
         var items: [PaletteItem] = []
+        // 6.9: Raycast's Quick AI fallback (⇥ does the same from the field).
+        let question = trimmed
+        items.append(PaletteItem(id: "fallback.ai", title: "Ask \(ai.provider.title) “\(question)”",
+                                 subtitle: "Answers here, read-only · ⇥", icon: "sparkles", section: .fallback,
+                                 primary: PaletteAction(title: "Ask", symbol: "sparkles", effect: .stay) { askAI(question) },
+                                 placement: .fallback, accessory: "⇥"))
         if PaletteQuicklinks.match(query, in: quicklinks.links) == nil {
             for keyword in ["g", "n"] {
                 guard let link = quicklinks.links.first(where: { $0.isEnabled && $0.keyword == keyword }),
@@ -983,6 +995,8 @@ struct QuickCommandPalette: View {
             if let route {
                 switch route {
                 case .confirm: items = confirmationItems()
+                // The field is the composer here, not a filter.
+                case .ai: items = aiItems()
                 // The main window's matcher (body text, from:, type:), not titles only.
                 case .clipboard: items = clipboardHistoryItems()
                 // Results and progress rows are never filtered away (Codex review U4).
@@ -1062,7 +1076,7 @@ struct QuickCommandPalette: View {
         case .killApps: screens.watchApps(true)
         case .uninstallReview(let app): screens.beginUninstall(app)
         case .soundDevices: screens.loadSound()
-        case .uninstallApps, .clipboard, .windowLayouts, .keepAwake, .system, .confirm: break
+        case .uninstallApps, .clipboard, .windowLayouts, .keepAwake, .system, .ai, .confirm: break
         }
     }
 
@@ -1080,6 +1094,107 @@ struct QuickCommandPalette: View {
         default:
             break
         }
+    }
+
+    // MARK: AI (6.9)
+
+    /// Opens Ask AI (if needed) and sends the question.
+    private func askAI(_ question: String) {
+        if navigation.current != .ai { push(.ai) }
+        query = ""
+        ai.ask(question)
+    }
+
+    private var frontAppForAI: NSRunningApplication? {
+        host == .launcher ? AOMLauncherController.shared.frontApp : PaletteSession.previousApp()
+    }
+
+    private func runAICommand(_ command: PaletteAICommand) {
+        let front = frontAppForAI
+        Task { @MainActor in
+            let selection = command.needsSelection ? await PaletteAICommand.selectedText(in: front) : nil
+            let clipboard = NSPasteboard.general.string(forType: .string)
+            guard let prompt = PaletteAICommand.fill(command.template, selection: selection, clipboard: clipboard) else {
+                screens.show(command.needsSelection ? "Select some text in \(front?.localizedName ?? "an app") first" : "The clipboard has no text")
+                if navigation.current != .ai { push(.ai) }
+                return
+            }
+            askAI(prompt)
+        }
+    }
+
+    private func aiCommandItem(_ command: PaletteAICommand) -> PaletteItem {
+        var item = PaletteItem(id: command.id, title: command.title,
+                               subtitle: command.needsSelection ? "The text selected in the front app · \(ai.provider.title)"
+                                                                : "The text on the clipboard · \(ai.provider.title)",
+                               icon: command.symbol, section: .commands,
+                               primary: PaletteAction(title: "Ask", symbol: "sparkles", effect: .stay) { runAICommand(command) })
+        item.aliases = command.aliases
+        item.group = "AI commands"
+        return item
+    }
+
+    private func pasteAnswer() {
+        guard let answer = ai.lastAnswer else { return }
+        let target = frontAppForAI
+        let write = {
+            let board = NSPasteboard.general
+            board.clearContents()
+            board.setString(answer, forType: .string)
+        }
+        guard host == .launcher, let target, AXIsProcessTrusted() else { write(); screens.show("Answer copied"); return }
+        AOMLauncherController.shared.dismiss(restoringFocus: true) {
+            write()
+            Self.paste(into: target, triesLeft: 10) { pasted in
+                if !pasted { GestureHUD.shared.show(title: "Answer Copied", detail: "Press ⌘V in \(target.localizedName ?? "the app").") }
+            }
+        }
+    }
+
+    /// The Ask AI screen: with a conversation, one row carrying its actions
+    /// (the transcript is drawn above); without, the AI commands and agents.
+    private func aiItems() -> [PaletteItem] {
+        let other = ai.provider == .claude ? PaletteAIProvider.codex : .claude
+        let switchAgent = PaletteAction(title: "Switch to \(other.title)", symbol: other.symbol, effect: .stay) { ai.provider = other }
+        if !ai.messages.isEmpty {
+            let pasteTitle = frontAppForAI.map { "Paste Answer to \($0.localizedName ?? "App")" } ?? "Copy Answer"
+            return [PaletteItem(id: "ai.answer", title: ai.lastAnswer.map { String($0.prefix(80)) } ?? "Waiting for the answer…",
+                                subtitle: ai.provider.title, icon: "sparkles", section: .commands,
+                                primary: PaletteAction(title: pasteTitle, symbol: "doc.on.clipboard") { pasteAnswer() },
+                                secondaries: [
+                                    PaletteAction(title: "Copy Answer", symbol: "doc.on.doc", effect: .stay) {
+                                        if let answer = ai.lastAnswer { copyToClipboard(answer, announce: "Answer") }
+                                    },
+                                    PaletteAction(title: "Continue in Terminal", symbol: "terminal") { _ = ai.continueInTerminal() },
+                                    switchAgent,
+                                    PaletteAction(title: "New Chat", symbol: "square.and.pencil", effect: .stay) { ai.newChat() },
+                                    PaletteAction(title: "Stop", symbol: "stop.circle", effect: .stay) { ai.cancel() },
+                                ],
+                                isDimmed: ai.lastAnswer == nil, secondaryLimit: .max)]
+        }
+        var items: [PaletteItem] = []
+        if isSearching {
+            let question = trimmed
+            var ask = screenRow("ai.ask", "Ask \(ai.provider.title)", "“\(question)”", icon: "sparkles", group: "Ask",
+                                primary: PaletteAction(title: "Ask", symbol: "sparkles", effect: .stay) { askAI(question) })
+            ask.accessory = "↩"
+            items.append(ask)
+        }
+        for provider in PaletteAIProvider.allCases {
+            let installed = provider.executable != nil
+            var row = screenRow("ai.provider.\(provider.rawValue)", provider.title,
+                                installed ? (provider == .claude ? "Read-only here (plan mode); ⌘J continues in Terminal"
+                                                                 : "Read-only sandbox here; ⌘J continues in Terminal")
+                                          : "Not installed on this Mac",
+                                icon: provider.symbol, group: "Agent",
+                                primary: PaletteAction(title: provider == ai.provider ? "In Use" : "Use \(provider.title)", effect: .stay) {
+                                    ai.provider = provider
+                                }, dimmed: !installed)
+            row.accessory = provider == ai.provider ? "✓ In use" : nil
+            items.append(row)
+        }
+        items += PaletteAICommand.all.map(aiCommandItem)
+        return items
     }
 
     private func confirm(_ question: PaletteConfirmation) {
@@ -1127,6 +1242,7 @@ struct QuickCommandPalette: View {
         case .windowLayouts: return windowLayoutItems()
         case .keepAwake: return keepAwakeItems()
         case .system: return PaletteSystemCommand.all.map(systemCommandItem)
+        case .ai: return aiItems()
         case .confirm: return confirmationItems()
         }
     }
@@ -1561,7 +1677,9 @@ struct QuickCommandPalette: View {
                 } else if let notice = screens.notice, !navigation.isRoot {
                     noticeLine(notice)
                 }
-                if !items.isEmpty {
+                if navigation.current == .ai, !ai.messages.isEmpty {
+                    aiTranscript
+                } else if !items.isEmpty {
                     resultList(items, selected: selected)
                 } else if header == nil {
                     emptyState
@@ -1591,6 +1709,13 @@ struct QuickCommandPalette: View {
                     .keyboardShortcut("k", modifiers: .command)
                     .opacity(0)
                     .accessibilityHidden(true)
+                // 6.9: Raycast's Quick AI keys on Ask AI.
+                if navigation.current == .ai {
+                    Button("Continue in Terminal") { _ = ai.continueInTerminal() }
+                        .keyboardShortcut("j", modifiers: .command).opacity(0).accessibilityHidden(true)
+                    Button("New Chat") { ai.newChat() }
+                        .keyboardShortcut("n", modifiers: .command).opacity(0).accessibilityHidden(true)
+                }
                 // ⌘, opens Settings from the palette, as in Raycast.
                 Button("Settings") { close(); openAOMSettings() }
                     .keyboardShortcut(",", modifiers: .command)
@@ -1615,6 +1740,18 @@ struct QuickCommandPalette: View {
         .onReceive(appState.objectWillChange) { _ in sourcesChanged() }
         .onReceive(screens.objectWillChange) { _ in sourcesChanged() }
         .onReceive(PaletteUninstallFlow.recentDidChange) { _ in sourcesChanged() }
+        .onReceive(ai.objectWillChange) { _ in if navigation.current == .ai { sourcesChanged() } }
+        // 6.9: ⇥ asks AI from the root (Raycast's Quick AI); on Ask AI it switches agent.
+        .onKeyPress(.tab) {
+            if navigation.current == .ai {
+                ai.provider = ai.provider == .claude ? .codex : .claude
+                return .handled
+            }
+            guard navigation.isRoot, host == .launcher || host == .window else { return .ignored }
+            let question = trimmed
+            if question.isEmpty { push(.ai) } else { askAI(question) }
+            return .handled
+        }
         .onDisappear {
             session.end()
             recentFiles.stop()
@@ -1633,6 +1770,11 @@ struct QuickCommandPalette: View {
         .onKeyPress(.upArrow) { moveSelection(-1, in: items, selected: selected); return .handled }
         .onKeyPress(.downArrow) { moveSelection(1, in: items, selected: selected); return .handled }
         .onKeyPress(.return, phases: .down) { press in
+            // On Ask AI a typed line is a question, not a row choice.
+            if navigation.current == .ai, !trimmed.isEmpty, !press.modifiers.contains(.command) {
+                askAI(trimmed)
+                return .handled
+            }
             guard let item = selected else { return .handled }
             if showsActions {
                 let action = PaletteSearch.action(at: actionIndex, of: item)
@@ -1690,7 +1832,12 @@ struct QuickCommandPalette: View {
                     push(.uninstallApps)
                     push(.uninstallReview(URL(fileURLWithPath: String(review.dropFirst("review:".count)))))
                 default:
-                    let routes: [String: PaletteRoute] = ["killApps": .killApps, "uninstallApps": .uninstallApps,
+                    if name == "ai", let question = arguments.lastIndex(of: "--aom-preview-ai-question").flatMap({
+                        arguments.indices.contains($0 + 1) ? arguments[$0 + 1] : nil }) {
+                        askAI(question)
+                        return
+                    }
+                    let routes: [String: PaletteRoute] = ["ai": .ai, "killApps": .killApps, "uninstallApps": .uninstallApps,
                                                           "sound": .soundDevices, "clipboard": .clipboard,
                                                           "windows": .windowLayouts, "keepAwake": .keepAwake, "system": .system]
                     if let route = routes[name] { push(route) }
@@ -1795,6 +1942,14 @@ struct QuickCommandPalette: View {
             case .failed(let title, let detail):
                 return RouteHeader(symbol: "exclamationmark.triangle.fill", tint: AOMColor.warning, title: title, detail: detail, image: icon)
             }
+        case .ai?:
+            let installed = ai.provider.executable != nil
+            return RouteHeader(symbol: ai.provider.symbol, tint: AOMBrand.start,
+                               title: ai.isRunning ? "\(ai.provider.title) is answering…" : ai.provider.title,
+                               detail: installed
+                                   ? "Your own \(ai.provider.title) CLI, read-only here. ↩ pastes the answer into \(frontAppForAI?.localizedName ?? "the app you were in"), ⌘↩ copies, ⌘J continues in Terminal (it can edit and run there, asking first), ⌘N new chat, ⇥ switches agent."
+                                   : "\(ai.provider.title) isn't installed on this Mac. ⇥ switches agent.",
+                               busy: ai.isRunning)
         case .soundDevices? where screens.sound == nil:
             return RouteHeader(symbol: "hifispeaker.2", tint: AOMModule.audio.hue, title: "Reading Sound Devices…",
                                detail: "Outputs, inputs and the current volume.", busy: true)
@@ -1844,6 +1999,58 @@ struct QuickCommandPalette: View {
         .frame(maxWidth: .infinity, maxHeight: fills ? .infinity : nil, alignment: .topLeading)
         .background(header.tint.opacity(contrast == .increased ? 0.14 : 0.06))
         .accessibilityElement(children: .combine)
+    }
+
+    /// The conversation: each question, then its answer (Markdown inline,
+    /// selectable), errors in red; follows the newest line.
+    private var aiTranscript: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: AOMSpace.x3) {
+                    ForEach(ai.messages) { message in
+                        switch message.role {
+                        case .user:
+                            Text(message.text)
+                                .font(AOMFont.body.weight(.semibold))
+                                .foregroundStyle(AOMColor.textSecondary)
+                                .lineLimit(4)
+                                .textSelection(.enabled)
+                        case .assistant:
+                            if message.text.isEmpty {
+                                HStack(spacing: AOMSpace.x2) {
+                                    ProgressView().controlSize(.small)
+                                    Text("Thinking…").font(AOMFont.callout).foregroundStyle(AOMColor.textTertiary)
+                                }
+                            } else {
+                                Text(Self.markdown(message.text))
+                                    .font(AOMFont.body)
+                                    .foregroundStyle(AOMColor.text)
+                                    .textSelection(.enabled)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        case .error:
+                            Label(message.text, systemImage: "exclamationmark.triangle.fill")
+                                .font(AOMFont.callout)
+                                .foregroundStyle(AOMColor.dangerText)
+                                .padding(AOMSpace.x2)
+                                .background(AOMColor.danger.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                .textSelection(.enabled)
+                        }
+                    }
+                    Color.clear.frame(height: 1).id("ai.bottom")
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, AOMSpace.x4)
+                .padding(.vertical, AOMSpace.x3)
+            }
+            .onChange(of: ai.messages) { _, _ in proxy.scrollTo("ai.bottom", anchor: .bottom) }
+            .onAppear { proxy.scrollTo("ai.bottom", anchor: .bottom) }
+        }
+    }
+
+    static func markdown(_ text: String) -> AttributedString {
+        (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
+            ?? AttributedString(text)
     }
 
     /// The result of an action that kept the screen ("Asked Safari to quit").
@@ -2109,6 +2316,7 @@ struct QuickCommandPalette: View {
         case "kill", "uninstall", "review": return AOMModule.systemTools.hue
         case "sound": return AOMModule.audio.hue
         case "cliphistory": return AOMModule.clipboard.hue
+        case "ai": return AOMBrand.start
         case "awake": return AOMModule.focus.hue
         case "confirm": return id == "confirm.accept" ? AOMColor.danger : AOMBrand.graphite
         default: return nil
@@ -2219,7 +2427,9 @@ struct QuickCommandPalette: View {
             Spacer()
             if let item, item.isDimmed {
                 // A protected row says why instead of offering a dead ↩.
-                Label("Protected", systemImage: "lock").font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
+                Label(item.id == "ai.answer" ? "Waiting for the answer…" : item.id.hasPrefix("kill.") ? "Protected" : "Unavailable",
+                      systemImage: item.id == "ai.answer" ? "hourglass" : "lock")
+                    .font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
             } else if let item {
                 actionHint(item.primary.title, keys: "↩", prominent: true) { perform(item.primary, of: item) }
                 if let secondary = item.secondaries.first {

@@ -123,3 +123,66 @@ final class AOM68Tests: XCTestCase {
         XCTAssertTrue(scan.matches.isEmpty)
     }
 }
+
+/// 6.9: Ask AI on the user's Claude Code and Codex CLIs.
+final class AOM69AITests: XCTestCase {
+    func testClaudeStreamLinesBecomeSessionDeltaAndResult() {
+        // Lines as `claude -p … --output-format stream-json --include-partial-messages --verbose` printed them on this Mac.
+        let initLine = #"{"type":"system","subtype":"init","cwd":"/tmp","session_id":"b2f9155f-7720-4fe9-9519-799b07260925"}"#
+        let delta = #"{"type":"stream_event","event":{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"OK"}},"session_id":"b2f9155f"}"#
+        let thinking = #"{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"hm"}}}"#
+        let result = #"{"type":"result","subtype":"success","is_error":false,"result":"OK","session_id":"b2f9155f-7720-4fe9-9519-799b07260925"}"#
+        XCTAssertEqual(PaletteAIEvent.parse(initLine, provider: .claude), [.session("b2f9155f-7720-4fe9-9519-799b07260925")])
+        XCTAssertEqual(PaletteAIEvent.parse(delta, provider: .claude), [.delta("OK")])
+        XCTAssertEqual(PaletteAIEvent.parse(thinking, provider: .claude), [], "thinking is not shown as the answer")
+        XCTAssertEqual(PaletteAIEvent.parse(result, provider: .claude), [.session("b2f9155f-7720-4fe9-9519-799b07260925"), .done("OK")])
+        XCTAssertEqual(PaletteAIEvent.parse("not json", provider: .claude), [])
+    }
+
+    func testCodexEventsIncludingTheUsageLimitError() {
+        XCTAssertEqual(PaletteAIEvent.parse(#"{"type":"thread.started","thread_id":"01a1f891"}"#, provider: .codex), [.session("01a1f891")])
+        XCTAssertEqual(PaletteAIEvent.parse(#"{"type":"item.completed","item":{"id":"i","type":"agent_message","text":"OK"}}"#, provider: .codex),
+                       [.message("OK")])
+        XCTAssertEqual(PaletteAIEvent.parse(#"{"type":"item.completed","item":{"type":"reasoning","text":"x"}}"#, provider: .codex), [])
+        // Exactly what Codex printed here on 2026-11-20 (its usage limit).
+        let limit = #"{"type":"error","message":"You’ve hit your usage limit. Try again at 9:10 PM."}"#
+        XCTAssertEqual(PaletteAIEvent.parse(limit, provider: .codex), [.failure("You’ve hit your usage limit. Try again at 9:10 PM.")])
+    }
+
+    func testTurnsInTheLauncherAreReadOnly() {
+        let claude = PaletteAIProvider.claude.arguments(prompt: "hi", session: "abc")
+        XCTAssertEqual(Array(claude.prefix(2)), ["-p", "hi"])
+        XCTAssertTrue(claude.contains("plan"), "Claude Code runs in plan mode in the launcher")
+        XCTAssertEqual(claude.suffix(2), ["--resume", "abc"])
+        XCTAssertFalse(claude.contains { $0.contains("dangerously") })
+        let codex = PaletteAIProvider.codex.arguments(prompt: "hi", session: nil)
+        XCTAssertEqual(codex.first, "exec")
+        XCTAssertTrue(zip(codex, codex.dropFirst()).contains { $0 == ("--sandbox", "read-only") })
+        XCTAssertEqual(codex.last, "hi")
+    }
+
+    func testTerminalCommandsQuoteThePrompt() {
+        let command = PaletteAIProvider.claude.terminalCommand(session: nil, prompt: "it's \"fine\"")
+        XCTAssertTrue(command.hasSuffix(#" 'it'\''s "fine"'"#), command)
+        XCTAssertTrue(PaletteAIProvider.codex.terminalCommand(session: "t1", prompt: nil).hasSuffix(" resume 't1'"))
+    }
+
+    func testPlaceholdersNeedTheirText() {
+        let template = PaletteAICommand.all.first { $0.id == "ai.korean" }!.template
+        XCTAssertNil(PaletteAICommand.fill(template, selection: "  ", clipboard: nil), "no selection, no question")
+        XCTAssertTrue(PaletteAICommand.fill(template, selection: "Hello", clipboard: nil)?.contains("Hello") == true)
+        XCTAssertEqual(PaletteAICommand.fill("{clipboard}!", selection: nil, clipboard: "x"), "x!")
+    }
+
+    @MainActor
+    func testCodexFollowUpsCarryTheEarlierTurns() {
+        let earlier: [PaletteAIChat.Message] = [.init(role: .user, text: "What is AOM?"), .init(role: .assistant, text: "A Mac utility."),
+                                                .init(role: .error, text: "limit")]
+        let prompt = PaletteAIChat.withHistory("And its launcher?", earlier[...])
+        XCTAssertTrue(prompt.contains("User: What is AOM?"))
+        XCTAssertTrue(prompt.contains("Assistant: A Mac utility."))
+        XCTAssertFalse(prompt.contains("limit"), "errors are not context")
+        XCTAssertTrue(prompt.hasSuffix("User: And its launcher?"))
+        XCTAssertEqual(PaletteAIChat.withHistory("Hi", [][...]), "Hi")
+    }
+}

@@ -1,3 +1,10 @@
+## [6.9.0] - 2026-11-20
+
+### Added
+- **Ask AI in the launcher, on your own agents** (Raycast's Quick AI). ⇥ in the root search sends what you typed to Claude Code or Codex — the CLIs already on this Mac (`~/.local/bin/claude` first, then Homebrew's; Codex from ChatGPT.app or the PATH), with your accounts and settings. The answer streams into the panel; type a follow-up and ↩ to continue (Claude Code resumes its session; Codex gets the earlier turns). ↩ on an empty line pastes the answer into the app you were in, ⌘↩ copies, ⌘J continues the conversation in Terminal, ⌘N starts a new chat, ⇥ switches agent. Also an Ask AI command (`ai`, `claude`, `codex`, `질문`) and an "Ask … “query”" row at the end of every search. After ten idle minutes a question starts a new chat.
+- **Read-only in the panel.** Claude Code runs with `--permission-mode plan` and Codex with `--sandbox read-only`; editing files or running commands happens only after ⌘J, in an interactive Terminal session where the CLI asks you first. Errors such as Codex's usage limit are shown as they come.
+- **AI Commands** on the front app's selection (Accessibility; never from a password field) or the clipboard: Summarize Selection, Fix Spelling and Grammar, Translate Selection to English / Korean, Explain Selection, Ask AI About the Clipboard.
+
 ## [6.8.0] - 2026-11-20
 
 Windows stay where they are, AOM can capture itself, and the launcher fixes from Codex's independent 6.7 review (`~/Documents/Codex/2026-11-20/aom/work/v67/`). Battery, AI, System Tools and Automation follow as separate releases.

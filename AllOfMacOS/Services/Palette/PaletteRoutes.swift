@@ -23,6 +23,8 @@ enum PaletteRoute: Hashable {
     case windowLayouts
     case keepAwake
     case system
+    /// 6.9: Quick AI on Claude Code or Codex.
+    case ai
     /// The pending in-panel confirmation (one at a time).
     case confirm
 
@@ -36,6 +38,7 @@ enum PaletteRoute: Hashable {
         case .windowLayouts: return "Window Management"
         case .keepAwake: return "Keep Awake"
         case .system: return "System Commands"
+        case .ai: return "Ask AI"
         case .confirm: return "Confirm"
         }
     }
@@ -50,6 +53,7 @@ enum PaletteRoute: Hashable {
         case .windowLayouts: return "Search layouts…"
         case .keepAwake: return "Search durations…"
         case .system: return "Search system commands…"
+        case .ai: return "Ask a question or a follow-up… ↩ sends · ⇥ switches agent"
         case .confirm: return "↑↓ to choose, ↩ to confirm, esc to go back"
         }
     }
@@ -63,6 +67,7 @@ enum PaletteRoute: Hashable {
         case .windowLayouts: return "rectangle.split.3x1"
         case .keepAwake: return "cup.and.saucer"
         case .system: return "gearshape.2"
+        case .ai: return "sparkles"
         case .confirm: return "exclamationmark.triangle"
         }
     }
