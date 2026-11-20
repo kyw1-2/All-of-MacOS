@@ -279,3 +279,56 @@ final class AOM610BatteryTests: XCTestCase {
         XCTAssertTrue(smc.writes.isEmpty)
     }
 }
+
+/// 6.11: System Tools without the tools the launcher, the Apple menu and the
+/// Battery card now cover.
+final class AOM611ToolsTests: XCTestCase {
+    func testRetiredToolsLeaveThePageAndStoredListsMoveToKillApps() {
+        let retired: Set<SystemToolID> = [.lockScreen, .sleep, .sleepDisplays, .batteryDetails, .metalHUD, .forceQuit, .quitAll]
+        XCTAssertEqual(SystemToolCatalog.retiredIDs, retired)
+        XCTAssertTrue(SystemToolCatalog.available.allSatisfy { !retired.contains($0.id) })
+        XCTAssertEqual(SystemToolsModel.storedTools(["forceQuit", "lockScreen", "quitAll", "darkMode", "batteryDetails"]),
+                       [.killApps, .darkMode], "Force Quit and Quit All become Kill Apps once; the rest drop")
+        XCTAssertEqual(SystemToolCatalog.info(.lockScreen).title, "Lock Screen", "a retired id still resolves")
+    }
+
+    func testAwakeReasonsLiveWithPowerAndWindowStateWithFixIt() {
+        XCTAssertEqual(SystemToolCatalog.info(.awakeReasons).group, .power)
+        XCTAssertEqual(SystemToolCatalog.info(.resetSavedState).group, .fixIt)
+        XCTAssertEqual(SystemToolGroup.power.name, "Battery & Power")
+        XCTAssertEqual(SystemToolCatalog.info(.killApps).group, .apps)
+    }
+}
+
+/// 6.11: Automation glyphs and folded step options, Ice's menu bar spacing.
+final class AOM611UITests: XCTestCase {
+    func testTrackpadRowsShowTheGestureItself() {
+        XCTAssertEqual(AOMTriggerGlyph.symbol(name: "4 Finger Tap", category: .trackpad), "hand.tap")
+        XCTAssertEqual(AOMTriggerGlyph.symbol(name: "3 Finger Double Tap", category: .trackpad), "hand.tap.fill")
+        XCTAssertEqual(AOMTriggerGlyph.symbol(name: "4 Finger Swipe Down", category: .trackpad), "arrow.down")
+        XCTAssertEqual(AOMTriggerGlyph.symbol(name: "Corner Click Top Left", category: .trackpad), "arrow.up.left.square")
+        XCTAssertEqual(AOMTriggerGlyph.symbol(name: "TipTap Right", category: .trackpad), "hand.point.right")
+        XCTAssertEqual(AOMTriggerGlyph.symbol(name: "⌘K", category: .keyboard), TriggerCategory.keyboard.iconName)
+    }
+
+    func testFoldedStepOptionsSummarizeWhatIsSet() {
+        var p = ActionParameters()
+        XCTAssertEqual(ActionConfigView.sequenceSummary(p), "Default")
+        XCTAssertEqual(ActionConfigView.conditionSummary(p), "Always")
+        p.repeatCount = 3
+        p.delayAfterMs = 200
+        XCTAssertEqual(ActionConfigView.sequenceSummary(p), "After 200 ms · repeat 3×")
+        p.onlyAppBundleID = "com.apple.Safari"
+        p.powerSource = "ac"
+        XCTAssertEqual(ActionConfigView.conditionSummary(p), "2 conditions")
+    }
+
+    func testMenuBarSpacingWritesIcesKeysAndRestoresByDeleting() {
+        XCTAssertEqual(SystemToolsModel.MenuBarSpacing.compact.commands.first,
+                       ["-currentHost", "write", "-globalDomain", "NSStatusItemSpacing", "-int", "8"])
+        XCTAssertEqual(SystemToolsModel.MenuBarSpacing.standard.commands.map { $0[1] }, ["delete", "delete"])
+        XCTAssertEqual(SystemToolsModel.MenuBarSpacing.current(spacing: nil), .standard)
+        XCTAssertEqual(SystemToolsModel.MenuBarSpacing.current(spacing: 4), .tight)
+        XCTAssertEqual(SystemToolsModel.MenuBarSpacing.current(spacing: 8), .compact)
+    }
+}

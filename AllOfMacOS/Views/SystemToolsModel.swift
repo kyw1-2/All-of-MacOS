@@ -135,9 +135,11 @@ final class SystemToolsModel: ObservableObject {
     /// version's tools) are dropped silently, duplicates once.
     nonisolated static func storedTools(_ raw: [String]?) -> [SystemToolID] {
         var seen = Set<SystemToolID>()
+        let retired = SystemToolCatalog.retiredIDs
         return (raw ?? []).compactMap { raw -> SystemToolID? in
-            SystemToolID(rawValue: raw) ?? SystemToolMigration.map[raw]
-        }.filter { seen.insert($0).inserted }
+            // Migration first: a retired id may have a successor (forceQuit → killApps).
+            SystemToolMigration.map[raw] ?? SystemToolID(rawValue: raw)
+        }.filter { !retired.contains($0) && seen.insert($0).inserted }
     }
 
     // MARK: - Lifecycle
@@ -441,6 +443,7 @@ final class SystemToolsModel: ObservableObject {
         // Apps
         case .activity: showActivity()
         case .forceQuit: forceQuitMenu()
+        case .killApps: AOMLauncherController.shared.show(route: .killApps)
         case .relaunchApp: relaunchAppMenu()
         case .uninstall: reviewUninstall(nil)
         case .loginItems: showLoginItems()
@@ -489,6 +492,7 @@ final class SystemToolsModel: ObservableObject {
         case .dockrecents: toggleTweak(id, .dockRecentApps, on: "Recent apps in the Dock", off: "No recent apps in the Dock")
         case .shotshadow: toggleTweak(id, .screenshotShadows, on: "Window screenshots keep their shadow", off: "Window screenshots without shadow")
         case .shotformat: screenshotFormatMenu()
+        case .menuBarSpacing: menuBarSpacingMenu()
         case .shotfolder: chooseScreenshotFolder()
         }
     }
@@ -664,6 +668,92 @@ final class SystemToolsModel: ObservableObject {
             menu.addItem(item)
         }
         popUp(menu)
+    }
+
+    /// 6.11 (Ice): `NSStatusItemSpacing` / `NSStatusItemSelectionPadding` in
+    /// the current host's global domain, then Control Center and the system
+    /// UI server relaunch; other apps' icons follow when they next start.
+    enum MenuBarSpacing: String, CaseIterable {
+        case standard, compact, tight
+        var title: String {
+            switch self {
+            case .standard: return "Default"
+            case .compact: return "Compact — more icons beside the notch"
+            case .tight: return "Tight"
+            }
+        }
+        /// (spacing, selection padding); nil restores macOS's values.
+        var values: (Int, Int)? {
+            switch self {
+            case .standard: return nil
+            case .compact: return (8, 6)
+            case .tight: return (4, 4)
+            }
+        }
+        static func current(spacing: Int?) -> MenuBarSpacing {
+            switch spacing {
+            case nil: return .standard
+            case let value? where value <= 5: return .tight
+            default: return .compact
+            }
+        }
+        /// Pure: the `defaults` invocations for this choice.
+        var commands: [[String]] {
+            let base = ["-currentHost"]
+            guard let (spacing, padding) = values else {
+                return [base + ["delete", "-globalDomain", "NSStatusItemSpacing"],
+                        base + ["delete", "-globalDomain", "NSStatusItemSelectionPadding"]]
+            }
+            return [base + ["write", "-globalDomain", "NSStatusItemSpacing", "-int", "\(spacing)"],
+                    base + ["write", "-globalDomain", "NSStatusItemSelectionPadding", "-int", "\(padding)"]]
+        }
+    }
+
+    private func menuBarSpacingMenu() {
+        let read = Process()
+        read.executableURL = URL(fileURLWithPath: "/usr/bin/defaults")
+        read.arguments = ["-currentHost", "read", "-globalDomain", "NSStatusItemSpacing"]
+        let pipe = Pipe()
+        read.standardOutput = pipe
+        read.standardError = FileHandle.nullDevice
+        try? read.run()
+        read.waitUntilExit()
+        let value = Int(String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines))
+        let current = MenuBarSpacing.current(spacing: read.terminationStatus == 0 ? value : nil)
+        let menu = NSMenu()
+        for choice in MenuBarSpacing.allCases {
+            let item = SystemToolMenuItem(title: choice.title) { self.setMenuBarSpacing(choice) }
+            item.state = choice == current ? .on : .off
+            menu.addItem(item)
+        }
+        popUp(menu)
+    }
+
+    private func setMenuBarSpacing(_ choice: MenuBarSpacing) {
+        runInBackground(.menuBarSpacing, { () -> Bool in
+            for arguments in choice.commands {
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/defaults")
+                process.arguments = arguments
+                process.standardError = FileHandle.nullDevice
+                try process.run()
+                process.waitUntilExit()
+                if process.terminationStatus != 0, arguments.contains("write") { return false }
+            }
+            for host in ["ControlCenter", "SystemUIServer"] {
+                let kill = Process()
+                kill.executableURL = URL(fileURLWithPath: "/usr/bin/killall")
+                kill.arguments = [host]
+                kill.standardError = FileHandle.nullDevice
+                try? kill.run()
+                kill.waitUntilExit()
+            }
+            return true
+        }) { ok in
+            if ok { self.succeed(.menuBarSpacing, "Menu bar spacing: \(choice.title.components(separatedBy: " —").first ?? choice.title). Other apps' icons follow when they relaunch or after you log out.") }
+            else { self.fail(.menuBarSpacing, "Spacing Not Changed", "defaults could not write the menu bar spacing.") }
+        }
     }
 
     private func chooseScreenshotFolder() {

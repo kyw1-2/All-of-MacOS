@@ -74,7 +74,7 @@ struct AOMFeatureDirectory: View {
         VStack(alignment: .leading, spacing: AOMSpace.x4) {
             HStack(spacing: AOMSpace.x2) {
                 Image(systemName: "magnifyingglass").foregroundStyle(AOMColor.textSecondary)
-                TextField("Find a tool or task — try OCR, volume, or 창 배치", text: $query)
+                TextField("Filter the tools below — try OCR, volume, or 창 배치", text: $query)
                     .textFieldStyle(.plain).focused($searchFocused).accessibilityLabel("Find a tool or task")
                     .onSubmit {
                         let results = AOMFeatureSearch.results(query: query, group: group)

@@ -23,6 +23,16 @@ enum WhatsNew {
     /// Highlights of the current version, bundled so the panel works offline.
     /// Items that alter defaults people already use say so with a note.
     static let items: [Item] = [
+        Item(symbol: "sparkles", title: "Ask AI in the Launcher",
+             detail: "Type a question and press ⇥: your own Claude Code (or Codex) answers in the launcher, read-only. ↩ pastes the answer into the app you were in, ⌘J continues in Terminal where it can edit and run things after asking you, ⇥ switches agent. AI Commands summarize, fix, translate or explain the text you selected."),
+        Item(symbol: "battery.75percent", title: "Battery Care That Works on macOS 27",
+             detail: "Bypass never worked here: macOS 27 firmware locked the charge keys. Battery & Power now sets macOS's own limit (80–100%), Hold Here stops charging at the current level and runs on the adapter, Top Up charges to 100% once, and Discharge cuts the adapter down to a level. Also in the launcher (battery) and the menu bar panel, with power flow and health.",
+             module: .systemTools, note: "Replaces Bypass"),
+        Item(symbol: "macwindow.on.rectangle", title: "No More Jumping Windows",
+             detail: "Clicking AOM's menu bar icon no longer pulls AOM's main window over the app you're in, overlays leave it where it was, and AOM can now capture its own windows. The launcher switches to English while it's open and is rounder, like Raycast's."),
+        Item(symbol: "menubar.rectangle", title: "Menu Bar Items, Even Behind the Notch",
+             detail: "Search any app's menu bar icon from the launcher (menu bar) and open it — like Ice. System Tools › Tweaks › Menu Bar Spacing fits more icons beside the notch. System Tools drops what the launcher and the Apple menu already do; Kill Apps… replaces Force Quit and Quit All.",
+             module: .systemTools),
         Item(symbol: "xmark.octagon", title: "Kill Apps and Uninstall App, Inside the Launcher",
              detail: "Type killapps (or 앱 종료) and ↩: the running apps, heaviest first, with their memory. ↩ quits the normal way and the list stays; ⌘K holds Force Quit…, Hide and Show in Finder. Type uninstall (or 앱 삭제): pick an app, review it with its leftovers, tick what goes, ⌘↩ moves it to the Trash. Every destructive step asks in the panel with Cancel selected, and esc goes back one screen.",
              module: .systemTools, note: "New in the launcher"),

@@ -445,6 +445,27 @@ struct TriggerConfigView: View {
 }
 
 struct ActionConfigView: View {
+    @AppStorage("AOMEditorShowsSequenceOptions") private var showsSequence = false
+    @AppStorage("AOMEditorShowsConditions") private var showsConditions = false
+
+    /// Pure: what the folded Sequence options say ("Default", "Repeat 3× · after 200 ms").
+    static func sequenceSummary(_ p: ActionParameters) -> String {
+        var parts: [String] = []
+        if let before = p.delayBeforeMs, before > 0 { parts.append("before \(before) ms") }
+        if let after = p.delayAfterMs, after > 0 { parts.append("after \(after) ms") }
+        if let count = p.repeatCount, count > 1 { parts.append("repeat \(count)×") }
+        if p.continueOnFailure == true { parts.append("continues on failure") }
+        if p.useCurrentWindow == true { parts.append("current window") }
+        return parts.isEmpty ? "Default" : parts.joined(separator: " · ").prefix(1).uppercased() + parts.joined(separator: " · ").dropFirst()
+    }
+
+    /// Pure: what the folded conditions say ("Always", "2 conditions").
+    static func conditionSummary(_ p: ActionParameters) -> String {
+        let set = [p.onlyAppBundleID.map { !$0.isEmpty } ?? false, p.windowTitleContains.map { !$0.isEmpty } ?? false,
+                   p.windowTitleRegex.map { !$0.isEmpty } ?? false, p.minimumBatteryPercent != nil, p.maximumBatteryPercent != nil,
+                   p.minimumDisplayCount != nil, p.maximumDisplayCount != nil, !(p.powerSource ?? "").isEmpty].filter { $0 }.count
+        return set == 0 ? "Always" : "\(set) condition\(set == 1 ? "" : "s")"
+    }
     @EnvironmentObject var appState: AppState
     @ObservedObject var keyboardMonitor: KeyboardMonitor
     let trigger: Trigger
@@ -792,7 +813,11 @@ struct ActionConfigView: View {
                 }
             }
 
-            AOMEditorGroup("Sequence options", rows: true) {
+            // 6.11 (BTT, Keyboard Maestro): timing and conditions fold away so
+            // a step reads When → Then; a step that uses them opens them.
+            AOMEditorGroup("Sequence options", detail: Self.sequenceSummary(action.parameters), rows: true,
+                           isExpanded: Binding(get: { showsSequence || Self.sequenceSummary(action.parameters) != "Default" },
+                                               set: { showsSequence = $0 })) {
                 timingField("Before (ms)", key: \.delayBeforeMs)
                 timingField("After (ms)", key: \.delayAfterMs)
                 AOMSettingRow("Repeat") {
@@ -808,9 +833,11 @@ struct ActionConfigView: View {
                                  isOn: boolParameter(\.useCurrentWindow))
                 }
             }
-            AOMEditorGroup("Run only when",
+            AOMEditorGroup("Run only when", detail: Self.conditionSummary(action.parameters),
                            help: "All enabled conditions must match. Unknown battery information skips battery-dependent steps.",
-                           rows: true) {
+                           rows: true,
+                           isExpanded: Binding(get: { showsConditions || Self.conditionSummary(action.parameters) != "Always" },
+                                               set: { showsConditions = $0 })) {
                 conditionField("App bundle ID", prompt: "Blank = any app", key: \.onlyAppBundleID)
                 conditionField("Window title contains", prompt: "Blank = any title", key: \.windowTitleContains)
                 conditionField("Window title regex", prompt: "Optional", key: \.windowTitleRegex)

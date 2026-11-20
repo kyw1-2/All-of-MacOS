@@ -518,7 +518,7 @@ struct ModernGesturesWorkspace: View {
             .width(28)
             TableColumn("Name", value: \.displayName) { trigger in
                 HStack(spacing: AOMSpace.x2) {
-                    Image(systemName: trigger.input.category.iconName)
+                    Image(systemName: AOMTriggerGlyph.symbol(name: trigger.input.displayName, category: trigger.input.category))
                         .foregroundStyle(trigger.isEnabled ? .primary : .secondary)
                         .frame(width: 16)
                         .help(trigger.input.category.rawValue)
@@ -689,7 +689,7 @@ struct ModernGesturesWorkspace: View {
         HStack(spacing: AOMSpace.x3) {
             // 6.0: the input's mark and a summary line under the name, so the
             // header says what this automation is before any section is read.
-            AOMAppIcon(AOMIdentity(symbol: trigger.input.category.iconName, color: AOMModule.automation.hue),
+            AOMAppIcon(AOMIdentity(symbol: AOMTriggerGlyph.symbol(name: trigger.input.displayName, category: trigger.input.category), color: AOMModule.automation.hue),
                        size: 36, active: trigger.isEnabled)
             VStack(alignment: .leading, spacing: 1) {
             HStack(spacing: AOMSpace.x1) {

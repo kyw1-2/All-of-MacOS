@@ -493,13 +493,15 @@ private struct AOMSidebarSearchButton: View {
 
     var body: some View {
         VStack(spacing: AOMSpace.x2) {
-            Button { showingCommandPalette = true } label: {
+            // 6.11: one search surface — the launcher, not a second palette
+            // inside the window (6.7 report §5).
+            Button { AOMLauncherController.shared.show() } label: {
                 HStack(spacing: AOMSpace.x1 + AOMSpace.x0_5) {
                     Image(systemName: "magnifyingglass")
                         .imageScale(.medium)
-                    Text("Search Everything").font(AOMFont.callout)
+                    Text("Launcher").font(AOMFont.callout)
                     Spacer(minLength: AOMSpace.x1)
-                    AOMKeycap(text: keys)
+                    AOMKeycap(text: AOMLauncherShortcut.isRegistered ? AOMLauncherShortcut.current.displayString : keys)
                 }
                 .foregroundStyle(hovering ? AOMColor.text : AOMColor.textSecondary)
                 .padding(.horizontal, AOMSpace.x2 + AOMSpace.x0_5)
@@ -514,8 +516,8 @@ private struct AOMSidebarSearchButton: View {
             .buttonStyle(.plain)
             .onHover { hovering = $0 }
             .aomAnimation(.quick, value: hovering)
-            .help("Search pages, settings and actions")
-            .accessibilityLabel("Search Everything")
+            .help("Apps, commands, Kill Apps, Uninstall, Battery, Ask AI, pages and settings")
+            .accessibilityLabel("Open the launcher")
         }
         .padding(.horizontal, AOMSpace.x2 + AOMSpace.x0_5)
         .padding(.top, AOMSpace.x2)

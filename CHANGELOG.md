@@ -1,3 +1,14 @@
+## [6.11.0] - 2026-11-20
+
+### Changed
+- **System Tools, sorted.** Retired from the page (the launcher, the Apple menu or the Battery card does them now): Lock Screen, Sleep, Sleep Displays, Battery Details, Metal HUD, Force Quit App… and Quit All Apps… — the last two become **Kill Apps…**, which opens the launcher's Kill Apps screen; starred or recent copies move over or drop. "Power & Session" is **Battery & Power**, headed by the battery card, with What's Keeping Awake moved in from Apps; Reset Window State moved to Fix It.
+- **Automation editor (BTT, Keyboard Maestro):** Sequence options and Run only when fold away with a one-line summary ("Default", "Always", "Repeat 3× · after 200 ms", "2 conditions") and open by themselves when a step uses them. Trackpad and mouse rows show the gesture — swipe direction, pinch, rotation, corner, TipTap side, tap, force click — instead of one hand for all.
+- **One search surface:** the sidebar's search button opens the launcher (it opened a second palette inside the window); the Workspace directory's field says it filters the tools below. Insights is called **Activity**.
+
+### Added (from the Oracle REA analysis of Ice, Itsycal, Hammerspoon — `macutils-20261114`)
+- **Menu Bar Items** in the launcher (`menu bar`, `메뉴바`, `ice`): every app's menu bar icon through Accessibility, right to left, including those the notch hides; ↩ opens its menu.
+- **Menu Bar Spacing** (System Tools › Tweaks): Default, Compact or Tight icon spacing (`NSStatusItemSpacing`, `NSStatusItemSelectionPadding`), so more icons fit beside the notch; Control Center and the system UI relaunch, other apps follow when they restart.
+
 ## [6.10.0] - 2026-11-20
 
 Battery care, rebuilt for what macOS 27 firmware still allows (`docs/design-6.7-launcher.md` §7).

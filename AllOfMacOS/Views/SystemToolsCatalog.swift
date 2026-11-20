@@ -10,7 +10,7 @@ enum SystemToolGroup: String, CaseIterable, Identifiable {
         switch self {
         case .toggles: return "Quick Toggles"
         case .display: return "Display"
-        case .power: return "Power & Session"
+        case .power: return "Battery & Power"
         case .apps: return "Apps"
         case .storage: return "Storage"
         case .network: return "Network"
@@ -25,7 +25,7 @@ enum SystemToolGroup: String, CaseIterable, Identifiable {
         switch self {
         case .toggles: return "switch.2"
         case .display: return "display"
-        case .power: return "power"
+        case .power: return "battery.75percent"
         case .apps: return "app.badge"
         case .storage: return "internaldrive"
         case .network: return "network"
@@ -54,6 +54,8 @@ enum SystemToolID: String, CaseIterable, Identifiable {
     case lockScreen, sleep, sleepDisplays, sleepTimer, awakeWhileApp, batteryDetails, quitAll
     // Apps
     case activity, forceQuit, relaunchApp, uninstall, loginItems, awakeReasons, resetSavedState
+    // 6.11: the launcher's Kill Apps screen (replaces Force Quit and Quit All here)
+    case killApps
     // Storage
     case freeUpSpace, eject, timeMachine, snapshots, installDMG
     // Network
@@ -65,6 +67,8 @@ enum SystemToolID: String, CaseIterable, Identifiable {
     // Tweaks
     case extensions, pathbar, statusbar, posixtitle, showLibrary, dockactive, dockdelay, dockrecents
     case shotshadow, shotformat, shotfolder
+    // 6.11: Ice's menu bar item spacing (Oracle REA report 2026-11-14 §7.3)
+    case menuBarSpacing
 
     var id: String { rawValue }
 }
@@ -82,7 +86,9 @@ enum SystemToolMigration {
         "brewCleanup": .homebrew, "brewDoctor": .homebrew, "brewServices": .homebrew, "brewSearch": .homebrew,
         "cache": .freeUpSpace, "trash": .freeUpSpace, "largeFiles": .freeUpSpace, "oldDownloads": .freeUpSpace,
         "devJunk": .freeUpSpace, "duplicates": .freeUpSpace, "folderSizes": .freeUpSpace,
-        "tailscale": .vpn, "openVPN": .vpn
+        "tailscale": .vpn, "openVPN": .vpn,
+        // 6.11: one place for quitting apps
+        "forceQuit": .killApps, "quitAll": .killApps
     ]
 
     /// Ids that no longer name a tool: removed in 3.5.0, or moved to Files.
@@ -154,8 +160,11 @@ struct SystemToolInfo: Identifiable {
     var kind: SystemToolKind = .command
     /// Offered only when this is met (an app or command is installed).
     var requirement: SystemToolRequirement?
+    /// 6.11: no longer on the page (the launcher, the Apple menu or the
+    /// Battery card does it); kept so stored ids and old automations resolve.
+    var retired = false
 
-    var isAvailable: Bool { requirement?.isMet ?? true }
+    var isAvailable: Bool { (requirement?.isMet ?? true) && !retired }
 
     /// Title, section name, keywords and the tooltip all count.
     func matches(_ query: String) -> Bool {
@@ -169,7 +178,10 @@ enum SystemToolCatalog {
     static func info(_ id: SystemToolID) -> SystemToolInfo { byID[id]! }
 
     /// Every tool of the section, offered on this Mac or not.
-    static func tools(in group: SystemToolGroup) -> [SystemToolInfo] { all.filter { $0.group == group } }
+    static func tools(in group: SystemToolGroup) -> [SystemToolInfo] { all.filter { $0.group == group && !$0.retired } }
+
+    /// 6.11: ids stored favorites and recents drop (the tool left the page).
+    static var retiredIDs: Set<SystemToolID> { Set(all.filter(\.retired).map(\.id)) }
 
     /// The tools the page shows: everything whose requirement is met.
     static var available: [SystemToolInfo] { all.filter(\.isAvailable) }
@@ -194,23 +206,24 @@ enum SystemToolCatalog {
         // Display
         .init(id: .resolution, title: "Resolution", symbol: "arrow.up.left.and.arrow.down.right", group: .display, keywords: ["display", "refresh rate", "hz", "scaled"], help: "Switches a display's resolution or refresh rate.", kind: .sheet),
         .init(id: .brightness, title: "Brightness", symbol: "sun.max", group: .display, keywords: ["display", "dim", "monitorcontrol"], help: "Sets a display's brightness, hardware where the display allows it.", kind: .sheet),
-        .init(id: .metalHUD, title: "Metal HUD", symbol: "gauge.with.dots.needle.67percent", group: .display, keywords: ["fps", "frame rate", "gpu", "games", "performance"], help: "Shows Apple's performance HUD in apps you open afterwards.", kind: .toggle),
+        .init(id: .metalHUD, title: "Metal HUD", symbol: "gauge.with.dots.needle.67percent", group: .display, keywords: ["fps", "frame rate", "gpu", "games", "performance"], help: "Shows Apple's performance HUD in apps you open afterwards.", kind: .toggle, retired: true),
         // Power & Session
-        .init(id: .lockScreen, title: "Lock Screen", symbol: "lock", group: .power, keywords: ["away", "security"], help: "Locks the screen now."),
-        .init(id: .sleep, title: "Sleep", symbol: "moon.zzz", group: .power, keywords: ["suspend", "power"], help: "Puts the Mac to sleep."),
-        .init(id: .sleepDisplays, title: "Sleep Displays", symbol: "display", group: .power, keywords: ["screen off", "monitor"], help: "Turns the displays off without sleeping the Mac."),
+        .init(id: .lockScreen, title: "Lock Screen", symbol: "lock", group: .power, keywords: ["away", "security"], help: "Locks the screen now.", retired: true),
+        .init(id: .sleep, title: "Sleep", symbol: "moon.zzz", group: .power, keywords: ["suspend", "power"], help: "Puts the Mac to sleep.", retired: true),
+        .init(id: .sleepDisplays, title: "Sleep Displays", symbol: "display", group: .power, keywords: ["screen off", "monitor"], help: "Turns the displays off without sleeping the Mac.", retired: true),
         .init(id: .sleepTimer, title: "Sleep Timer", symbol: "timer", group: .power, keywords: ["sleep in", "countdown", "bedtime"], help: "Puts the Mac to sleep after a delay you choose.", kind: .sheet),
         .init(id: .awakeWhileApp, title: "Awake While App Runs", symbol: "app.badge.checkmark", group: .power, keywords: ["keep awake", "prevent sleep", "app"], help: "Keeps the Mac awake until an app you pick quits.", kind: .sheet),
-        .init(id: .batteryDetails, title: "Battery Details", symbol: "battery.100percent", group: .power, keywords: ["cycle count", "health", "capacity", "temperature", "condition"], help: "Shows charge, cycle count, condition, capacity and temperature."),
-        .init(id: .quitAll, title: "Quit All Apps…", symbol: "xmark.app", group: .power, keywords: ["close", "apps", "clean slate"], help: "Asks every app except Finder and All of MacOS to quit."),
+        .init(id: .batteryDetails, title: "Battery Details", symbol: "battery.100percent", group: .power, keywords: ["cycle count", "health", "capacity", "temperature", "condition"], help: "Shows charge, cycle count, condition, capacity and temperature.", retired: true),
+        .init(id: .quitAll, title: "Quit All Apps…", symbol: "xmark.app", group: .power, keywords: ["close", "apps", "clean slate"], help: "Asks every app except Finder and All of MacOS to quit.", retired: true),
         // Apps
         .init(id: .activity, title: "Activity…", symbol: "gauge.with.dots.needle.33percent", group: .apps, keywords: ["activity monitor", "processes", "cpu", "memory", "ram", "ps"], help: "Lists the busiest processes by CPU or memory, with Quit.", kind: .sheet),
-        .init(id: .forceQuit, title: "Force Quit App…", symbol: "xmark.octagon", group: .apps, keywords: ["kill", "frozen", "not responding", "beachball"], help: "Stops an open app at once; its unsaved work is lost."),
+        .init(id: .forceQuit, title: "Force Quit App…", symbol: "xmark.octagon", group: .apps, keywords: ["kill", "frozen", "not responding", "beachball"], help: "Stops an open app at once; its unsaved work is lost.", retired: true),
+        .init(id: .killApps, title: "Kill Apps…", symbol: "xmark.octagon", group: .apps, keywords: ["force quit", "quit all", "kill", "frozen", "not responding", "memory"], help: "Opens the launcher's Kill Apps: running apps by memory, quit, force quit or quit all but the front app."),
         .init(id: .relaunchApp, title: "Relaunch App", symbol: "arrow.clockwise.circle", group: .apps, keywords: ["restart app", "reopen"], help: "Quits an open app and opens it again.", kind: .sheet),
         .init(id: .uninstall, title: "Uninstall App…", symbol: "xmark.bin", group: .apps, keywords: ["leftovers", "remove", "residue", "cleanup"], help: "Lists an app with the files it left in ~/Library before anything moves to the Trash."),
         .init(id: .loginItems, title: "Login Items", symbol: "person.crop.circle.badge.clock", group: .apps, keywords: ["startup", "launch agents", "open at login"], help: "Lists apps that open at login and launch agents."),
-        .init(id: .awakeReasons, title: "What's Keeping Awake", symbol: "eye", group: .apps, keywords: ["assertions", "pmset", "insomnia"], help: "Lists what stops the Mac or its display from sleeping now."),
-        .init(id: .resetSavedState, title: "Reset Window State…", symbol: "rectangle.stack.badge.minus", group: .apps, keywords: ["saved application state", "reopen windows"], help: "Trashes saved window state so apps open without their old windows."),
+        .init(id: .awakeReasons, title: "What's Keeping Awake", symbol: "eye", group: .power, keywords: ["assertions", "pmset", "insomnia"], help: "Lists what stops the Mac or its display from sleeping now."),
+        .init(id: .resetSavedState, title: "Reset Window State…", symbol: "rectangle.stack.badge.minus", group: .fixIt, keywords: ["saved application state", "reopen windows"], help: "Trashes saved window state so apps open without their old windows."),
         // Storage
         .init(id: .freeUpSpace, title: "Free Up Space…", symbol: "externaldrive.badge.minus", group: .storage, keywords: ["cleanup", "trash", "caches", "large files", "duplicates", "xcode", "folder sizes", "downloads", "space", "leftovers", "orphaned", "removed apps"], help: "Scans folder sizes, large files, old downloads, duplicates, data of removed apps, Xcode data, caches and Trash."),
         .init(id: .eject, title: "Eject…", symbol: "eject", group: .storage, keywords: ["usb", "drive", "disk image", "unmount", "external"], help: "Ejects a volume you pick, or every external disk.", kind: .sheet),
@@ -244,6 +257,7 @@ enum SystemToolCatalog {
         .init(id: .dockrecents, title: "Dock Recents", symbol: "clock.arrow.circlepath", group: .tweaks, keywords: ["dock", "recents", "suggested"], help: "Shows recent and suggested apps in the Dock.", kind: .toggle),
         .init(id: .shotshadow, title: "Screenshot Shadows", symbol: "shadow", group: .tweaks, keywords: ["screenshot", "capture", "disable-shadow"], help: "Keeps or drops the shadow on window screenshots.", kind: .toggle),
         .init(id: .shotformat, title: "Screenshot Format", symbol: "photo", group: .tweaks, keywords: ["png", "jpg", "heic", "pdf", "capture"], help: "Chooses the file format of macOS screenshots.", kind: .sheet),
+        .init(id: .menuBarSpacing, title: "Menu Bar Spacing", symbol: "menubar.arrow.up.rectangle", group: .tweaks, keywords: ["notch", "status items", "icons", "ice", "bartender", "spacing", "메뉴바 간격"], help: "Puts menu bar icons closer together so more fit beside the notch (as Ice does).", kind: .sheet),
         .init(id: .shotfolder, title: "Screenshot Folder", symbol: "folder", group: .tweaks, keywords: ["screenshot folder", "location", "capture"], help: "Chooses where macOS saves screenshots.", kind: .sheet)
     ]
 }

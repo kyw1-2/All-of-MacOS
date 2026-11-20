@@ -51,7 +51,15 @@ final class AOMLauncherController: NSObject, NSWindowDelegate {
 
     func toggle() { isVisible ? dismiss(restoringFocus: true) : show() }
 
-    func show() {
+    /// 6.11: opens straight on a screen (System Tools' Kill Apps…).
+    func show(route: PaletteRoute) {
+        if isVisible { dismiss(restoringFocus: false) }
+        show(initialRoute: route)
+    }
+
+    func show() { show(initialRoute: nil) }
+
+    private func show(initialRoute: PaletteRoute?) {
         guard !isVisible, let appState = AppDelegate.current?.appState ?? AppState.current else { return }
         presentation &+= 1
         hiding = false
@@ -67,7 +75,7 @@ final class AOMLauncherController: NSObject, NSWindowDelegate {
         panelSize = Self.size(fitting: Self.screenUnderPointer()?.visibleFrame ?? CGRect(origin: .zero, size: Self.size))
         let presented = Binding<Bool>(get: { [weak self] in self?.isVisible ?? false },
                                       set: { [weak self] open in if !open { self?.dismiss(restoringFocus: true) } })
-        let root = QuickCommandPalette(isPresented: presented, host: .launcher)
+        let root = QuickCommandPalette(isPresented: presented, host: .launcher, initialRoute: initialRoute)
             .environmentObject(appState)
             .accentColor(appState.accentColorChoice.color)
             .tint(appState.accentColorChoice.color)

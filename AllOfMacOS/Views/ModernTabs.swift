@@ -29,7 +29,8 @@ enum AOMMainTab: String, CaseIterable, Identifiable {
         case .clipboard: return "Clipboard"
         case .audio: return "Audio"
         case .tools: return "System Tools"
-        case .insights: return "Insights"
+        // 6.11: what it shows — the activity log and its statistics.
+        case .insights: return "Activity"
         case .folderRules: return "Folder Rules"
         case .textActions: return "Text Actions"
         case .files: return "Files"

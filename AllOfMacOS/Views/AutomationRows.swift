@@ -78,7 +78,7 @@ struct AOMAutomationRow: View, Equatable {
         // and the trailing keys say the rest.
         AOMListRow(trigger.displayName, detail: detail, dimmed: !trigger.isEnabled) {
             // A neutral input glyph (6.0): the list is about names, not colour.
-            Image(systemName: trigger.input.category.iconName)
+            Image(systemName: AOMTriggerGlyph.symbol(name: trigger.input.displayName, category: trigger.input.category))
                 .help(trigger.input.category.rawValue)
         } trailing: {
             HStack(spacing: AOMSpace.xs) {
@@ -125,7 +125,12 @@ struct AutomationListRow: View, Equatable {
             && lhs.lastRun == rhs.lastRun && lhs.scope == rhs.scope
     }
 
-    private var symbol: String { AddTriggerSheet.railSymbol(trigger.input.category) }
+    /// 6.11: the gesture itself for trackpad and mouse rows (BTT), the
+    /// category's mark for the rest.
+    private var symbol: String {
+        let glyph = AOMTriggerGlyph.symbol(name: trigger.input.displayName, category: trigger.input.category)
+        return glyph == trigger.input.category.iconName ? AddTriggerSheet.railSymbol(trigger.input.category) : glyph
+    }
 
     /// What it does, then where and when — never the input again when the
     /// name already says it.
@@ -208,5 +213,37 @@ struct AutomationListRow: View, Equatable {
         .accessibilityLabel(trigger.displayName)
         .accessibilityValue("\(enabled ? "On" : "Off"), \(detail)")
         .accessibilityAddTraits(isSelected ? [.isSelected, .isButton] : .isButton)
+    }
+}
+
+
+/// 6.11 (BTT's trigger list): the gesture itself, not one hand for every
+/// trackpad row — swipe direction, pinch, rotation, corner, tap, force click.
+enum AOMTriggerGlyph {
+    static func symbol(name: String, category: TriggerCategory) -> String {
+        guard category == .trackpad || category == .normalMouse else { return category.iconName }
+        let n = name.lowercased()
+        func has(_ part: String) -> Bool { n.contains(part) }
+        if has("corner") {
+            if has("top left") { return "arrow.up.left.square" }
+            if has("top right") { return "arrow.up.right.square" }
+            if has("bottom left") { return "arrow.down.left.square" }
+            if has("bottom right") { return "arrow.down.right.square" }
+        }
+        if has("pinch in") { return "arrow.down.right.and.arrow.up.left" }
+        if has("pinch out") { return "arrow.up.left.and.arrow.down.right" }
+        if has("rotate left") { return "arrow.counterclockwise" }
+        if has("rotate") { return "arrow.clockwise" }
+        if has("swipe up") { return "arrow.up" }
+        if has("swipe down") { return "arrow.down" }
+        if has("swipe left") { return "arrow.left" }
+        if has("swipe right") { return "arrow.right" }
+        if has("tiptap") { return has("left") ? "hand.point.left" : has("right") ? "hand.point.right" : "hand.point.up.left" }
+        if has("force") { return "hand.point.up.braille" }
+        if has("double tap") || has("double click") { return "hand.tap.fill" }
+        if has("tap") { return "hand.tap" }
+        if has("click") { return "cursorarrow.click" }
+        if has("scroll") { return "scroll" }
+        return category.iconName
     }
 }

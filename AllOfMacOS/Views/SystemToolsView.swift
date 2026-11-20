@@ -62,7 +62,7 @@ struct SystemToolsView: View {
                 VStack(alignment: .leading, spacing: AOMSpace.titleGap) {
                     AOMSectionTitle("This Mac")
                     SystemStatusStrip(monitor: status,
-                                      openBattery: { model.run(.batteryDetails) },
+                                      openBattery: { selectedGroup = .power },
                                       openFreeUpSpace: { model.showStartupDisk = true },
                                       openNetworkInfo: { model.showNetworkInfo = true })
                 }
@@ -79,6 +79,8 @@ struct SystemToolsView: View {
                 ForEach(shown, id: \.group) { entry in
                     VStack(alignment: .leading, spacing: AOMSpace.titleGap) {
                         AOMSectionTitle(entry.group.name)
+                        // 6.11: the battery card heads Battery & Power.
+                        if entry.group == .power && query.isEmpty { HardwareCareCard() }
                         if entry.group == .toggles { toggleGrid(entry.tools) }
                         else if entry.group == .tweaks { tweaksCard(entry.tools) }
                         else { grid(entry.tools) }
@@ -86,8 +88,6 @@ struct SystemToolsView: View {
                     .accessibilityElement(children: .contain)
                 }
             }
-            // Charging limit, fan presets and SMC sensors have no tile of their own.
-            if query.isEmpty && (selectedGroup == nil || selectedGroup == .power) { HardwareCareCard() }
         }
         .aomPage("System Tools")
         .aomPageToolbar {

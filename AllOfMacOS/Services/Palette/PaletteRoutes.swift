@@ -25,6 +25,8 @@ enum PaletteRoute: Hashable {
     case system
     /// 6.10: AlDente's controls.
     case battery
+    /// 6.11: every app's menu bar item (Ice's search).
+    case menuBarItems
     /// 6.9: Quick AI on Claude Code or Codex.
     case ai
     /// The pending in-panel confirmation (one at a time).
@@ -41,6 +43,7 @@ enum PaletteRoute: Hashable {
         case .keepAwake: return "Keep Awake"
         case .system: return "System Commands"
         case .battery: return "Battery"
+        case .menuBarItems: return "Menu Bar Items"
         case .ai: return "Ask AI"
         case .confirm: return "Confirm"
         }
@@ -57,6 +60,7 @@ enum PaletteRoute: Hashable {
         case .keepAwake: return "Search durations…"
         case .system: return "Search system commands…"
         case .battery: return "Search battery controls…"
+        case .menuBarItems: return "Search menu bar items, even those behind the notch…"
         case .ai: return "Ask a question or a follow-up… ↩ sends · ⇥ switches agent"
         case .confirm: return "↑↓ to choose, ↩ to confirm, esc to go back"
         }
@@ -72,6 +76,7 @@ enum PaletteRoute: Hashable {
         case .keepAwake: return "cup.and.saucer"
         case .system: return "gearshape.2"
         case .battery: return "battery.75percent"
+        case .menuBarItems: return "menubar.rectangle"
         case .ai: return "sparkles"
         case .confirm: return "exclamationmark.triangle"
         }
@@ -582,6 +587,7 @@ enum PaletteKeepAwakeChoices {
 final class PaletteRouteModels: ObservableObject {
     @Published private(set) var uninstall: PaletteUninstallFlow?
     @Published private(set) var sound: PaletteSoundDevices?
+    @Published private(set) var menuBarItems: [PaletteMenuBarItems.Item]?
     /// Kill Apps rows a normal quit was asked for, and when.
     @Published private(set) var quitting: [pid_t: Date] = [:]
     /// One line under the search after an action that keeps the screen
@@ -689,10 +695,87 @@ final class PaletteRouteModels: ObservableObject {
 
     func clearSound() { soundTicket &+= 1; sound = nil }
 
+    func loadMenuBarItems() {
+        Task { [weak self] in
+            let items = await PaletteMenuBarItems.scan()
+            self?.menuBarItems = items
+        }
+    }
+
     func end() {
         watchApps(false)
         endUninstall()
         sound = nil
         notice = nil
+    }
+}
+
+// MARK: - Menu bar items (Ice's search, from the Oracle REA report 2026-11-14 §3, §7.4)
+
+/// Every app's menu bar extra through Accessibility — including those the
+/// notch hides — so the launcher can find one by name and open its menu.
+enum PaletteMenuBarItems {
+    struct Item: Equatable, Identifiable {
+        let pid: pid_t
+        let appName: String
+        let bundleID: String?
+        let title: String
+        /// Its index among the app's extras, to find it again when pressed.
+        let index: Int
+        let x: CGFloat
+        var id: String { "menubar.\(pid).\(index)" }
+    }
+
+    /// Reads off the main thread; each app answers within a short timeout.
+    static func scan() async -> [Item] {
+        await Task.detached(priority: .userInitiated) { () -> [Item] in
+            guard AXIsProcessTrusted() else { return [] }
+            let own = ProcessInfo.processInfo.processIdentifier
+            var items: [Item] = []
+            for app in NSWorkspace.shared.runningApplications where !app.isTerminated && app.processIdentifier != own {
+                let element = AXUIElementCreateApplication(app.processIdentifier)
+                AXUIElementSetMessagingTimeout(element, 0.15)
+                for (index, child) in extras(of: element).enumerated() {
+                    let title = [kAXTitleAttribute, kAXDescriptionAttribute, kAXHelpAttribute]
+                        .lazy.compactMap { string(child, $0) }.first { !$0.isEmpty }
+                    var position: CFTypeRef?
+                    var point = CGPoint.zero
+                    if AXUIElementCopyAttributeValue(child, kAXPositionAttribute as CFString, &position) == .success,
+                       let value = position, CFGetTypeID(value) == AXValueGetTypeID() {
+                        AXValueGetValue(value as! AXValue, .cgPoint, &point)
+                    }
+                    let name = app.localizedName ?? app.bundleIdentifier ?? "App"
+                    items.append(Item(pid: app.processIdentifier, appName: name, bundleID: app.bundleIdentifier,
+                                      title: title ?? name, index: index, x: point.x))
+                }
+            }
+            // Right to left, as they sit in the menu bar.
+            return items.sorted { $0.x > $1.x }
+        }.value
+    }
+
+    private static func extras(of app: AXUIElement) -> [AXUIElement] {
+        var bar: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(app, "AXExtrasMenuBar" as CFString, &bar) == .success, let bar,
+              CFGetTypeID(bar) == AXUIElementGetTypeID() else { return [] }
+        var children: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(bar as! AXUIElement, kAXChildrenAttribute as CFString, &children) == .success else { return [] }
+        return children as? [AXUIElement] ?? []
+    }
+
+    private static func string(_ element: AXUIElement, _ attribute: String) -> String? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else { return nil }
+        return value as? String
+    }
+
+    /// Opens the item's menu, found again by app and position in its list.
+    @discardableResult
+    static func press(_ item: Item) -> Bool {
+        let element = AXUIElementCreateApplication(item.pid)
+        AXUIElementSetMessagingTimeout(element, 0.5)
+        let list = extras(of: element)
+        guard list.indices.contains(item.index) else { return false }
+        return AXUIElementPerformAction(list[item.index], kAXPressAction as CFString) == .success
     }
 }

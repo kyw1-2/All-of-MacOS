@@ -18,6 +18,8 @@ struct QuickCommandPalette: View {
     @Binding var isPresented: Bool
     /// 6.5: in AOM's window (previews) or the launcher panel (everywhere else).
     var host: Host = .window
+    /// 6.11: the screen to open on (nil: the root search).
+    var initialRoute: PaletteRoute? = nil
     @EnvironmentObject var appState: AppState
     @ObservedObject private var clipboardStore = ClipboardStore.shared
     @ObservedObject private var captureHistory = CaptureHistory.shared
@@ -351,6 +353,10 @@ struct QuickCommandPalette: View {
               subtitle: "Charge limit, hold, top up and discharge · 배터리 (AlDente)",
               aliases: ["battery", "배터리", "aldente", "charge limit", "충전 제한", "bypass", "바이패스"],
               keywords: "hold top up discharge sailing 방전 완충 충전"),
+        .init(id: "system.screen.menubar", route: .menuBarItems,
+              subtitle: "Find any app's menu bar icon, even behind the notch, and open it · 메뉴바 아이콘",
+              aliases: ["menu bar", "menubar", "menu bar items", "status items", "메뉴바", "메뉴 막대", "ice", "bartender"],
+              keywords: "notch hidden icons extras tray 노치 숨은 아이콘"),
         .init(id: "system.screen.commands", route: .system,
               subtitle: "Lock, sleep, restart, empty Trash, dark mode … · 시스템 명령",
               aliases: ["system", "system commands", "시스템", "시스템 명령"],
@@ -670,7 +676,7 @@ struct QuickCommandPalette: View {
                 }]
             }
             return PaletteItem(id: "trigger.\(trigger.id.uuidString)", title: trigger.displayName,
-                               subtitle: trigger.aomRowDetail, icon: trigger.input.category.iconName,
+                               subtitle: trigger.aomRowDetail, icon: AOMTriggerGlyph.symbol(name: trigger.input.displayName, category: trigger.input.category),
                                section: .automations, shortcut: keys,
                                primary: PaletteAction(title: "Open in Editor") {
                                    close()
@@ -1083,6 +1089,7 @@ struct QuickCommandPalette: View {
         case .soundDevices: screens.loadSound()
         // Read once when the screen opens, never per keystroke.
         case .battery: HardwareCareModel.shared.refreshBattery()
+        case .menuBarItems: screens.loadMenuBarItems()
         case .uninstallApps, .clipboard, .windowLayouts, .keepAwake, .system, .ai, .confirm: break
         }
     }
@@ -1250,6 +1257,7 @@ struct QuickCommandPalette: View {
         case .keepAwake: return keepAwakeItems()
         case .system: return PaletteSystemCommand.all.map(systemCommandItem)
         case .battery: return batteryItems()
+        case .menuBarItems: return menuBarItemRows()
         case .ai: return aiItems()
         case .confirm: return confirmationItems()
         }
@@ -1675,6 +1683,23 @@ struct QuickCommandPalette: View {
         return items
     }
 
+    /// 6.11: Ice's menu bar search — ↩ opens the item's menu in place.
+    private func menuBarItemRows() -> [PaletteItem] {
+        guard let items = screens.menuBarItems else { return [] }
+        return items.map { item in
+            var row = screenRow(item.id, item.title, item.appName, icon: "menubar.rectangle",
+                                group: item.x > 0 ? "Menu bar, right to left" : "Not placed on screen",
+                                primary: PaletteAction(title: "Open Its Menu", symbol: "cursorarrow.click") {
+                                    if !PaletteMenuBarItems.press(item) {
+                                        GestureHUD.shared.show(title: "Couldn't Open \(item.title)", detail: "\(item.appName) didn't answer through Accessibility.")
+                                    }
+                                },
+                                image: item.bundleID.flatMap { session.icon(forBundleID: $0) })
+            row.keywords = [item.appName, item.bundleID ?? ""].joined(separator: " ")
+            return row
+        }
+    }
+
     private func systemCommandItem(_ command: PaletteSystemCommand) -> PaletteItem {
         let action: PaletteAction
         if let words = command.confirmation {
@@ -1850,6 +1875,7 @@ struct QuickCommandPalette: View {
         isFieldFocused = true
         // One battery read per launcher open (its rows are found from the root search).
         HardwareCareModel.shared.refreshBattery()
+        if let initialRoute, navigation.isRoot { push(initialRoute) }
         session.begin()
         recentFiles.start()
         guard PresetManager.isUIPreview else { return }
@@ -2001,6 +2027,12 @@ struct QuickCommandPalette: View {
                                    ? "Your own \(ai.provider.title) CLI, read-only here. ↩ pastes the answer into \(frontAppForAI?.localizedName ?? "the app you were in"), ⌘↩ copies, ⌘J continues in Terminal (it can edit and run there, asking first), ⌘N new chat, ⇥ switches agent."
                                    : "\(ai.provider.title) isn't installed on this Mac. ⇥ switches agent.",
                                busy: ai.isRunning)
+        case .menuBarItems? where screens.menuBarItems == nil:
+            return RouteHeader(symbol: "menubar.rectangle", tint: AOMBrand.graphite, title: "Reading the Menu Bar…",
+                               detail: "Every app's menu bar icon, including those the notch hides.", busy: true)
+        case .menuBarItems? where screens.menuBarItems?.isEmpty == true:
+            return RouteHeader(symbol: "hand.raised", tint: AOMColor.warning, title: "No Menu Bar Items Found",
+                               detail: AXIsProcessTrusted() ? "No app answered through Accessibility." : "Allow Accessibility for All of MacOS in System Settings › Privacy & Security to read other apps' menu bar items.")
         case .soundDevices? where screens.sound == nil:
             return RouteHeader(symbol: "hifispeaker.2", tint: AOMModule.audio.hue, title: "Reading Sound Devices…",
                                detail: "Outputs, inputs and the current volume.", busy: true)
