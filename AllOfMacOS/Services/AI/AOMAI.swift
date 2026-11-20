@@ -802,6 +802,16 @@ enum AOMAppleIntelligence {
         return "Conversation so far:\n\(history)\n\nUser: \(last.text)"
     }
 
+    /// Loads the on-device model while the question is typed (the first
+    /// answer after a cold start otherwise waits several seconds).
+    @MainActor static func prewarm(system: String) {
+        #if canImport(FoundationModels)
+        if #available(macOS 26.0, *), isAvailable {
+            LanguageModelSession(instructions: system).prewarm()
+        }
+        #endif
+    }
+
     static func stream(system: String, turns: [AOMAITurn]) -> AsyncThrowingStream<AOMAIPiece, Error> {
         #if canImport(FoundationModels)
         if #available(macOS 26.0, *) {

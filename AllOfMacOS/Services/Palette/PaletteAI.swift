@@ -205,6 +205,7 @@ final class PaletteAIChat: ObservableObject {
 
     /// Starts the agent's CLI before the first question (the Ask AI screen opened).
     func prewarm() {
+        if model.provider == .apple { AOMAppleIntelligence.prewarm(system: systemPrompt); return }
         guard agent == .claude, let executable = PaletteAIProvider.claude.executable else { return }
         agentSession.start(executable: executable, model: model.model, system: systemPrompt, resume: session)
     }
@@ -280,8 +281,11 @@ final class PaletteAIChat: ObservableObject {
                 return
             }
             if agent == .claude {
+                // Without a session to resume (Ask Again, a chat opened from
+                // history) the earlier turns go with the question.
+                let sent = session == nil ? Self.withHistory(question, messages.dropLast(2)) : question
                 agentSession.start(executable: executable, model: ref.model, system: systemPrompt, resume: session)
-                agentSession.send(question)
+                agentSession.send(sent)
             } else {
                 // Codex has no warm session here: earlier turns go with the question.
                 let sent = Self.withHistory(question, messages.dropLast(2))
