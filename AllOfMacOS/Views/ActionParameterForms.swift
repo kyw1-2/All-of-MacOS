@@ -25,7 +25,7 @@ struct ActionParameterForm: View {
         case .moveResizeWindow: return .moveResize
         case .zoomWindow, .closeWindow, .toggleFullscreenWindow: return .windowTarget
         case .startMovingWindow, .toggleMovingWindow, .startResizingWindow, .toggleResizingWindow: return .windowDrag
-        case .switchToDesktop: return .desktop
+        case .switchToDesktop, .moveWindowToDesktop: return .desktop
         case .switchSpaceLeft, .switchSpaceRight, .moveWindowToPreviousSpace, .moveWindowToNextSpace, .appExpose, .showDesktop: return .spaceShortcut
         case .customClick: return .customClick
         case .scrollCustom: return .scroll

@@ -338,7 +338,8 @@ final class AOM73Tests: XCTestCase {
     func testModuleSwitchesPersistAndCount() {
         let defaults = UserDefaults(suiteName: "AOM73-\(UUID().uuidString)")!
         let switches = AOMModuleSwitches(defaults: defaults)
-        XCTAssertTrue(AOMModuleSwitch.allCases.allSatisfy(switches.isOn), "everything is on by default")
+        XCTAssertTrue(AOMModuleSwitch.allCases.filter { !$0.isOptIn }.allSatisfy(switches.isOn), "everything is on by default")
+        XCTAssertTrue(AOMModuleSwitch.optIn.allSatisfy { !switches.isOn($0) }, "7.4 modules wait to be turned on")
         switches.startAll()
         XCTAssertNil(switches.set(.files, on: false))
         XCTAssertFalse(switches.isOn(.files))
@@ -511,11 +512,15 @@ final class AOM73Tests: XCTestCase {
         let switches = AOMModuleSwitches(defaults: UserDefaults(suiteName: "AOM73-\(UUID().uuidString)")!)
         let rows = [("rules.preview", "Rule Preview"), ("go.\(AOMMainTab.folderRules.rawValue)", "Folder Rules page"), ("capture.area", "Capture")]
         XCTAssertEqual(AOMModuleSwitches.gated(rows.map { ($0.0, $0.1) }, isSearching: true, switches: switches, turnOnRow: { "on \($0.rawValue)" }),
-                       ["Rule Preview", "Folder Rules page", "Capture"])
+                       ["Rule Preview", "Folder Rules page", "Capture", "on menuBarHider", "on memoryWatch", "on meetingAlerts"],
+                       "7.4: the opt-in modules start off, so a search offers them")
         switches.set(.folderRules, on: false)
         let gated = AOMModuleSwitches.gated(rows.map { ($0.0, $0.1) }, isSearching: true, switches: switches,
                                             mark: { $0 += " (Off)" }, turnOnRow: { "on \($0.rawValue)" })
-        XCTAssertEqual(gated, ["Folder Rules page (Off)", "Capture", "on folderRules"], "the tool goes, the page stays marked, Turn On is found")
+        XCTAssertEqual(gated, ["Folder Rules page (Off)", "Capture", "on folderRules", "on menuBarHider", "on memoryWatch", "on meetingAlerts"],
+                       "the tool goes, the page stays marked, Turn On is found")
+        XCTAssertEqual(AOMModuleSwitches.gated(rows.map { ($0.0, $0.1) }, isSearching: false, switches: AOMModuleSwitches(defaults: UserDefaults(suiteName: "AOM73-\(UUID().uuidString)")!),
+                                               turnOnRow: { "on \($0.rawValue)" }), ["Rule Preview", "Folder Rules page", "Capture"], "no Turn On rows without a search")
     }
 
     @MainActor

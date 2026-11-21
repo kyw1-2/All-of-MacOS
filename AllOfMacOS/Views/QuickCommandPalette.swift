@@ -387,6 +387,10 @@ struct QuickCommandPalette: View {
               subtitle: "Charge limit, hold, top up and discharge · 배터리 (AlDente)",
               aliases: ["battery", "배터리", "aldente", "charge limit", "충전 제한", "bypass", "바이패스"],
               keywords: "hold top up discharge sailing 방전 완충 충전"),
+        .init(id: "browser.screen.tabs", route: .browserTabs,
+              subtitle: "Safari, Chrome, Arc, Edge, Brave and Vivaldi · ↩ brings the tab forward · 브라우저 탭",
+              aliases: ["tabs", "browser tabs", "search tabs", "탭", "탭 검색", "브라우저 탭"],
+              keywords: "safari chrome arc edge brave vivaldi tab 사파리 크롬"),
         .init(id: "system.screen.menubar", route: .menuBarItems,
               subtitle: "Find any app's menu bar icon, even behind the notch, and open it · 메뉴바 아이콘",
               aliases: ["menu bar", "menubar", "menu bar items", "status items", "메뉴바", "메뉴 막대", "ice", "bartender"],
@@ -1189,6 +1193,7 @@ struct QuickCommandPalette: View {
         // Read once when the screen opens, never per keystroke.
         case .battery: HardwareCareModel.shared.refreshBattery()
         case .menuBarItems: screens.loadMenuBarItems()
+        case .browserTabs: screens.loadBrowserTabs()
         // 7.0: Claude Code starts while the question is typed; the local router is checked once.
         case .ai:
             ai.prewarm()
@@ -1325,7 +1330,7 @@ struct QuickCommandPalette: View {
         let parsed = AOMAIRecordScope.parse(trimmed, lastFolders: Array(ai.recentFolders.prefix(1)))
         let scope = parsed.scope.union(ai.pendingScope)
         let effective = AOMAIRecordsMode.effective(scope, egress: ai.egress, mode: .current, onDeviceReadsMac: AOMAIRecordsMode.onDeviceReadsMac)
-        let reads = effective.isEmpty ? (scope.attachesClipboard ? "Clipboard text" : "No records") : effective.summary
+        let reads = effective.isEmpty ? (scope.attachesAnything ? scope.attachments.map(\.title).joined(separator: ", ") : "No records") : effective.summary
         return HStack(spacing: 8) {
             Image(systemName: effective.isEmpty ? "tray" : "tray.full")
                 .foregroundStyle(AOMCraftColor.inkSecondary)
@@ -1363,8 +1368,8 @@ struct QuickCommandPalette: View {
         let scope = parsed.scope.union(ai.pendingScope)
         let egress = ai.egress
         let effective = AOMAIRecordsMode.effective(scope, egress: egress, mode: .current, onDeviceReadsMac: AOMAIRecordsMode.onDeviceReadsMac)
-        let reads = effective.summary == "Nothing" ? (scope.attachesClipboard ? "Clipboard text only" : "No records")
-            : "Reads " + effective.summary + (scope.attachesClipboard ? ", clipboard text" : "")
+        let reads = effective.isEmpty ? (scope.attachesAnything ? scope.attachments.map(\.title).joined(separator: ", ") + " only" : "No records")
+            : "Reads " + effective.summary
         let destination: String
         switch egress {
         case .onDevice: destination = "Stays on this Mac"
@@ -1372,8 +1377,8 @@ struct QuickCommandPalette: View {
         case .external(let host): destination = "Sent to \(host)"
         case .agent: destination = "\(ai.model.provider.title) reads with its own access"
         }
-        var subtitle = effective.isEmpty && !scope.attachesClipboard
-            ? "\(destination) · type @wiki @mac @files @ssh @clip, or ↩"
+        var subtitle = effective.isEmpty && !scope.attachesAnything
+            ? "\(destination) · type @wiki @mac @files @clip @window @screen, or ↩"
             : destination
         if AOMAIRecordsMode.current == .never, !scope.isEmpty {
             subtitle = "Records are off in Settings › AI, so nothing is read"
@@ -1407,11 +1412,12 @@ struct QuickCommandPalette: View {
         var rows: [PaletteItem] = []
         let pending = ai.pendingScope
         // @mac's three first, then the ones that need a choice of their own.
-        let ordered = AOMAIRecordSource.allCases.filter { $0 != .files && !$0.isSensitive } + AOMAIRecordSource.allCases.filter { $0 != .files && $0.isSensitive }
+        let listed = AOMAIRecordSource.allCases.filter { $0 != .files && !$0.isAttachment }
+        let ordered = listed.filter { !$0.isSensitive } + listed.filter(\.isSensitive) + AOMAIRecordSource.allCases.filter(\.isAttachment)
         for source in ordered {
             let on = pending.sources.contains(source)
             var row = screenRow("airec.\(source.rawValue)", source.title, "\(source.mention) · \(source.detail)", icon: source.symbol,
-                                group: source.isSensitive ? "Ask each time" : "@mac",
+                                group: source.isAttachment ? "Attach Once" : source.isSensitive ? "Ask each time" : "@mac",
                                 primary: PaletteAction(title: on ? "Remove" : "Add", symbol: on ? "minus.circle" : "plus.circle", effect: .stay) {
                                     ai.toggle(source)
                                 })
@@ -1434,7 +1440,7 @@ struct QuickCommandPalette: View {
                                   icon: "folder", group: "Folders",
                                   primary: PaletteAction(title: "Add", symbol: "plus.circle", effect: .stay) { ai.addFolder(URL(fileURLWithPath: folder)) }))
         }
-        if !ai.lastScope.isEmpty || ai.lastScope.attachesClipboard {
+        if !ai.lastScope.isEmpty || ai.lastScope.attachesAnything {
             var reuse = screenRow("airec.reuse", "Use the Last Question's Records", ai.lastScope.summary, icon: "arrow.uturn.backward",
                                   group: "Again", primary: PaletteAction(title: "Add", effect: .stay) { ai.reuseLastScope() })
             reuse.shortcut = "⌘⇧M"
@@ -1442,11 +1448,11 @@ struct QuickCommandPalette: View {
         }
         rows.append(screenRow("airec.choosefolder", "Choose a Folder…", "@files · only what is inside it may be read", icon: "folder.badge.plus",
                               group: "Folders", primary: PaletteAction(title: "Choose…", effect: .stay) { chooseAIFolder() }))
-        if !pending.isEmpty || pending.attachesClipboard {
+        if !pending.isEmpty || pending.attachesAnything {
             rows.append(screenRow("airec.clear", "Clear All", "The next question reads nothing", icon: "xmark.circle", group: "Done",
                                   primary: PaletteAction(title: "Clear", effect: .stay) { ai.clearPendingScope() }))
         }
-        rows.append(screenRow("airec.done", "Done", pending.summary == "Nothing" && !pending.attachesClipboard ? "Nothing chosen" : "Next question reads \(pending.summary)",
+        rows.append(screenRow("airec.done", "Done", pending.summary == "Nothing" ? "Nothing chosen" : "Next question reads \(pending.summary)",
                               icon: "checkmark.circle", group: "Done", primary: PaletteAction(title: "Done", effect: .stay) { pop() }))
         return rows
     }
@@ -1602,6 +1608,7 @@ struct QuickCommandPalette: View {
         case .system: return PaletteSystemCommand.all.map(systemCommandItem)
         case .battery: return batteryItems()
         case .menuBarItems: return menuBarItemRows()
+        case .browserTabs: return browserTabRows()
         case .ai: return aiItems()
         case .aiModels: return aiModelItems()
         case .aiRecords: return aiRecordItems()
@@ -2053,6 +2060,30 @@ struct QuickCommandPalette: View {
         return items
     }
 
+    /// 7.4: open tabs, grouped by browser — ↩ brings the tab forward, ⌘↩ copies its address.
+    private func browserTabRows() -> [PaletteItem] {
+        guard let scan = screens.browserTabs else { return [] }
+        var rows = scan.tabs.map { tab in
+            var row = screenRow("tab.\(tab.id)", tab.title, tab.host, icon: "globe", group: tab.browser.name,
+                                primary: PaletteAction(title: "Show Tab", symbol: "arrow.up.forward.app") { PaletteBrowserTabs.activate(tab) },
+                                secondaries: [PaletteAction(title: "Copy Address", symbol: "link") {
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(tab.url, forType: .string)
+                                }],
+                                image: session.icon(forBundleID: tab.browser.bundleID))
+            row.keywords = tab.url
+            row.sendText = tab.url
+            return row
+        }
+        for problem in scan.problems {
+            rows.append(screenRow("tab.problem.\(problem)", "Couldn't Read Tabs", problem, icon: "exclamationmark.triangle", group: "Not read",
+                                  primary: PaletteAction(title: "Open Automation Settings") {
+                                      if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") { NSWorkspace.shared.open(url) }
+                                  }))
+        }
+        return rows
+    }
+
     /// 6.11: Ice's menu bar search — ↩ opens the item's menu in place.
     private func menuBarItemRows() -> [PaletteItem] {
         guard let items = screens.menuBarItems else { return [] }
@@ -2077,10 +2108,18 @@ struct QuickCommandPalette: View {
                 confirm(PaletteConfirmation(title: words.title, message: words.message, confirmTitle: words.button,
                                             after: .close(restoresFocus: true)) { command.run() })
             }
+        } else if case .desktop = command.kind {
+            action = PaletteAction(title: "Go", symbol: "arrow.right.circle") { command.run() }
         } else {
             action = PaletteAction(title: "Run") { command.run() }
         }
-        var item = screenRow(command.id, command.title, command.subtitle, icon: command.symbol, group: command.group, primary: action)
+        var secondaries: [PaletteAction] = []
+        if case .desktop = command.kind {
+            secondaries = [PaletteAction(title: "Move Front Window Here", symbol: "rectangle.portrait.and.arrow.forward") { command.moveFrontWindowHere() },
+                           PaletteAction(title: "Rename…", symbol: "pencil") { command.rename() }]
+        }
+        var item = screenRow(command.id, command.title, command.subtitle, icon: command.symbol, group: command.group,
+                             primary: action, secondaries: secondaries)
         item.aliases = command.aliases
         return item
     }
@@ -2491,6 +2530,12 @@ struct QuickCommandPalette: View {
             case .failed(let title, let detail):
                 return RouteHeader(symbol: "exclamationmark.triangle.fill", tint: AOMColor.warning, title: title, detail: detail, image: icon)
             }
+        case .browserTabs? where screens.browserTabs == nil:
+            return RouteHeader(symbol: "square.on.square", tint: AOMBrand.graphite, title: "Reading Open Tabs…",
+                               detail: "Each running browser is asked once; the first time, macOS asks to let AOM control it.", busy: true)
+        case .browserTabs? where screens.browserTabs?.tabs.isEmpty == true && screens.browserTabs?.problems.isEmpty == true:
+            return RouteHeader(symbol: "square.on.square", tint: AOMBrand.graphite, title: "No Open Tabs",
+                               detail: "Safari, Chrome, Arc, Edge, Brave or Vivaldi, when one is running with a window open.")
         case .menuBarItems? where screens.menuBarItems == nil:
             return RouteHeader(symbol: "menubar.rectangle", tint: AOMBrand.graphite, title: "Reading the Menu Bar…",
                                detail: "Every app's menu bar icon, including those the notch hides.", busy: true)

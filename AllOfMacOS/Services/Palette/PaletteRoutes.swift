@@ -29,6 +29,8 @@ enum PaletteRoute: Hashable {
     case battery
     /// 6.11: every app's menu bar item (Ice's search).
     case menuBarItems
+    /// 7.4: open tabs of the running browsers.
+    case browserTabs
     /// 6.9: Quick AI on Claude Code or Codex; 7.0 every model.
     case ai
     /// 7.0: the model picker (⌘P on Ask AI).
@@ -76,6 +78,7 @@ enum PaletteRoute: Hashable {
         case .system: return "System Commands"
         case .battery: return "Battery"
         case .menuBarItems: return "Menu Bar Items"
+        case .browserTabs: return "Browser Tabs"
         case .ai: return "Ask AI"
         case .aiModels: return "Choose Model"
         case .aiRecords: return "Records for the Next Question"
@@ -111,6 +114,7 @@ enum PaletteRoute: Hashable {
         case .system: return "Search system commands…"
         case .battery: return "Search battery controls…"
         case .menuBarItems: return "Search menu bar items, even those behind the notch…"
+        case .browserTabs: return "Search open tabs by title or address…"
         case .ai: return "Ask anything…"
         case .aiModels: return "Search models…"
         case .aiRecords: return "Filter sources — ↩ adds or removes one"
@@ -145,6 +149,7 @@ enum PaletteRoute: Hashable {
         case .system: return "gearshape.2"
         case .battery: return "battery.75percent"
         case .menuBarItems: return "menubar.rectangle"
+        case .browserTabs: return "square.on.square"
         case .ai: return "sparkles"
         case .aiModels: return "cpu"
         case .aiRecords: return "tray.full"
@@ -572,6 +577,8 @@ struct PaletteSystemCommand: Identifiable {
         case action(ActionType)
         /// loginwindow's "show restart / shut down dialog" events: macOS asks.
         case restartDialog, shutDownDialog
+        /// 7.4: Desktop N — ↩ goes there, ⌘↩ carries the front window, Rename….
+        case desktop(Int)
     }
 
     let id: String
@@ -584,7 +591,20 @@ struct PaletteSystemCommand: Identifiable {
     /// Asked in the panel first (the action's own alert is then skipped).
     var confirmation: (title: String, message: String, button: String)?
 
-    static let all: [PaletteSystemCommand] = [
+    /// The fixed commands, then Desktop 1–9 with their AOM names.
+    static var all: [PaletteSystemCommand] { fixed + desktops }
+
+    static var desktops: [PaletteSystemCommand] {
+        (1...9).map { number in
+            let name = AOMDesktopNames.name(number)
+            return .init(id: "system.desktop.\(number)", title: name.map { "Desktop \(number) · \($0)" } ?? "Desktop \(number)",
+                         subtitle: "↩ Go · ⌘↩ Move the front window here · 데스크탑 \(number)", symbol: "\(number).square",
+                         group: "Desktops", kind: .desktop(number),
+                         aliases: ["desktop \(number)", "데스크탑 \(number)", "데스크톱 \(number)", "space \(number)"] + (name.map { [$0] } ?? []))
+        }
+    }
+
+    static let fixed: [PaletteSystemCommand] = [
         .init(id: "system.lock", title: "Lock Screen", subtitle: "Lock the Mac · 화면 잠금", symbol: "lock",
               group: "Power & session", kind: .action(.lockScreen), aliases: ["lock", "잠금", "화면 잠금"]),
         .init(id: "system.sleep", title: "Sleep", subtitle: "Put the Mac to sleep · 잠자기", symbol: "moon",
@@ -623,10 +643,21 @@ struct PaletteSystemCommand: Identifiable {
               aliases: ["hide others", "hide all", "다른 앱 가리기", "가리기"]),
         .init(id: "system.missionControl", title: "Mission Control", subtitle: "Every window and Space · 미션 컨트롤",
               symbol: "rectangle.3.group", group: "Apps & windows", kind: .action(.missionControl), aliases: ["미션 컨트롤"]),
+        .init(id: "system.dismissNotifications", title: "Dismiss All Notifications", subtitle: "Close every banner and alert · 알림 모두 닫기",
+              symbol: "bell.slash", group: "Apps & windows", kind: .action(.dismissNotifications),
+              aliases: ["dismiss notifications", "clear notifications", "알림 닫기", "알림 지우기", "알림 모두 닫기"]),
         .init(id: "system.notificationCenter", title: "Open Notification Center", subtitle: "알림 센터", symbol: "bell",
               group: "Apps & windows", kind: .action(.openNotificationCenter), aliases: ["notifications", "알림"]),
         .init(id: "system.controlCenter", title: "Open Control Center", subtitle: "제어 센터", symbol: "switch.2",
               group: "Apps & windows", kind: .action(.openControlCenter), aliases: ["control center", "제어 센터"]),
+        .init(id: "system.wifi", title: "Toggle Wi-Fi", subtitle: "와이파이 켜기/끄기", symbol: "wifi",
+              group: "Network", kind: .action(.setWiFiPower), aliases: ["wifi", "wi-fi", "와이파이"]),
+        .init(id: "system.bluetooth", title: "Toggle Bluetooth", subtitle: "Bluetooth keyboards and mice disconnect · 블루투스",
+              symbol: "dot.radiowaves.left.and.right", group: "Network", kind: .action(.setBluetoothPower),
+              aliases: ["bluetooth", "블루투스"]),
+        .init(id: "system.airplane", title: "Toggle Airplane Mode", subtitle: "Wi-Fi and Bluetooth off, then back as they were · 비행기 모드",
+              symbol: "airplane", group: "Network", kind: .action(.setAirplaneMode),
+              aliases: ["airplane", "flight mode", "비행기 모드", "비행 모드"]),
         .init(id: "system.mute", title: "Toggle Mute", subtitle: "The sound output · 음소거", symbol: "speaker.slash",
               group: "Sound", kind: .action(.muteVolume), aliases: ["mute", "음소거", "소리 끄기"]),
         .init(id: "system.micMute", title: "Toggle Microphone Mute", subtitle: "The default microphone · 마이크 음소거",
@@ -640,7 +671,7 @@ struct PaletteSystemCommand: Identifiable {
         switch kind {
         case .restartDialog: return "tell application \"loginwindow\" to «event aevtrrst»"
         case .shutDownDialog: return "tell application \"loginwindow\" to «event aevtrsdn»"
-        case .action: return nil
+        case .action, .desktop: return nil
         }
     }
 
@@ -655,7 +686,50 @@ struct PaletteSystemCommand: Identifiable {
         case .restartDialog, .shutDownDialog:
             guard let source = appleEventSource else { return }
             AppleEventScripts.run(source, action: title, timeout: 15) { _ in }
+        case .desktop(let number):
+            var action = TriggerAction(actionType: .switchToDesktop)
+            action.parameters.desktopNumber = number
+            ActionExecutor.executeAction(action)
         }
+    }
+
+    /// Desktop N's ⌘↩: the window that was in front goes to it.
+    @MainActor
+    func moveFrontWindowHere() {
+        guard case .desktop(let number) = kind else { return }
+        var action = TriggerAction(actionType: .moveWindowToDesktop)
+        action.parameters.desktopNumber = number
+        ActionExecutor.executeAction(action)
+    }
+
+    /// Desktop N's Rename…: AOM's own name for it (macOS has none).
+    @MainActor
+    func rename() {
+        guard case .desktop(let number) = kind else { return }
+        AskForInput.ask(prompt: "Name for Desktop \(number) (empty clears it)", initial: AOMDesktopNames.name(number) ?? "") { value in
+            guard let value else { return }
+            AOMDesktopNames.setName(value, for: number)
+        }
+    }
+}
+
+/// 7.4: names for Desktop 1–9 that the launcher shows and finds
+/// ("Desktop 2 · Mail"). macOS keeps no names for Spaces, so these are
+/// AOM's, by desktop number.
+enum AOMDesktopNames {
+    static let key = "AOMDesktopNames.v1"
+
+    static func name(_ number: Int, defaults: UserDefaults = .standard) -> String? {
+        let names = defaults.dictionary(forKey: key) as? [String: String] ?? [:]
+        return names[String(number)].flatMap { $0.isEmpty ? nil : $0 }
+    }
+
+    static func setName(_ name: String, for number: Int, defaults: UserDefaults = .standard) {
+        guard (1...9).contains(number) else { return }
+        var names = defaults.dictionary(forKey: key) as? [String: String] ?? [:]
+        let trimmed = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40))
+        names[String(number)] = trimmed.isEmpty ? nil : trimmed
+        defaults.set(names, forKey: key)
     }
 }
 
@@ -693,6 +767,7 @@ final class PaletteRouteModels: ObservableObject {
     @Published private(set) var uninstall: PaletteUninstallFlow?
     @Published private(set) var sound: PaletteSoundDevices?
     @Published private(set) var menuBarItems: [PaletteMenuBarItems.Item]?
+    @Published private(set) var browserTabs: PaletteBrowserTabs.Scan?
     /// Kill Apps rows a normal quit was asked for, and when.
     @Published private(set) var quitting: [pid_t: Date] = [:]
     /// One line under the search after an action that keeps the screen
@@ -799,6 +874,14 @@ final class PaletteRouteModels: ObservableObject {
     }
 
     func clearSound() { soundTicket &+= 1; sound = nil }
+
+    func loadBrowserTabs() {
+        browserTabs = nil
+        Task { [weak self] in
+            let scan = await PaletteBrowserTabs.scan()
+            self?.browserTabs = scan
+        }
+    }
 
     func loadMenuBarItems() {
         Task { [weak self] in

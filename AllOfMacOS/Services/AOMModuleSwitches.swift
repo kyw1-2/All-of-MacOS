@@ -15,6 +15,13 @@ import SwiftUI
 /// A module that can be turned off.
 enum AOMModuleSwitch: String, CaseIterable, Identifiable, Codable {
     case files, folderRules, textActions, focus, micMute, inputSources, screenRuler, clickHints
+    /// 7.4, off until turned on.
+    case menuBarHider, memoryWatch, meetingAlerts
+
+    /// Off until turned on: they add menu bar items, ask for Calendar or
+    /// post alerts, so nothing changes for anyone who doesn't choose them.
+    static let optIn: Set<AOMModuleSwitch> = [.menuBarHider, .memoryWatch, .meetingAlerts]
+    var isOptIn: Bool { Self.optIn.contains(self) }
 
     var id: String { rawValue }
 
@@ -28,6 +35,9 @@ enum AOMModuleSwitch: String, CaseIterable, Identifiable, Codable {
         case .inputSources: return "Input Sources"
         case .screenRuler: return "Screen Ruler"
         case .clickHints: return "Click Hints"
+        case .menuBarHider: return "Menu Bar Hider"
+        case .memoryWatch: return "Memory Watch"
+        case .meetingAlerts: return "Meeting Alerts"
         }
     }
 
@@ -41,6 +51,9 @@ enum AOMModuleSwitch: String, CaseIterable, Identifiable, Codable {
         case .inputSources: return "Per-app input sources and the 한/A badge"
         case .screenRuler: return "Measure on screen"
         case .clickHints: return "Click by typing letters over buttons"
+        case .menuBarHider: return "Hides the menu bar items you ⌘-drag left of its divider"
+        case .memoryWatch: return "Alerts on memory pressure or heavy swap, with the apps using most"
+        case .meetingAlerts: return "Countdown in the menu bar and a full-screen alert as a meeting starts"
         }
     }
 
@@ -54,6 +67,9 @@ enum AOMModuleSwitch: String, CaseIterable, Identifiable, Codable {
         case .inputSources: return "keyboard.badge.ellipsis"
         case .screenRuler: return "ruler"
         case .clickHints: return "cursorarrow.click.badge.clock"
+        case .menuBarHider: return "chevron.left.2"
+        case .memoryWatch: return "memorychip"
+        case .meetingAlerts: return "calendar.badge.clock"
         }
     }
 
@@ -68,6 +84,9 @@ final class AOMModuleSwitches: ObservableObject {
 
     /// The modules turned off (none by default).
     @Published private(set) var off: Set<AOMModuleSwitch>
+    /// 7.4: the opt-in modules turned on.
+    @Published private(set) var optedIn: Set<AOMModuleSwitch>
+    static let optInKey = "AOMModules.optIn.v1"
     /// How many times each module started and stopped (Settings shows them in debug builds).
     @Published private(set) var counters: [AOMModuleSwitch: (starts: Int, stops: Int)] = [:]
     private var running: Set<AOMModuleSwitch> = []
@@ -76,10 +95,12 @@ final class AOMModuleSwitches: ObservableObject {
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         let stored = defaults.stringArray(forKey: Self.key) ?? []
-        off = Set(stored.compactMap(AOMModuleSwitch.init(rawValue:)))
+        off = Set(stored.compactMap(AOMModuleSwitch.init(rawValue:))).subtracting(AOMModuleSwitch.optIn)
+        optedIn = Set((defaults.stringArray(forKey: Self.optInKey) ?? []).compactMap(AOMModuleSwitch.init(rawValue:)))
+            .intersection(AOMModuleSwitch.optIn)
     }
 
-    func isOn(_ module: AOMModuleSwitch) -> Bool { !off.contains(module) }
+    func isOn(_ module: AOMModuleSwitch) -> Bool { module.isOptIn ? optedIn.contains(module) : !off.contains(module) }
 
     var isRunningForTests: Set<AOMModuleSwitch> { running }
 
@@ -103,8 +124,13 @@ final class AOMModuleSwitches: ObservableObject {
     @discardableResult
     func set(_ module: AOMModuleSwitch, on: Bool) -> String? {
         if !on, let refusal = refusal(turningOff: module) { return refusal }
-        if on { off.remove(module) } else { off.insert(module) }
-        defaults.set(off.map(\.rawValue).sorted(), forKey: Self.key)
+        if module.isOptIn {
+            if on { optedIn.insert(module) } else { optedIn.remove(module) }
+            defaults.set(optedIn.map(\.rawValue).sorted(), forKey: Self.optInKey)
+        } else {
+            if on { off.remove(module) } else { off.insert(module) }
+            defaults.set(off.map(\.rawValue).sorted(), forKey: Self.key)
+        }
         if on { start(module) } else { stop(module) }
         return nil
     }
@@ -123,6 +149,9 @@ final class AOMModuleSwitches: ObservableObject {
         case .inputSources: AppInputSourcesModule.start()
         case .screenRuler: ScreenRulerModule.start()
         case .clickHints: ClickHintsModule.start()
+        case .menuBarHider: MenuBarHider.shared.start()
+        case .memoryWatch: MemoryWatch.shared.start()
+        case .meetingAlerts: MeetingAlerts.shared.start()
         }
     }
 
@@ -139,6 +168,9 @@ final class AOMModuleSwitches: ObservableObject {
         case .micMute: MicMuteModule.stop()
         case .inputSources: AppInputSourcesModule.stop()
         case .screenRuler, .clickHints: break
+        case .menuBarHider: MenuBarHider.shared.stop()
+        case .memoryWatch: MemoryWatch.shared.stop()
+        case .meetingAlerts: MeetingAlerts.shared.stop()
         }
     }
 
@@ -186,7 +218,8 @@ extension AOMModuleSwitches {
     @MainActor
     static func gated<Item>(_ items: [(id: String, item: Item)], isSearching: Bool, switches: AOMModuleSwitches = .shared,
                             mark: (inout Item) -> Void = { _ in }, turnOnRow: (AOMModuleSwitch) -> Item) -> [Item] {
-        guard !switches.off.isEmpty else { return items.map(\.item) }
+        // Opt-in modules start off, so a search can always offer to turn them on.
+        guard !switches.off.isEmpty || isSearching else { return items.map(\.item) }
         var out: [Item] = []
         out.reserveCapacity(items.count + switches.off.count)
         for entry in items {

@@ -658,7 +658,8 @@ struct AOMAIReceiptLine: View {
         var parts = [receipt.destination]
         if receipt.allowed == "Nothing" { parts.append("No records") }
         else { parts.append(receipt.used.isEmpty ? "Nothing read" : "Read \(receipt.used.count) source\(receipt.used.count == 1 ? "" : "s")") }
-        if receipt.clipboardAttached { parts.append("Clipboard") }
+        if let attached = receipt.attached, !attached.isEmpty { parts.append(attached.joined(separator: ", ")) }
+        else if receipt.clipboardAttached { parts.append("Clipboard") }
         if receipt.earlierTurns > 0 { parts.append("+\(receipt.earlierTurns) earlier") }
         return parts.joined(separator: " · ")
     }

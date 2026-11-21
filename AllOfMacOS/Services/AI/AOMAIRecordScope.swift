@@ -79,7 +79,7 @@ extension AOMAIProvider {
 
 /// One thing a question may read.
 enum AOMAIRecordSource: String, CaseIterable, Codable, Identifiable, Comparable {
-    case wiki, memories, claude, codex, chats, shell, docs, files, ssh, clip
+    case wiki, memories, claude, codex, chats, shell, docs, files, ssh, clip, screen, window
 
     var id: String { rawValue }
 
@@ -101,6 +101,8 @@ enum AOMAIRecordSource: String, CaseIterable, Codable, Identifiable, Comparable 
         case .files: return "A folder"
         case .ssh: return "SSH config"
         case .clip: return "Clipboard text"
+        case .screen: return "Screen text"
+        case .window: return "Front window text"
         }
     }
 
@@ -116,6 +118,8 @@ enum AOMAIRecordSource: String, CaseIterable, Codable, Identifiable, Comparable 
         case .files: return "Only the folder you choose, read-only"
         case .ssh: return "~/.ssh/config and known_hosts — never keys"
         case .clip: return "The text on the clipboard now, attached once"
+        case .screen: return "Text read on this Mac from the display under the pointer (AOM's windows left out), attached once"
+        case .window: return "On-device OCR of the window you were in, once"
         }
     }
 
@@ -131,6 +135,8 @@ enum AOMAIRecordSource: String, CaseIterable, Codable, Identifiable, Comparable 
         case .files: return "folder"
         case .ssh: return "network"
         case .clip: return "doc.on.clipboard"
+        case .screen: return "display"
+        case .window: return "macwindow"
         }
     }
 
@@ -149,13 +155,18 @@ enum AOMAIRecordSource: String, CaseIterable, Codable, Identifiable, Comparable 
         case .shell: return [.shell_history]
         case .docs: return [.agent_docs]
         case .ssh: return [.ssh_config]
-        case .files, .clip: return []
+        case .files, .clip, .screen, .window: return []
         }
     }
 
     /// @mac: the records that hold no other AI's conversations, no shell
     /// history and nothing about SSH.
     static let mac: [AOMAIRecordSource] = [.wiki, .memories, .docs]
+
+    /// Text that goes with the question itself, read once when it is sent
+    /// (7.4: @screen and @window join @clip). They need no record tools.
+    static let attachments: Set<AOMAIRecordSource> = [.clip, .screen, .window]
+    var isAttachment: Bool { Self.attachments.contains(self) }
 }
 
 /// What a question may read, fixed when it is sent.
@@ -166,8 +177,11 @@ struct AOMAIRecordScope: Equatable, Codable {
 
     static let none = AOMAIRecordScope()
 
-    var isEmpty: Bool { sources.subtracting([.clip]).isEmpty && folders.isEmpty }
+    var isEmpty: Bool { sources.subtracting(AOMAIRecordSource.attachments).isEmpty && folders.isEmpty }
     var attachesClipboard: Bool { sources.contains(.clip) }
+    /// @clip, @screen, @window in that order.
+    var attachments: [AOMAIRecordSource] { ordered.filter(\.isAttachment) }
+    var attachesAnything: Bool { !attachments.isEmpty }
 
     /// Fixed order, so the schemas and the tests are stable.
     var ordered: [AOMAIRecordSource] { sources.sorted() }
@@ -231,7 +245,7 @@ struct AOMAIRecordScope: Equatable, Codable {
                     let root = URL(fileURLWithPath: folder).standardizedFileURL.resolvingSymlinksInPath().path
                     if inside(root) { return nil }
                 }
-            case .clip: break
+            case .clip, .screen, .window: break
             }
         }
         return "This question may read only: \(summary). \((real as NSString).abbreviatingWithTildeInPath) is outside that; ask again with an @ mention (for example @files) to allow it."
@@ -277,6 +291,8 @@ struct AOMAIRecordScope: Equatable, Codable {
                 case "mac": scope.sources.formUnion(AOMAIRecordSource.mac)
                 case "memory", "memories": scope.sources.insert(.memories)
                 case "clipboard": scope.sources.insert(.clip)
+                case "display": scope.sources.insert(.screen)
+                case "win", "app": scope.sources.insert(.window)
                 case "history": scope.sources.insert(.shell)
                 case "files", "folder":
                     scope.sources.insert(.files)
@@ -378,7 +394,7 @@ enum AOMAIRecordsMode: String, CaseIterable, Identifiable {
 
     /// Pure: the scope a question gets.
     static func effective(_ asked: AOMAIRecordScope, egress: AOMAIEgress, mode: AOMAIRecordsMode, onDeviceReadsMac: Bool) -> AOMAIRecordScope {
-        guard mode != .never else { return AOMAIRecordScope(sources: asked.sources.intersection([.clip])) }
+        guard mode != .never else { return AOMAIRecordScope(sources: asked.sources.intersection(AOMAIRecordSource.attachments)) }
         if asked.isEmpty, egress == .onDevice, onDeviceReadsMac {
             var scope = asked
             scope.sources.formUnion(AOMAIRecordSource.mac)
@@ -397,6 +413,8 @@ struct AOMAIReceipt: Equatable, Codable {
     var used: [String] = []
     var earlierTurns: Int = 0
     var clipboardAttached = false
+    /// 7.4: what went with the question ("Clipboard", "Safari window").
+    var attached: [String]? = nil
     var note: String?
 
     var line: String {
@@ -404,7 +422,8 @@ struct AOMAIReceipt: Equatable, Codable {
         parts.append(allowed == "Nothing" ? "No records" : "Allowed: \(allowed)")
         if !used.isEmpty { parts.append("Used: " + used.joined(separator: ", ")) }
         else if allowed != "Nothing" { parts.append("Nothing read") }
-        if clipboardAttached { parts.append("Clipboard attached") }
+        if let attached, !attached.isEmpty { parts.append("Attached: " + attached.joined(separator: ", ")) }
+        else if clipboardAttached { parts.append("Clipboard attached") }
         if earlierTurns > 0 { parts.append("\(earlierTurns) earlier turn\(earlierTurns == 1 ? "" : "s") sent") }
         if let note { parts.append(note) }
         return parts.joined(separator: " · ")

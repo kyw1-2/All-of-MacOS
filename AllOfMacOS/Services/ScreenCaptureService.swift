@@ -362,6 +362,30 @@ final class ScreenCaptureService {
         }
     }
 
+    /// 7.4 (@window): the front normal window of `pid`, the app the launcher
+    /// opened over.
+    func frontWindow(of pid: pid_t) async throws -> SCWindow {
+        try await Self.withDeadline(seconds: 20) { [self] in
+            let content = try await shareableContent()
+            let windows = content.windows.filter { w in
+                w.isOnScreen && w.owningApplication?.processID == pid && w.windowLayer == 0
+                    && w.frame.width >= 100 && w.frame.height >= 100
+            }
+            guard let best = windows.first else { throw CaptureError.noWindowFound }
+            return best
+        }
+    }
+
+    /// 7.4 (@screen): the display under the pointer with AOM's own windows
+    /// (the launcher above it) left out.
+    func captureDisplayUnderPointerWithoutAOM() async throws -> CaptureResult {
+        let content = try await Self.withDeadline(seconds: 20) { [self] in try await shareableContent() }
+        guard let display = Self.displayUnderPointer(in: content.displays) else { throw CaptureError.noDisplays }
+        let own = ProcessInfo.processInfo.processIdentifier
+        let ids = Set(content.windows.filter { $0.owningApplication?.processID == own }.map(\.windowID))
+        return try await captureArea(display.frame, showsCursor: false, pixelSnap: false, excludingWindowIDs: ids)
+    }
+
     /// The frontmost capturable window under the pointer.
     ///
     /// `CGWindowListCopyWindowInfo` is used only to learn *which* window is under

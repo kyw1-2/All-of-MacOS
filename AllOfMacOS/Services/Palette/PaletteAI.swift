@@ -200,14 +200,12 @@ final class PaletteAIChat: ObservableObject {
         var scopeSummary: String? = nil
         /// The records this question was allowed (Ask Again uses the same).
         var scope: AOMAIRecordScope? = nil
-        var attachment: String? = nil
+        /// 7.4: @clip, @window, @screen text, read when it was sent.
+        var attachments: [AOMAIAttachment] = []
         var receipt: AOMAIReceipt? = nil
 
-        /// What goes to the model: the question and its attachment.
-        var sentText: String {
-            guard let attachment else { return text }
-            return text + "\n\nClipboard text the user attached:\n```\n" + attachment + "\n```"
-        }
+        /// What goes to the model: the question and its attachments.
+        var sentText: String { text + attachments.map(\.sent).joined() }
     }
 
     @Published private(set) var messages: [Message] = []
@@ -349,6 +347,10 @@ final class PaletteAIChat: ObservableObject {
             messages.removeLast()
             messages.append(Message(role: .error, text: "Stopped."))
         }
+        // Stopped while @window or @screen was being read: the question goes back unsent.
+        if isRunning, let last = messages.last, last.role == .user, last.scopeSummary?.hasPrefix("Reading ") == true {
+            messages.removeLast()
+        }
         isRunning = false
     }
 
@@ -369,25 +371,58 @@ final class PaletteAIChat: ObservableObject {
         let parsed = AOMAIRecordScope.parse(text, lastFolders: recentFolders.prefix(1).map { $0 })
         var scope = parsed.scope.union(pendingScope)
         pendingScope = .none
-        if !scope.isEmpty || scope.attachesClipboard { lastScope = scope }
-        var message = Message(role: .user, text: parsed.question.isEmpty ? text : parsed.question)
-        var note: String?
-        if scope.attachesClipboard {
-            switch AOMAIRecordScope.clipboardText() {
-            case .success(let clip): message.attachment = clip
-            case .failure(let error): note = error.message
-            }
-            scope.sources.remove(.clip)
-        }
+        if !scope.isEmpty || scope.attachesAnything { lastScope = scope }
+        let message = Message(role: .user, text: parsed.question.isEmpty ? text : parsed.question)
+        let wanted = scope.attachments
+        scope.sources.subtract(AOMAIRecordSource.attachments)
+        var notes: [String] = []
         if scope.sources.contains(.files), scope.folders.isEmpty {
             scope.sources.remove(.files)
-            note = [note, "@files needs a folder: choose one in Records or write @~/path"].compactMap { $0 }.joined(separator: " · ")
+            notes.append("@files needs a folder: choose one in Records or write @~/path")
         }
+        var clip: AOMAIAttachment?
+        if wanted.contains(.clip) {
+            switch AOMAIRecordScope.clipboardText() {
+            case .success(let text): clip = .clipboard(text)
+            case .failure(let error): notes.append(error.message)
+            }
+        }
+        let screen = wanted.filter { $0 != .clip }
+        guard !screen.isEmpty else {
+            send(message, attachments: clip.map { [$0] } ?? [], scope: scope, notes: notes)
+            return
+        }
+        // @window and @screen are read now, before the question goes, and
+        // from the app the launcher opened over.
+        isRunning = true
+        var reading = message
+        reading.scopeSummary = "Reading " + screen.map(\.title).joined(separator: ", ") + "…"
+        messages.append(reading)
+        let frontApp = AOMLauncherController.shared.frontApp ?? PaletteSession.previousApp()
+        task = Task { [weak self] in
+            var attached = clip.map { [$0] } ?? []
+            var notes = notes
+            for source in screen {
+                switch await AOMAIAttachment.capture(source, frontApp: frontApp) {
+                case .success(let attachment): attached.append(attachment)
+                case .failure(let error): notes.append(error.message)
+                }
+            }
+            guard let self, !Task.isCancelled, self.messages.last?.id == message.id else { return }
+            self.messages.removeLast()
+            self.isRunning = false
+            self.send(message, attachments: attached, scope: scope, notes: notes)
+        }
+    }
+
+    private func send(_ question: Message, attachments: [AOMAIAttachment], scope: AOMAIRecordScope, notes: [String]) {
+        var message = question
+        message.attachments = attachments
         message.scope = scope
-        let summary = scope.summary
-        message.scopeSummary = summary == "Nothing" ? (message.attachment == nil ? nil : "Clipboard") : summary + (message.attachment == nil ? "" : ", Clipboard")
+        let parts = (scope.summary == "Nothing" ? [] : [scope.summary]) + attachments.map(\.label)
+        message.scopeSummary = parts.isEmpty ? nil : parts.joined(separator: ", ")
         messages.append(message)
-        answer(scope: scope, note: note)
+        answer(scope: scope, note: notes.isEmpty ? nil : notes.joined(separator: " · "))
     }
 
     /// ⌘R: the last question again (the old answer is replaced).
@@ -412,10 +447,11 @@ final class PaletteAIChat: ObservableObject {
         let egress = self.egress
         let scope = AOMAIRecordsMode.effective(asked, egress: egress, mode: .current, onDeviceReadsMac: AOMAIRecordsMode.onDeviceReadsMac)
         var receipt = AOMAIReceipt(destination: egress.label(ref.provider), leavesMac: egress.leavesMac, allowed: scope.summary,
-                                   clipboardAttached: questionMessage.attachment != nil, note: note)
+                                   clipboardAttached: questionMessage.attachments.contains { $0.label == "Clipboard" },
+                                   attached: questionMessage.attachments.isEmpty ? nil : questionMessage.attachments.map(\.label), note: note)
         if !scope.isEmpty, !ref.provider.takesRecordTools {
             receipt.note = [note, ref.provider.isAgent ? "\(ref.provider.title) reads with its own read-only access, not AOM's records" :
-                                "\(ref.provider.title) can't read records; only attached clipboard text goes with it"].compactMap { $0 }.joined(separator: " · ")
+                                "\(ref.provider.title) can't read records; only attached text goes with it"].compactMap { $0 }.joined(separator: " · ")
             receipt.allowed = "Nothing"
         }
         if AOMAIRecordsMode.current == .never, !asked.isEmpty {

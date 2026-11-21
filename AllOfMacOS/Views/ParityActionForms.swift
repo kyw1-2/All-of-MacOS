@@ -106,6 +106,14 @@ struct ParityActionForm: View {
             note("Uses System Events, so macOS asks once to let AOM control it.")
         case .setWiFiPower:
             modePicker(on: "On", off: "Off")
+        case .setBluetoothPower:
+            modePicker(on: "On", off: "Off")
+            note("Bluetooth keyboards, mice and headphones disconnect while it is off.")
+        case .setAirplaneMode:
+            modePicker(on: "On", off: "Off")
+            note("On turns Wi-Fi and Bluetooth off; Off turns back on the ones that were on before. Bluetooth keyboards and mice disconnect.")
+        case .dismissNotifications:
+            note("Presses Close on each notification in Notification Center through Accessibility.")
         case .bluetoothDevice:
             HStack {
                 TextField("Device name or address", text: string(\.bluetoothDevice, default: "")).textFieldStyle(.roundedBorder)

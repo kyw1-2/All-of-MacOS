@@ -85,7 +85,7 @@ enum ActionSummary {
             let unit = (p.moveResizeUnit ?? "percent") == "percent" ? "%" : " px"
             let size = [p.moveResizeWidth, p.moveResizeHeight].compactMap { $0 }.map { String(Int($0)) + unit }.joined(separator: " × ")
             return "\(ActionParameterForm.anchorTitle(p.moveResizeAnchor ?? "topLeft"))\(size.isEmpty ? "" : " · " + size)"
-        case .switchToDesktop: return "Desktop \(p.desktopNumber ?? 1)"
+        case .switchToDesktop, .moveWindowToDesktop: return "Desktop \(p.desktopNumber ?? 1)"
         case .customClick: return "button \((p.clickButton ?? 0) + 1) × \(p.clickCount ?? 1)"
         case .scrollCustom: return "\(p.scrollDirection ?? "down") \(abs(p.scrollAmount ?? 3)) \(p.scrollUnit ?? "lines")"
         case .moveMouseRelative: return "Δ \(Int(p.mouseDeltaX ?? 0)), \(Int(p.mouseDeltaY ?? 0))"

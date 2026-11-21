@@ -208,6 +208,7 @@ enum ActionType: String, Codable, Identifiable, CaseIterable {
     case switchToDesktop = "Switch to Desktop"
     case moveWindowToPreviousSpace = "Move Window to Previous Space"
     case moveWindowToNextSpace = "Move Window to Next Space"
+    case moveWindowToDesktop = "Move Window to Desktop"
     case missionControl = "Mission Control"
     case appExpose = "Application Exposé"
     case launchpad = "Launchpad"
@@ -318,6 +319,9 @@ enum ActionType: String, Codable, Identifiable, CaseIterable {
     case toggleDockAutoHide = "Toggle Dock Auto-Hide"
     case bluetoothDevice = "Connect / Disconnect Bluetooth Device"
     case setWiFiPower = "Turn Wi-Fi On / Off"
+    case setBluetoothPower = "Turn Bluetooth On / Off"
+    case setAirplaneMode = "Turn Airplane Mode On / Off"
+    case dismissNotifications = "Dismiss All Notifications"
     case showEmojiPicker = "Show Emoji & Symbols"
     // Utility
     case recognizeScreenText = "Find Text on Screen (OCR)"
@@ -375,7 +379,7 @@ enum ActionType: String, Codable, Identifiable, CaseIterable {
              .startResizingWindow, .stopResizingWindow, .toggleResizingWindow:
             return .windowManagement
         case .switchSpaceLeft, .switchSpaceRight, .switchToDesktop, .moveWindowToPreviousSpace,
-             .moveWindowToNextSpace, .missionControl, .appExpose, .launchpad, .showDesktop:
+             .moveWindowToNextSpace, .moveWindowToDesktop, .missionControl, .appExpose, .launchpad, .showDesktop:
             return .spacesMissionControl
         case .hideOtherApps: return .applicationControl
         case .ctrlLeftClick, .optionLeftClick, .shiftLeftClick, .cmdDoubleClick, .customClick,
@@ -406,7 +410,7 @@ enum ActionType: String, Codable, Identifiable, CaseIterable {
         case .activateWindowByTitle, .minimizeAppWindows, .gatherWindowsToPointerDisplay, .tileFrontWindowsSideBySide:
             return .windowManagement
         case .switchInputSource, .setSoundInput, .toggleDisplayMirroring, .setDisplayInputSource, .toggleXDRBrightness, .ejectAllDisks, .toggleDockAutoHide,
-             .bluetoothDevice, .setWiFiPower, .showEmojiPicker:
+             .bluetoothDevice, .setWiFiPower, .setBluetoothPower, .setAirplaneMode, .dismissNotifications, .showEmojiPicker:
             return .systemActions
         case .recognizeScreenText, .sendMIDI, .sendOSC, .pickScreenColor, .hapticFeedback, .postDistributedNotification:
             return .utilityActions
@@ -534,6 +538,7 @@ enum ActionType: String, Codable, Identifiable, CaseIterable {
         case .switchToDesktop: return "desktopcomputer"
         case .moveWindowToPreviousSpace: return "arrow.left.square.fill"
         case .moveWindowToNextSpace: return "arrow.right.square.fill"
+        case .moveWindowToDesktop: return "rectangle.portrait.and.arrow.forward"
         case .missionControl: return "rectangle.3.group"
         case .appExpose: return "square.grid.3x3"
         case .launchpad: return "square.grid.2x2"
@@ -617,6 +622,9 @@ enum ActionType: String, Codable, Identifiable, CaseIterable {
         case .toggleDockAutoHide: return "dock.rectangle"
         case .bluetoothDevice: return "antenna.radiowaves.left.and.right"
         case .setWiFiPower: return "wifi"
+        case .setBluetoothPower: return "dot.radiowaves.left.and.right"
+        case .setAirplaneMode: return "airplane"
+        case .dismissNotifications: return "bell.slash"
         case .showEmojiPicker: return "face.smiling"
         case .recognizeScreenText: return "text.magnifyingglass"
         case .sendMIDI: return "pianokeys"

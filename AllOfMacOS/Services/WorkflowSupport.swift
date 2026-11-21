@@ -316,6 +316,7 @@ final class GestureHUD {
     static let shared = GestureHUD()
     private var panel: NSPanel?
     private var sheet: NSPanel?
+    private var notchPanel: NSPanel?
     private var observer: NSObjectProtocol?
     private var generation = UUID()
 
@@ -376,6 +377,11 @@ final class GestureHUD {
             return
         }
         guard NSApp != nil else { return }
+        let pointerScreen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main
+        if Self.atNotch, let screen = pointerScreen, let notch = Self.notchRect(screen) {
+            showAtNotch(title: title, detail: detail, icon: icon, screen: screen, notch: notch)
+            return
+        }
 
         // Apple-style native OSD HUD card: 200 x 160 pt, balanced & ultra-translucent.
         // A detail longer than its one-line badge (an outcome with a reason or
@@ -440,6 +446,53 @@ final class GestureHUD {
         }
     }
 
+    // MARK: Notch (7.4)
+
+    static let atNotchKey = "AOMHUDAtNotch"
+    /// Settings › General: HUDs hang from the notch on a display that has one.
+    static var atNotch: Bool {
+        get { UserDefaults.standard.bool(forKey: atNotchKey) }
+        set { UserDefaults.standard.set(newValue, forKey: atNotchKey) }
+    }
+
+    /// The notch in screen coordinates, from the menu bar areas either side of it.
+    static func notchRect(_ screen: NSScreen) -> CGRect? {
+        guard screen.safeAreaInsets.top > 0, let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea else { return nil }
+        return notchRect(frame: screen.frame, left: left, right: right, top: screen.safeAreaInsets.top)
+    }
+
+    /// Pure: the gap between the two top areas, as tall as the safe-area inset.
+    static func notchRect(frame: CGRect, left: CGRect, right: CGRect, top: CGFloat) -> CGRect? {
+        let width = right.minX - left.maxX
+        guard width > 20, top > 0 else { return nil }
+        return CGRect(x: left.maxX, y: frame.maxY - top, width: width, height: top)
+    }
+
+    private func showAtNotch(title: String, detail: String?, icon: String?, screen: NSScreen, notch: CGRect) {
+        let wings: CGFloat = 130
+        let size = NSSize(width: notch.width + wings * 2, height: notch.height + 40)
+        let panel = notchPanel ?? makePanel(size: size, interactive: false)
+        panel.hasShadow = false
+        panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.mainMenuWindow)) + 2)
+        notchPanel = panel
+        let token = UUID()
+        generation = token
+        let host = NSHostingView(rootView: NotchHUDView(title: String(title.prefix(60)), detail: detail.map { String($0.prefix(90)) },
+                                                        icon: icon, notchHeight: notch.height))
+        host.frame = NSRect(origin: .zero, size: size)
+        panel.contentView = host
+        panel.setFrame(NSRect(x: notch.midX - size.width / 2, y: screen.frame.maxY - size.height, width: size.width, height: size.height), display: true)
+        panel.alphaValue = 0
+        panel.orderFrontRegardless()
+        NSAnimationContext.runAnimationGroup { $0.duration = 0.12; panel.animator().alphaValue = 1 }
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.displayDuration(detail) + 0.4) { [weak self, weak panel] in
+            guard self?.generation == token, let panel else { return }
+            NSAnimationContext.runAnimationGroup { $0.duration = 0.22; panel.animator().alphaValue = 0 } completionHandler: {
+                if self?.generation == token { panel.orderOut(nil) }
+            }
+        }
+    }
+
     /// A detail that does not fit the one-line badge of the 200 pt card.
     static func isNotice(_ detail: String?) -> Bool { (detail?.count ?? 0) > 30 }
 
@@ -463,6 +516,7 @@ final class GestureHUD {
         // scheduled fade-out cannot hide a HUD that was shown again since.
         generation = UUID()
         panel?.orderOut(nil)
+        notchPanel?.orderOut(nil)
     }
 
     func toggleCheatSheet() {
@@ -826,4 +880,33 @@ final class SingleInstanceLease {
         descriptor = fd
     }
     deinit { flock(descriptor, LOCK_UN); close(descriptor) }
+}
+
+/// 7.4: the HUD as a black shape that grows out of the notch — the notch's
+/// height is left empty, the line below it carries the icon and text.
+struct NotchHUDView: View {
+    let title: String
+    let detail: String?
+    let icon: String?
+    let notchHeight: CGFloat
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Color.clear.frame(height: notchHeight)
+            HStack(spacing: 8) {
+                if let icon {
+                    Image(systemName: icon).font(.system(size: 13, weight: .semibold)).accessibilityHidden(true)
+                }
+                Text(title).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                if let detail {
+                    Text(detail).font(.system(size: 12)).foregroundStyle(.white.opacity(0.7)).lineLimit(1)
+                }
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 18)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .background(UnevenRoundedRectangle(bottomLeadingRadius: 18, bottomTrailingRadius: 18).fill(.black))
+        .accessibilityElement(children: .combine)
+    }
 }

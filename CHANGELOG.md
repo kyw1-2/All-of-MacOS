@@ -1,3 +1,29 @@
+## [7.4.0] - 2026-11-22
+
+Features picked from a comparison with Raycast 2.13, Remote for Mac, Ice, Stats, In Your Face and the ~25 apps DeepSeek inventoried on Oracle (items 2, 6 and 8 of that report).
+
+### Ask AI reads the screen
+- **@window** attaches the text of the window the launcher opened over; **@screen** the text of the display under the pointer, with AOM's own windows left out. The text is read on this Mac with OCR, and only the text goes to the model. Text that looks like a password or key is held back, as with @clip. Both need Screen Recording.
+- The question shows "Reading Front window text…" while the text is read. The answer's receipt names each attachment ("Attached: Clipboard, Safari window"). Records turned off in Settings › AI still send what you attached by name.
+- The Records screen lists @clip, @screen and @window under "Attach Once".
+
+### System commands
+- New actions, also in the launcher: **Dismiss All Notifications** (presses Close on each one through Accessibility), **Turn Bluetooth On / Off**, **Turn Airplane Mode On / Off** (Wi-Fi and Bluetooth off; Off turns back on only the ones that were on), and **Move Window to Desktop 1–9**. Toggle Wi-Fi joins the launcher too.
+- **Desktop 1–9** rows in System Commands: ↩ goes there, ⌘↩ moves the front window there, and Rename… gives the desktop an AOM name you can search ("Desktop 2 · Mail").
+
+### New modules (off until turned on in Settings › General › Modules)
+- **Menu Bar Hider** (Ice, Hidden Bar): a chevron and a divider. Items you ⌘-drag left of the divider hide, the chevron shows them, and they hide again after 15 s. AOM never moves other apps' items. The first time it leaves the menu bar as it was and says where to drag; it collapses only while the divider sits left of the chevron.
+- **Memory Watch** (Stats): every 30 s, posts a notification when memory pressure reaches Warning or swap passes 8 GB, naming the three apps or tools using the most memory (helper processes counted with their app, command-line tools such as node or ollama by name). The same alert repeats at most every 30 minutes.
+- **Meeting Alerts** (In Your Face, Meeter): the next meeting counts down in the menu bar from 30 minutes before. A minute before it starts, an alert covers every display with Join (↩, when the event has a meeting link), Remind in 1 Minute and Dismiss (esc). It reads the calendar through My Schedule's Calendar access.
+
+- Searching the launcher offers Turn On for these three while they are off.
+
+### Launcher
+- **Browser Tabs**: the open tabs of Safari, Chrome, Arc, Edge, Brave and Vivaldi, read with one JavaScript-for-Automation call per running browser. ↩ brings the tab forward and ⌘↩ copies its address. A browser that refused Automation gets a row that opens the setting.
+
+### HUD
+- **HUD at the Notch** (Settings › General): on a display with a notch, the HUD grows out of the notch as a black shape instead of a card in the middle of the screen.
+
 ## [7.3.2] - 2026-11-21
 
 Code clean-up with the anti-defensive-writing rules (say what is true and what to do; keep the limits a user needs) and agy's review of 7.3.1, whose ten new candidates were checked against the code.

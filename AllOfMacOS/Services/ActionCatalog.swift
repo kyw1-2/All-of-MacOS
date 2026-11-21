@@ -86,6 +86,7 @@ extension ActionType {
         case .switchToDesktop: return "Switches to Desktop 1–9 (needs the ⌃1…⌃9 system shortcuts enabled)."
         case .moveWindowToPreviousSpace: return "Carries the focused window to the Space on the left."
         case .moveWindowToNextSpace: return "Carries the focused window to the Space on the right."
+        case .moveWindowToDesktop: return "Carries the focused window to Desktop 1–9 (needs the ⌃1…⌃9 shortcuts)."
         case .missionControl: return "Opens Mission Control."
         case .appExpose: return "Shows all windows of the frontmost app (needs the ⌃↓ system shortcut enabled)."
         case .launchpad: return "Opens Launchpad (Apps on recent macOS)."
@@ -237,6 +238,9 @@ extension ActionType {
         case .toggleDockAutoHide: return "Turns Dock hiding on or off."
         case .bluetoothDevice: return "Connects or disconnects a paired Bluetooth device."
         case .setWiFiPower: return "Turns Wi-Fi on or off."
+        case .setBluetoothPower: return "Turns Bluetooth on or off."
+        case .setAirplaneMode: return "Turns Wi-Fi and Bluetooth off together, then back to how they were."
+        case .dismissNotifications: return "Closes every notification banner and alert on screen."
         case .showEmojiPicker: return "Opens the Emoji & Symbols viewer in the front app."
         case .recognizeScreenText: return "Reads text on the pointer's display and clicks a phrase or stores all of it."
         case .sendMIDI: return "Sends a note, controller or program change from AOM's virtual MIDI source."
@@ -252,7 +256,7 @@ extension ActionType {
     var parameterHint: String {
         switch self {
         case .moveResizeWindow: return "Unit, anchor, X/Y, width/height, display, window"
-        case .switchToDesktop: return "Desktop number 1–9"
+        case .switchToDesktop, .moveWindowToDesktop: return "Desktop number 1–9"
         case .customClick: return "Button, click count, modifiers"
         case .scrollCustom: return "Direction, amount, unit, duration"
         case .moveMouseRelative: return "Δx, Δy in points"
@@ -332,7 +336,7 @@ extension ActionType {
         switch self {
         case .switchSpaceLeft, .moveWindowToPreviousSpace: return SymbolicHotKeys.spaceLeft
         case .switchSpaceRight, .moveWindowToNextSpace: return SymbolicHotKeys.spaceRight
-        case .switchToDesktop: return SymbolicHotKeys.desktop(min(9, max(1, desktop)))
+        case .switchToDesktop, .moveWindowToDesktop: return SymbolicHotKeys.desktop(min(9, max(1, desktop)))
         case .appExpose: return SymbolicHotKeys.appWindows
         case .showDesktop: return SymbolicHotKeys.showDesktop
         default: return nil
@@ -352,7 +356,7 @@ extension ActionType {
             p.moveResizeWidth = 60; p.moveResizeHeight = 60; p.windowTarget = "focused"
         case .zoomWindow, .closeWindow, .toggleFullscreenWindow: p.windowTarget = "focused"
         case .startMovingWindow, .toggleMovingWindow, .startResizingWindow, .toggleResizingWindow: p.windowDragTimeoutSeconds = 60
-        case .switchToDesktop: p.desktopNumber = 1
+        case .switchToDesktop, .moveWindowToDesktop: p.desktopNumber = 1
         case .customClick: p.clickButton = 0; p.clickCount = 1
         case .scrollCustom: p.scrollDirection = "down"; p.scrollAmount = 3; p.scrollUnit = "lines"; p.scrollDurationMs = 0
         case .moveMouseRelative: p.mouseDeltaX = 50; p.mouseDeltaY = 0
@@ -379,7 +383,7 @@ extension ActionType {
         case .pasteClipboardItem: p.clipboardItemIndex = 1
         case .recognizeScreenText: p.variableName = "screenText"; p.imageMatchClick = false
         case .pickScreenColor: p.variableName = "color"
-        case .toggleDockAutoHide, .setWiFiPower, .bluetoothDevice: p.switchMode = "toggle"
+        case .toggleDockAutoHide, .setWiFiPower, .bluetoothDevice, .setBluetoothPower, .setAirplaneMode: p.switchMode = "toggle"
         case .sendMIDI: p.midiMessage = "noteOn"; p.midiChannel = 1; p.midiNumber = 60; p.midiValue = 100
         case .sendOSC: p.oscHost = "127.0.0.1"; p.oscPort = 8000; p.oscAddress = "/aom"
         case .hapticFeedback: p.hapticPattern = "generic"
@@ -441,7 +445,7 @@ enum ActionParameterValidation {
             if let target = p.windowTarget, !["focused", "underCursor"].contains(target) { return "Window must be focused or under cursor." }
         case .startMovingWindow, .toggleMovingWindow, .startResizingWindow, .toggleResizingWindow:
             if let t = p.windowDragTimeoutSeconds, !t.isFinite || !(1...600).contains(t) { return "Safety timeout must be 1–600 seconds." }
-        case .switchToDesktop:
+        case .switchToDesktop, .moveWindowToDesktop:
             if let n = p.desktopNumber, !(1...9).contains(n) { return "Desktop number must be 1–9." }
         case .customClick:
             if let b = p.clickButton, !(0...31).contains(b) { return "Mouse button must be 0–31." }
@@ -497,7 +501,7 @@ enum ActionParameterValidation {
             if let path = p.menuPath, !path.isEmpty, MenuPath.components(path).isEmpty || path.count > 300 { return "Write the menu path as Menu > Item." }
         case .activateWindowByTitle:
             if let query = p.windowTitleQuery, query.count > 256 { return "Window title text can be at most 256 characters." }
-        case .toggleDockAutoHide, .setWiFiPower, .bluetoothDevice:
+        case .toggleDockAutoHide, .setWiFiPower, .bluetoothDevice, .setBluetoothPower, .setAirplaneMode:
             if let mode = p.switchMode, !["toggle", "on", "off"].contains(mode) { return "Choose on, off or toggle." }
         case .sendMIDI:
             if let message = p.midiMessage, MIDIMessage.Kind(rawValue: message) == nil { return "Unknown MIDI message." }

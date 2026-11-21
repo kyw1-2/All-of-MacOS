@@ -771,7 +771,7 @@ enum ParityActions {
         .chooseMenuItem, .showContextMenu, .activatePreviousApp, .quitAppUnderCursor, .hideAppUnderCursor,
         .activateWindowByTitle, .minimizeAppWindows, .gatherWindowsToPointerDisplay, .tileFrontWindowsSideBySide,
         .switchInputSource, .setSoundInput, .toggleDisplayMirroring, .setDisplayInputSource, .toggleXDRBrightness, .ejectAllDisks, .toggleDockAutoHide,
-        .bluetoothDevice, .setWiFiPower, .showEmojiPicker,
+        .bluetoothDevice, .setWiFiPower, .setBluetoothPower, .setAirplaneMode, .dismissNotifications, .showEmojiPicker,
         .recognizeScreenText, .sendMIDI, .sendOSC, .pickScreenColor, .hapticFeedback, .postDistributedNotification,
         .restartRecording]
 
@@ -975,6 +975,38 @@ enum ParityActions {
                 GestureHUD.shared.show(title: on ? "Wi-Fi On" : "Wi-Fi Off", icon: on ? "wifi" : "wifi.slash")
                 completion(true)
             } catch { log("Wi-Fi: \(error.localizedDescription)"); completion(false) }
+        case .setBluetoothPower:
+            let on: Bool
+            switch p.switchMode ?? "toggle" {
+            case "on": on = true
+            case "off": on = false
+            default: on = !AOMRadios.bluetoothOn
+            }
+            let done = AOMRadios.setBluetooth(on)
+            if done { GestureHUD.shared.show(title: on ? "Bluetooth On" : "Bluetooth Off", icon: "dot.radiowaves.left.and.right") }
+            else { log("Bluetooth power didn't change") }
+            completion(done)
+        case .setAirplaneMode:
+            let on: Bool
+            switch p.switchMode ?? "toggle" {
+            case "on": on = true
+            case "off": on = false
+            default: on = !AOMRadios.airplaneOn
+            }
+            let problem = AOMRadios.setAirplaneMode(on)
+            if let problem { log("Airplane Mode: \(problem)") }
+            GestureHUD.shared.show(title: on ? "Airplane Mode On" : "Airplane Mode Off", icon: on ? "airplane" : "wifi")
+            completion(problem == nil)
+        case .dismissNotifications:
+            let closed = NotificationDismisser.dismissAll()
+            switch closed {
+            case .success(let count):
+                GestureHUD.shared.show(title: count == 0 ? "No Notifications" : "Closed \(count) Notification\(count == 1 ? "" : "s")", icon: "bell.slash")
+                completion(true)
+            case .failure(let error):
+                log(error.message)
+                completion(false)
+            }
         case .showEmojiPicker:
             if MenuBarExtras.pressEditMenuItem(prefix: "Emoji") || MenuBarExtras.pressEditMenuItem(prefix: "이모티콘") { completion(true); return }
             completion(SyntheticInput.key(49, flags: [.maskControl, .maskCommand]))

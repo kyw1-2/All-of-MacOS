@@ -1673,6 +1673,9 @@ extension QuickCommandPalette {
         // 7.3
         case "aiRecords": return .aiRecords
         case "hotkeyFinder": return .hotkeyFinder
+        // 7.4
+        case "browserTabs": return .browserTabs
+        case "system": return .system
         default: return nil
         }
     }

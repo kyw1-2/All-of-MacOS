@@ -41,7 +41,7 @@ enum ActionConfirmation {
 /// `ActionExecutor`, which skips this type entirely when a test hook is set.
 enum ExtendedActions {
     static let handled: Set<ActionType> = [
-        .switchSpaceLeft, .switchSpaceRight, .switchToDesktop, .moveWindowToPreviousSpace, .moveWindowToNextSpace,
+        .switchSpaceLeft, .switchSpaceRight, .switchToDesktop, .moveWindowToPreviousSpace, .moveWindowToNextSpace, .moveWindowToDesktop,
         .missionControl, .appExpose, .launchpad, .showDesktop, .hideOtherApps,
         .ctrlLeftClick, .optionLeftClick, .shiftLeftClick, .cmdDoubleClick, .customClick, .scrollCustom, .moveMouseRelative,
         .pasteString, .pressFunctionKey, .modifierKeyDown, .modifierKeyUp, .allModifiersUp, .toggleCapsLock,
@@ -84,6 +84,10 @@ enum ExtendedActions {
             postHotKey(SymbolicHotKeys.desktop(number), completion)
         case .moveWindowToPreviousSpace: moveWindowToSpace(next: false, completion)
         case .moveWindowToNextSpace: moveWindowToSpace(next: true, completion)
+        case .moveWindowToDesktop:
+            let number = p.desktopNumber ?? 1
+            guard (1...9).contains(number) else { completion(false); return }
+            moveWindowToSpace(hotKey: SymbolicHotKeys.desktop(number), target: nil, grab: nil, completion)
         case .missionControl: openSystemApp(["/System/Applications/Mission Control.app"], completion)
         case .appExpose: postHotKey(SymbolicHotKeys.appWindows, completion)
         case .launchpad: openSystemApp(["/System/Applications/Launchpad.app", "/System/Applications/Apps.app"], completion)
@@ -250,11 +254,17 @@ enum ExtendedActions {
         moveWindowToSpace(next: next, target: nil, grab: nil, completion)
     }
 
+    static func moveWindowToSpace(next: Bool, target: WindowManager.Target?, grab: CGPoint?,
+                                  _ completion: @escaping (Bool) -> Void) {
+        moveWindowToSpace(hotKey: next ? SymbolicHotKeys.spaceRight : SymbolicHotKeys.spaceLeft, target: target, grab: grab, completion)
+    }
+
     /// The same move for a given window (the title-bar gesture's), grabbed at
     /// `grab` in global top-left coordinates (the middle of its title bar when
     /// nil). Without a target it moves the front window. The pointer goes
     /// back to where it was.
-    static func moveWindowToSpace(next: Bool, target: WindowManager.Target?, grab: CGPoint?,
+    /// 7.4: any Space shortcut — left, right or Desktop N.
+    static func moveWindowToSpace(hotKey id: Int, target: WindowManager.Target?, grab: CGPoint?,
                                   _ completion: @escaping (Bool) -> Void) {
         // The move is a synthetic title-bar drag plus a Space shortcut; both
         // are dropped silently without the post-event permission.
@@ -262,7 +272,6 @@ enum ExtendedActions {
         guard let target = target ?? WindowManager.shared.captureTarget(), let frame = WindowManager.shared.frame(of: target),
               frame.width > 120 else { log("No accessible window to move"); completion(false); return }
         let table = SymbolicHotKeys.load()
-        let id = next ? SymbolicHotKeys.spaceRight : SymbolicHotKeys.spaceLeft
         guard let key = SymbolicHotKeys.hotKey(id: id, in: table), key.isEnabled else {
             postHotKey(id, table: table, completion); return
         }
@@ -454,7 +463,7 @@ enum ExtendedActions {
         }
     }
 
-    private static func notify(title: String, body: String, _ completion: @escaping (Bool) -> Void) {
+    static func notify(title: String, body: String, _ completion: @escaping (Bool) -> Void) {
         let fallback = { onMain { GestureHUD.shared.show(title: title, detail: body.isEmpty ? nil : body); completion(true) } }
         // UNUserNotificationCenter needs a real app bundle; bare executables trap.
         guard Bundle.main.bundleURL.pathExtension == "app", Bundle.main.bundleIdentifier != nil else { fallback(); return }
