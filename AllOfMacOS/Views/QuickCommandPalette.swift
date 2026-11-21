@@ -1890,6 +1890,21 @@ struct QuickCommandPalette: View {
                     .accessibilityHidden(true)
             }
         }
+        .background(PaletteNavigationKeys { event in
+            switch event.keyCode {
+            case 53 where !navigation.isRoot || showsActions:
+                if !event.isARepeat {
+                    if showsActions { showsActions = false } else { pop() }
+                }
+                return true
+            case 48 where isFieldFocused && !showsActions && (navigation.isRoot || navigation.current == .ai):
+                if !event.isARepeat {
+                    if navigation.current == .ai { nextModel() } else { quickAsk() }
+                }
+                return true
+            default: return false
+            }
+        })
         .aomAnimation(.quick, value: showsActions)
         .onAppear {
             appear()
@@ -2345,13 +2360,6 @@ struct QuickCommandPalette: View {
                 // Raycast's search line is the largest type in the panel.
                 .font(host == .launcher ? PaletteMetrics.launcherQueryFont : AOMFont.pageStatus.weight(.regular))
                 .focused($isFieldFocused)
-                .background(PaletteTabKey { event in
-                    guard isFieldFocused, !showsActions, navigation.isRoot || navigation.current == .ai else { return false }
-                    if !event.isARepeat {
-                        if navigation.current == .ai { nextModel() } else { quickAsk() }
-                    }
-                    return true
-                })
                 .onChange(of: query) { _, _ in
                     // A popped screen gives its selected row back with its query.
                     if let restore = pendingSelection {

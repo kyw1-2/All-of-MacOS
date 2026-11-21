@@ -94,7 +94,7 @@ struct LauncherToolContent: View {
 
 /// Handle an unmodified Tab before AppKit's field editor moves focus. Keep
 /// IME composition, keyboard navigation in other windows and Shift-Tab native.
-struct PaletteTabKey: NSViewRepresentable {
+struct PaletteNavigationKeys: NSViewRepresentable {
     let handle: (NSEvent) -> Bool
 
     final class Anchor: NSView {
@@ -107,8 +107,10 @@ struct PaletteTabKey: NSViewRepresentable {
             guard window != nil else { return }
             monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
                 guard let self, let window = self.window, event.window === window, window.isKeyWindow,
-                      event.keyCode == 48, event.modifierFlags.intersection([.shift, .command, .control, .option, .function]).isEmpty,
-                      let editor = window.firstResponder as? NSTextView, !editor.hasMarkedText(),
+                      window.attachedSheet == nil, NSApp.modalWindow == nil,
+                      event.keyCode == 48 || event.keyCode == 53,
+                      event.modifierFlags.intersection([.shift, .command, .control, .option, .function]).isEmpty,
+                      (window.firstResponder as? NSTextView)?.hasMarkedText() != true,
                       self.handle?(event) == true else { return event }
                 return nil
             }
