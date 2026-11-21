@@ -313,6 +313,13 @@ enum AOMAIConfig {
     /// Whether the local router answered its last check (`probeLocalProxy`).
     static var localProxyReachable: Bool { UserDefaults.standard.bool(forKey: "AOMAILocalProxyReachable") }
 
+    /// 7.2.1: AOMLocalProxy records what its health check found.
+    static func setLocalProxyReachable(_ reachable: Bool) {
+        guard reachable != localProxyReachable else { return }
+        UserDefaults.standard.set(reachable, forKey: "AOMAILocalProxyReachable")
+        NotificationCenter.default.post(name: didChange, object: nil)
+    }
+
     /// Asks the local router's root once (2 s); the picker lists it when it answers.
     static func probeLocalProxy() async {
         guard let url = URL(string: baseURL(for: .localProxy)) else { return }
@@ -336,7 +343,8 @@ enum AOMAIConfig {
         switch provider {
         case .apple: return AOMAppleIntelligence.isAvailable
         case .anthropic, .openAI, .deepSeek: return AOMAIKeychain.hasKey(for: provider)
-        case .localProxy: return localProxyReachable
+        // 7.2.1: AOM starts the router itself when it isn't running.
+        case .localProxy: return localProxyReachable || AOMLocalProxy.canStart()
         case .ollama: return !models(for: .ollama).isEmpty
         case .claudeCode: return PaletteAIProvider.claude.executable != nil
         case .codex: return PaletteAIProvider.codex.executable != nil
@@ -627,8 +635,10 @@ enum AOMAIClient {
             request.setValue("application/json", forHTTPHeaderField: "content-type")
             request.setValue("text/event-stream", forHTTPHeaderField: "accept")
             if !betas.isEmpty { request.setValue(betas.joined(separator: ","), forHTTPHeaderField: "anthropic-beta") }
-            request.httpBody = try? JSONSerialization.data(withJSONObject: body)
-            return sse(request, decode: { AOMAISSE.anthropic($0) })
+            // 7.2.1: AOM's read-only local tools, and the local router started on demand.
+            var toolBody = body
+            if AOMAILocalTools.isEnabled { toolBody["system"] = system + "\n" + AOMAILocalTools.promptLines.joined(separator: "\n") }
+            return anthropicToolStream(request, body: toolBody, ensureProxy: provider == .localProxy ? base : nil)
         case .openAI, .deepSeek, .ollama:
             let provider = ref.provider
             let key = AOMAIKeychain.key(for: provider)
@@ -641,8 +651,8 @@ enum AOMAIClient {
             if let key { request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }
             request.setValue("application/json", forHTTPHeaderField: "content-type")
             request.setValue("text/event-stream", forHTTPHeaderField: "accept")
-            request.httpBody = try? JSONSerialization.data(withJSONObject: openAIBody(model: ref.model, system: system, turns: turns))
-            return sse(request, decode: { AOMAISSE.openAI($0) })
+            let prompt = AOMAILocalTools.isEnabled ? system + "\n" + AOMAILocalTools.promptLines.joined(separator: "\n") : system
+            return openAIToolStream(request, body: openAIBody(model: ref.model, system: prompt, turns: turns))
         case .claudeCode, .codex:
             return failing("Agents answer through their CLI.")
         }
@@ -707,7 +717,7 @@ enum AOMAIClient {
                     case .notConnectedToInternet: message = "You're offline."
                     case .cannotConnectToHost, .cannotFindHost:
                         message = "Couldn't reach \(request.url?.host ?? "the server")."
-                            + (request.url?.host == "127.0.0.1" ? " Is Ollama running?" : "")
+                            + AOMLocalProxy.unreachableHint(host: request.url?.host, port: request.url?.port)
                     case .timedOut: message = "The model took too long to respond."
                     default: message = error.localizedDescription
                     }
@@ -846,5 +856,284 @@ enum AOMAppleIntelligence {
         }
         #endif
         return AsyncThrowingStream { $0.finish(throwing: AOMAIError(message: "Apple Intelligence needs macOS 26 or later.")) }
+    }
+}
+
+
+// MARK: - 7.2.1: tool calls (AOMAILocalTools)
+
+extension AOMAIClient {
+    struct ToolCall {
+        let id: String
+        let name: String
+        var arguments: [String: Any]
+        var rawArguments: String
+    }
+
+    struct ToolTurn {
+        var text = ""
+        var thinking: [(text: String, signature: String)] = []
+        var calls: [ToolCall] = []
+        var stopReason: String?
+    }
+
+    static let maxToolRounds = 8
+
+    static func jsonObject(_ text: String) -> [String: Any]? {
+        guard let data = text.data(using: .utf8) else { return nil }
+        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+    }
+
+    static func jsonString(_ object: Any) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: object) else { return "{}" }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    /// The response bytes of a 2xx answer; otherwise the error the body names.
+    private static func openStream(_ request: URLRequest) async throws -> URLSession.AsyncBytes {
+        let (bytes, response) = try await session.bytes(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(status) else {
+            var body = ""
+            for try await line in bytes.lines {
+                body += line + "\n"
+                if body.count > 4000 { break }
+            }
+            throw AOMAIError(message: AOMAISSE.errorMessage(body, status: status))
+        }
+        return bytes
+    }
+
+    static func describe(_ error: URLError, url: URL?) -> String {
+        switch error.code {
+        case .notConnectedToInternet: return "You're offline."
+        case .cannotConnectToHost, .cannotFindHost:
+            return "Couldn't reach \(url?.host ?? "the server")." + AOMLocalProxy.unreachableHint(host: url?.host, port: url?.port)
+        case .timedOut: return "The model took too long to respond."
+        default: return error.localizedDescription
+        }
+    }
+
+    /// Pure: a model or server that can't take tools says so in a 400.
+    static func refusesTools(_ error: Error) -> Bool {
+        guard let message = (error as? AOMAIError)?.message.lowercased() else { return false }
+        return ["tool", "function call", "function_call", "functions"].contains { message.contains($0) }
+    }
+
+    /// Runs a tool-calling conversation: stream a turn, run the calls it
+    /// asks for, send the results, until it answers (8 rounds at most; the
+    /// last one may not call tools). Without tools enabled it is one turn.
+    private static func toolStream(base: URLRequest, ensureProxy: String?,
+                                   turn: @escaping (URLRequest, @escaping (AOMAIPiece) -> Void) async throws -> ToolTurn,
+                                   request: @escaping (_ round: Int, _ withTools: Bool) -> URLRequest,
+                                   append: @escaping (ToolTurn, [(ToolCall, AOMAIToolResult)]) -> Void) -> AsyncThrowingStream<AOMAIPiece, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    if let ensureProxy, await !AOMLocalProxy.ensureRunning(base: ensureProxy) {
+                        let url = URL(string: ensureProxy)
+                        throw AOMAIError(message: "Couldn't reach \(url?.host ?? "the local proxy")." + AOMLocalProxy.unreachableHint(host: url?.host, port: url?.port))
+                    }
+                    var withTools = AOMAILocalTools.isEnabled
+                    var activity: [String] = []
+                    for round in 0..<maxToolRounds {
+                        let current: ToolTurn
+                        do {
+                            current = try await turn(request(round, withTools)) { continuation.yield($0) }
+                        } catch where round == 0 && withTools && refusesTools(error) {
+                            // This model or server takes no tools: ask again plainly.
+                            withTools = false
+                            current = try await turn(request(round, false)) { continuation.yield($0) }
+                        }
+                        guard withTools, !current.calls.isEmpty, round < maxToolRounds - 1 else {
+                            if let notice = AOMAISSE.stopNotice(current.stopReason) { continuation.yield(.notice(notice)) }
+                            continuation.finish()
+                            return
+                        }
+                        if !current.text.isEmpty { continuation.yield(.text("\n\n")) }
+                        var results: [(ToolCall, AOMAIToolResult)] = []
+                        for call in current.calls {
+                            try Task.checkCancellation()
+                            continuation.yield(.thinking)
+                            let result = await AOMAILocalTools.run(call.name, arguments: call.arguments)
+                            GestureLog.shared.logFromAnyThread("Ask AI tool \(call.name): \(result.summary)", level: .action)
+                            activity.append(result.summary)
+                            continuation.yield(.notice(activity.suffix(3).joined(separator: " · ")))
+                            results.append((call, result))
+                        }
+                        append(current, results)
+                    }
+                    continuation.finish()
+                } catch is CancellationError {
+                    continuation.finish()
+                } catch let error as URLError where error.code == .cancelled {
+                    continuation.finish()
+                } catch let error as URLError {
+                    continuation.finish(throwing: AOMAIError(message: describe(error, url: base.url)))
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    // MARK: Anthropic Messages
+
+    static func anthropicToolStream(_ base: URLRequest, body: [String: Any], ensureProxy: String?) -> AsyncThrowingStream<AOMAIPiece, Error> {
+        let box = MessageBox(messages: body["messages"] as? [[String: Any]] ?? [])
+        return toolStream(base: base, ensureProxy: ensureProxy, turn: anthropicTurn, request: { round, withTools in
+            var payload = body
+            payload["messages"] = box.messages
+            if withTools {
+                payload["tools"] = AOMAILocalTools.anthropicSchemas
+                if round == maxToolRounds - 1 { payload["tool_choice"] = ["type": "none"] }
+            }
+            var request = base
+            request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
+            return request
+        }, append: { turn, results in
+            var assistant: [[String: Any]] = turn.thinking.filter { !$0.signature.isEmpty }
+                .map { ["type": "thinking", "thinking": $0.text, "signature": $0.signature] }
+            if !turn.text.isEmpty { assistant.append(["type": "text", "text": turn.text]) }
+            assistant += turn.calls.map { ["type": "tool_use", "id": $0.id, "name": $0.name, "input": $0.arguments] }
+            box.messages.append(["role": "assistant", "content": assistant])
+            box.messages.append(["role": "user", "content": results.map { call, result in
+                ["type": "tool_result", "tool_use_id": call.id, "content": result.text, "is_error": result.isError] as [String: Any]
+            }])
+        })
+    }
+
+    /// One streamed Anthropic turn: text and thinking go out as they come;
+    /// tool_use blocks are collected with their streamed JSON input.
+    static func anthropicTurn(_ request: URLRequest, yield: @escaping (AOMAIPiece) -> Void) async throws -> ToolTurn {
+        let bytes = try await openStream(request)
+        var turn = ToolTurn()
+        var blocks: [Int: (type: String, id: String, name: String, json: String, text: String, signature: String)] = [:]
+        var thinkingShown = false
+        reading: for try await line in bytes.lines {
+            try Task.checkCancellation()
+            guard let payload = AOMAISSE.payload(line), let object = jsonObject(payload), let type = object["type"] as? String else { continue }
+            let index = object["index"] as? Int ?? 0
+            switch type {
+            case "content_block_start":
+                let block = object["content_block"] as? [String: Any] ?? [:]
+                let kind = block["type"] as? String ?? ""
+                var json = ""
+                if kind == "tool_use", let input = block["input"] as? [String: Any], !input.isEmpty { json = jsonString(input) }
+                blocks[index] = (kind, block["id"] as? String ?? "", block["name"] as? String ?? "", json, "", "")
+                if kind == "thinking", !thinkingShown { thinkingShown = true; yield(.thinking) }
+            case "content_block_delta":
+                let delta = object["delta"] as? [String: Any] ?? [:]
+                switch delta["type"] as? String {
+                case "text_delta":
+                    let text = delta["text"] as? String ?? ""
+                    turn.text += text
+                    thinkingShown = false
+                    yield(.text(text))
+                case "thinking_delta":
+                    blocks[index]?.text += delta["thinking"] as? String ?? ""
+                    if !thinkingShown { thinkingShown = true; yield(.thinking) }
+                case "signature_delta":
+                    blocks[index]?.signature += delta["signature"] as? String ?? ""
+                case "input_json_delta":
+                    blocks[index]?.json += delta["partial_json"] as? String ?? ""
+                default:
+                    break
+                }
+            case "message_delta":
+                if let reason = (object["delta"] as? [String: Any])?["stop_reason"] as? String { turn.stopReason = reason }
+            case "message_stop":
+                break reading
+            case "error":
+                let error = object["error"] as? [String: Any]
+                throw AOMAIError(message: (error?["message"] as? String) ?? "The model reported an error.")
+            default:
+                break
+            }
+        }
+        for index in blocks.keys.sorted() {
+            guard let block = blocks[index] else { continue }
+            if block.type == "thinking" { turn.thinking.append((block.text, block.signature)) }
+            if block.type == "tool_use" {
+                let raw = block.json.isEmpty ? "{}" : block.json
+                turn.calls.append(ToolCall(id: block.id.isEmpty ? "toolu_aom_\(index)" : block.id, name: block.name,
+                                           arguments: jsonObject(raw) ?? [:], rawArguments: raw))
+            }
+        }
+        return turn
+    }
+
+    // MARK: OpenAI-compatible chat
+
+    static func openAIToolStream(_ base: URLRequest, body: [String: Any]) -> AsyncThrowingStream<AOMAIPiece, Error> {
+        let box = MessageBox(messages: body["messages"] as? [[String: Any]] ?? [])
+        return toolStream(base: base, ensureProxy: nil, turn: openAITurn, request: { round, withTools in
+            var payload = body
+            payload["messages"] = box.messages
+            if withTools {
+                payload["tools"] = AOMAILocalTools.openAISchemas
+                if round == maxToolRounds - 1 { payload["tool_choice"] = "none" }
+            }
+            var request = base
+            request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
+            return request
+        }, append: { turn, results in
+            box.messages.append(["role": "assistant", "content": turn.text.isEmpty ? NSNull() : turn.text as Any,
+                                 "tool_calls": turn.calls.map { ["id": $0.id, "type": "function",
+                                                                 "function": ["name": $0.name, "arguments": $0.rawArguments]] as [String: Any] }])
+            for (call, result) in results {
+                box.messages.append(["role": "tool", "tool_call_id": call.id, "content": result.text])
+            }
+        })
+    }
+
+    /// One streamed chat-completions turn, tool_calls collected by index.
+    static func openAITurn(_ request: URLRequest, yield: @escaping (AOMAIPiece) -> Void) async throws -> ToolTurn {
+        let bytes = try await openStream(request)
+        var turn = ToolTurn()
+        var calls: [Int: (id: String, name: String, arguments: String)] = [:]
+        var thinkingShown = false
+        reading: for try await line in bytes.lines {
+            try Task.checkCancellation()
+            guard let payload = AOMAISSE.payload(line) else { continue }
+            if payload == "[DONE]" { break reading }
+            guard let object = jsonObject(payload) else { continue }
+            if let error = object["error"] as? [String: Any] {
+                throw AOMAIError(message: (error["message"] as? String) ?? "The model reported an error.")
+            }
+            guard let choice = (object["choices"] as? [[String: Any]])?.first else { continue }
+            let delta = choice["delta"] as? [String: Any] ?? [:]
+            if let text = delta["content"] as? String, !text.isEmpty {
+                turn.text += text
+                thinkingShown = false
+                yield(.text(text))
+            } else if let reasoning = (delta["reasoning_content"] ?? delta["reasoning"]) as? String, !reasoning.isEmpty, !thinkingShown {
+                thinkingShown = true
+                yield(.thinking)
+            }
+            for call in delta["tool_calls"] as? [[String: Any]] ?? [] {
+                let index = call["index"] as? Int ?? 0
+                let function = call["function"] as? [String: Any] ?? [:]
+                var entry = calls[index] ?? ("", "", "")
+                if let id = call["id"] as? String, !id.isEmpty { entry.id = id }
+                if let name = function["name"] as? String, !name.isEmpty { entry.name += name }
+                if let arguments = function["arguments"] as? String { entry.arguments += arguments }
+                calls[index] = entry
+            }
+            if let reason = choice["finish_reason"] as? String { turn.stopReason = reason }
+        }
+        turn.calls = calls.keys.sorted().compactMap { index in
+            guard let call = calls[index], !call.name.isEmpty else { return nil }
+            let raw = call.arguments.isEmpty ? "{}" : call.arguments
+            return ToolCall(id: call.id.isEmpty ? "call_aom_\(index)" : call.id, name: call.name, arguments: jsonObject(raw) ?? [:], rawArguments: raw)
+        }
+        return turn
+    }
+
+    /// The growing message list a tool conversation sends each round.
+    final class MessageBox: @unchecked Sendable {
+        var messages: [[String: Any]]
+        init(messages: [[String: Any]]) { self.messages = messages }
     }
 }

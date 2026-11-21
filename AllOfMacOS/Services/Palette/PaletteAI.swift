@@ -210,6 +210,8 @@ final class PaletteAIChat: ObservableObject {
     /// Starts the agent's CLI before the first question (the Ask AI screen opened).
     func prewarm() {
         if model.provider == .apple { AOMAppleIntelligence.prewarm(system: systemPrompt); return }
+        // 7.2.1: the local router starts while the question is typed.
+        if model.provider == .localProxy { Task { _ = await AOMLocalProxy.ensureRunning() }; return }
         guard agent == .claude, let executable = PaletteAIProvider.claude.executable else { return }
         agentSession.start(executable: executable, model: model.model, system: systemPrompt, resume: session)
     }

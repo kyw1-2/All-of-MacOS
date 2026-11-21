@@ -1,3 +1,9 @@
+## [7.2.1] - 2026-11-21
+
+### Ask AI reads your Mac when you ask
+- **Local tools for the native models.** Haiku → DeepSeek (the local router), the Claude API, DeepSeek, OpenAI and Ollama can now search your records — the LLM Wiki, Claude's memories, Claude Code and Codex conversation logs, AOM's AI chats, shell history and agent instruction files — read a text file in your home folder or /etc, list a folder and find files by name, then answer from what they found with the paths. Asked "다른 AI들 기록에 오라클 서버 접속하는 방법 찾아 줘", Haiku → DeepSeek read the wiki and `~/.ssh/config` and answered with the `ssh oracle` commands; before, it said it had no access. Everything is read-only; private keys, keychains and credential files are never opened, `.env` values and anything the clipboard secret scanner recognises are hidden, and Settings › AI › Your Mac's records turns it off. A model or server that takes no tools is asked again without them.
+- **The local router starts itself.** claude-code-proxy (127.0.0.1:8082) only started when `claude` ran in Terminal, so after it stopped, Ask AI failed with "Couldn't reach 127.0.0.1. Is Ollama running?". AOM now starts it the way the wrapper does (its venv, no proxy variables, output to proxy.log) when it doesn't answer, already while the question is typed, and waits for its health check. The message names the right thing for each port (8082 the proxy, 11434 Ollama).
+
 ## [7.2.0] - 2026-11-21
 
 The launcher does the work in place. Codex's 7.2 patch and DeepSeek's report 05 on Oracle, checked against the code: `docs/design-7.2-launcher.md`.

@@ -46,3 +46,27 @@ Not done here, kept for later (Codex's P2 list): reasoning effort per Codex mode
 - `AOM72LauncherTests` (emoji ranking and both languages, CoreEmoji loading and the Unicode fallback, recent searches, hotkey rules/conflicts/persistence, Raycast and AOM script metadata, script trust after an edit, snippets from typed strings, meeting links, contact ranking, ⌘ digits, quick-run routes, folder order, density).
 - Isolated previews of every screen with AOM's own renderer (`--aom-preview-snapshot`, no Screen Recording for another process): `--aom-preview-palette-route emoji|snippets|scripts|schedule|contacts|network|vpn|stack|rules|files:<term>|folder:<path>|brew:outdated|installed|services|search|sendTo:<text>|hotkey|newSnippet`, plus `--aom-preview-quick-run-hints` and `--aom-preview-clipboard-filter link`. Calendar and contacts show sample data in previews and never ask for access there.
 - Keys (⇥, ⌥↩, ⌘1…⌘9, a recorded hotkey) were not driven from the session shell (it has no Accessibility, so synthetic keys are dropped); their decisions are the pure functions above, and they need a try on the installed app.
+
+## 7.2.1 — Ask AI reads the Mac (user report, 2026-11-21)
+
+Two reports right after 7.2 was installed:
+
+1. "Haiku → DeepSeek" answered `Couldn't reach 127.0.0.1. Is Ollama running?`. Nothing listened on :8082:
+   claude-code-proxy had shut down at 10:12 (`proxy.log`: "Shutting down … Finished server process") and only the
+   `~/.local/bin/claude` wrapper starts it. `AOMLocalProxy` now starts it the same way when its `/health` doesn't answer
+   (local addresses only, once however many questions wait), Ask AI's prewarm starts it while the question is typed, and
+   the provider counts as ready whenever it can be started. The Ollama hint is shown only for port 11434.
+2. Asked to find the Oracle SSH method in "other AIs' records", the model said it had no access. Native models were plain
+   text in, text out. `AOMAILocalTools` gives the tool-calling wire formats (Anthropic Messages, OpenAI chat) four
+   read-only tools — `search_records`, `read_file`, `list_directory`, `find_files` — and `AOMAIClient` runs up to eight
+   rounds (the last without tools), showing each step under the answer.
+   - Sources: `~/.agents/llm-wiki`, `~/.claude/projects/*/memory`, Claude Code `*.jsonl` (newest 400), `~/.codex/sessions`
+     (newest 300), AOM's `chats.json`, `~/.zsh_history`/`~/.bash_history`, `~/AGENTS.md`, `CLAUDE.md`, `~/.ssh/config`.
+     Every word must be on the line (else the closest lines), three hits per file, 30 in all, about four seconds.
+   - Safety: home folder and /etc only; private keys, certificates, keychains, `~/.aws`, `~/.gnupg`, `.netrc`-style files are
+     refused (in `~/.ssh` only `config`, `known_hosts` and `.pub`); `.env` lines keep their names; results pass the clipboard
+     secret scanner. What is read goes to the chosen provider — the setting says so.
+   - Verified live: the preview app on `localProxy:claude-haiku-5-5` searched, read `MacBook-Standby.md`,
+     `Runbook-Wiki-Sync.md` and `~/.ssh/config`, and answered with `ssh oracle …` and the sources (`AOM721AIToolTests` covers
+     the pure parts and starts a stand-in router).
+   - Claude Code and Codex (the CLI agents) already read files in their read-only modes; Apple Intelligence has no tools yet.

@@ -8,6 +8,7 @@ struct AOMAISettingsView: View {
     @ObservedObject private var chat = PaletteAIChat.shared
     @State private var effort = AOMAIConfig.effort
     @State private var instructions = AOMAIConfig.customInstructions
+    @State private var localTools = AOMAILocalTools.isEnabled
     @State private var importing = false
     @State private var importResult: String?
     @State private var refresh = 0
@@ -55,6 +56,21 @@ struct AOMAISettingsView: View {
                         .padding(8)
                         .aomContentCard(radius: AOMCraftRadius.card, padding: 0)
                         .onChange(of: instructions) { _, value in AOMAIConfig.customInstructions = value }
+                }
+                VStack(alignment: .leading, spacing: AOMSpace.titleGap) {
+                    AOMSectionTitle("Your Mac's records", detail: "What the models may read when you ask.")
+                    Toggle(isOn: $localTools) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Let Ask AI search and read your records")
+                            Text("Your LLM Wiki, Claude memories, Claude Code and Codex logs, AOM chats, shell history and text files in your home folder, read-only, when a question needs them. What it reads goes to the model you chose (for Haiku → DeepSeek, DeepSeek's providers). Private keys, keychains and credential files are never opened; tokens and passwords in results are hidden.")
+                                .font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .toggleStyle(.switch)
+                    .padding(AOMSpace.x3)
+                    .aomContentCard(radius: AOMCraftRadius.card, padding: 0)
+                    .onChange(of: localTools) { _, value in AOMAILocalTools.isEnabled = value }
                 }
                 Text("Agents (Claude Code, Codex) use your own subscription through their CLI and stay read-only in the launcher; ⌘J continues the conversation in Terminal, where they can edit and run with your permission. AOM never reads their sign-in.")
                     .font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
