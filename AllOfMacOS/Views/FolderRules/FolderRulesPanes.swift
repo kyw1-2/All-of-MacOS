@@ -46,8 +46,11 @@ struct FolderRulesInspector: View {
                     .font(AOMFont.callout)
                     .foregroundStyle(AOMColor.warningText)
             }
+            if preview.willRun.count > 0 { pickBar(rule, preview) }
             ForEach(preview.items.prefix(20)) { item in
-                FolderRulesPreviewRow(item: item, showsDivider: true)
+                FolderRulesPreviewRow(item: item, showsDivider: true,
+                                      picked: item.state == .willRun ? model.pickedPreviewItems.contains(item.id) : nil,
+                                      onPick: { model.togglePicked(item) })
                     .padding(.horizontal, -AOMSpace.rowInset)
             }
             if preview.items.count > 20 {
@@ -55,6 +58,24 @@ struct FolderRulesInspector: View {
                     .font(AOMFont.callout)
                     .foregroundStyle(AOMColor.textSecondary)
             }
+        }
+    }
+
+    /// 7.2.2 (audit N03): pick items and run the rule on just those.
+    @ViewBuilder private func pickBar(_ rule: FolderRule, _ preview: FolderRulePreview) -> some View {
+        let count = model.pickedItems.count
+        let all = count == preview.willRun.count
+        HStack(spacing: AOMSpace.x2) {
+            Button(all ? "Select None" : "Select All") { model.pickAll(!all) }
+                .buttonStyle(.link)
+                .font(AOMFont.callout)
+            Spacer(minLength: AOMSpace.x1)
+            Button(count == 0 ? "Run Selected" : "Run on \(count) Selected") { model.runPicked() }
+                .controlSize(.small)
+                .disabled(count == 0 || engine.isRunning)
+                .help(rule.actionsNeedingApproval.isEmpty
+                      ? "Runs the rule on the checked items now"
+                      : "Runs the rule on the checked items now — this counts as your OK for them")
         }
     }
 

@@ -79,11 +79,32 @@ enum HIDKeyMapping {
     /// other entry for a source AOM now maps, plus AOM's pairs. Entries other
     /// tools made for other keys are kept.
     static func merged(current: [HIDMappingPair], previouslyOwned: [HIDMappingPair], desired: [HIDMappingPair]) -> [HIDMappingPair] {
+        plan(current: current, previouslyOwned: previouslyOwned, displaced: [], desired: desired).pairs
+    }
+
+    /// 7.2.2 (audit B24): as `merged`, and it remembers what AOM's pairs
+    /// replaced. Someone's Caps Lock → Escape displaced by the Hyper key
+    /// (Caps Lock → F18) used to be gone for good once AOM let the key go.
+    /// Now it comes back when AOM stops mapping that key — but only while the
+    /// key still holds AOM's own pair (a mapping someone set since wins).
+    static func plan(current: [HIDMappingPair], previouslyOwned: [HIDMappingPair], displaced: [HIDMappingPair],
+                     desired: [HIDMappingPair]) -> (pairs: [HIDMappingPair], displaced: [HIDMappingPair]) {
         let owned = Set(previouslyOwned)
         let sources = Set(desired.map(\.src))
         var seen = Set<HIDMappingPair>()
         let kept = current.filter { !owned.contains($0) && !sources.contains($0.src) && seen.insert($0).inserted }
-        return kept + desired
+        // Still replaced: what was displaced before (unless someone mapped the
+        // key again since — then that newer pair is what AOM replaces now).
+        var stillDisplaced: [UInt64: HIDMappingPair] = [:]
+        for pair in displaced where sources.contains(pair.src) { stillDisplaced[pair.src] = pair }
+        for pair in current where !owned.contains(pair) && sources.contains(pair.src) && !desired.contains(pair) {
+            stillDisplaced[pair.src] = pair
+        }
+        let ownedSources = Set(current.filter { owned.contains($0) }.map(\.src))
+        let foreignSources = Set(current.filter { !owned.contains($0) }.map(\.src))
+        let restored = displaced.filter { !sources.contains($0.src) && ownedSources.contains($0.src) && !foreignSources.contains($0.src) }
+        let remembered = desired.compactMap { stillDisplaced[$0.src] }
+        return (kept + restored + desired, remembered)
     }
 
     /// Distinct pairs in `hidutil property --get UserKeyMapping` output, which
@@ -172,6 +193,14 @@ enum InputRemapSettings {
         }
         set { d.set(try? JSONEncoder().encode(newValue), forKey: "AOMKeyRemapOwnedPairs") }
     }
+    /// 7.2.2: the pairs AOM's own replaced, given back when AOM lets go.
+    static var displacedPairs: [HIDMappingPair] {
+        get {
+            guard let data = d.data(forKey: "AOMKeyRemapDisplacedPairs") else { return [] }
+            return (try? JSONDecoder().decode([HIDMappingPair].self, from: data)) ?? []
+        }
+        set { d.set(try? JSONEncoder().encode(newValue), forKey: "AOMKeyRemapDisplacedPairs") }
+    }
 }
 
 /// Applies the settings: hidutil pairs, the Hyper key tap and the wheel tap.
@@ -181,16 +210,22 @@ final class InputRemapService {
     private let runHidutil: ([String]) -> String?
     private let loadOwned: () -> [HIDMappingPair]
     private let saveOwned: ([HIDMappingPair]) -> Void
+    private let loadDisplaced: () -> [HIDMappingPair]
+    private let saveDisplaced: ([HIDMappingPair]) -> Void
     private(set) var lastError: String?
 
     /// The hidutil runner and the owned-pairs store are injectable so the
     /// quit path can be tested without touching the real HID mapping.
     init(hidutil: @escaping ([String]) -> String? = InputRemapService.hidutil,
          loadOwned: @escaping () -> [HIDMappingPair] = { InputRemapSettings.ownedPairs },
-         saveOwned: @escaping ([HIDMappingPair]) -> Void = { InputRemapSettings.ownedPairs = $0 }) {
+         saveOwned: @escaping ([HIDMappingPair]) -> Void = { InputRemapSettings.ownedPairs = $0 },
+         loadDisplaced: @escaping () -> [HIDMappingPair] = { InputRemapSettings.displacedPairs },
+         saveDisplaced: @escaping ([HIDMappingPair]) -> Void = { InputRemapSettings.displacedPairs = $0 }) {
         self.runHidutil = hidutil
         self.loadOwned = loadOwned
         self.saveOwned = saveOwned
+        self.loadDisplaced = loadDisplaced
+        self.saveDisplaced = saveDisplaced
     }
 
     /// Launch, settings change, wake. Does nothing at all for a user who never
@@ -215,7 +250,13 @@ final class InputRemapService {
             PointerAcceleration.shared.setEnabled(linear)
         }
         guard !desired.isEmpty || !owned.isEmpty else { return }
-        queue.async { if self.write(desired: desired, owned: owned) { self.saveOwned(desired) } }
+        let displaced = loadDisplaced()
+        queue.async {
+            if let remembered = self.write(desired: desired, owned: owned, displaced: displaced) {
+                self.saveOwned(desired)
+                self.saveDisplaced(remembered)
+            }
+        }
     }
 
     /// Quit: give back exactly the pairs AOM owns; other mappings stay.
@@ -238,31 +279,33 @@ final class InputRemapService {
     func giveBackOwnedMappings(timeout: TimeInterval = 3) -> Bool {
         let owned = loadOwned()
         guard !owned.isEmpty else { return true }
+        let displaced = loadDisplaced()
         let finished = DispatchSemaphore(value: 0)
         let succeeded = RemapFlag()
         queue.async {
-            succeeded.value = self.write(desired: [], owned: owned)
+            succeeded.value = self.write(desired: [], owned: owned, displaced: displaced) != nil
             finished.signal()
         }
         guard finished.wait(timeout: .now() + timeout) == .success else {
             NSLog("[AOM] Key remap give-back did not finish within %.1f s", timeout)
             return false
         }
-        if succeeded.value { saveOwned([]) }
+        if succeeded.value { saveOwned([]); saveDisplaced([]) }
         return succeeded.value
     }
 
     /// Runs hidutil only; storing the owned pairs is the caller's job.
-    private func write(desired: [HIDMappingPair], owned: [HIDMappingPair]) -> Bool {
+    /// Returns the pairs AOM's now replace (nil when hidutil failed).
+    private func write(desired: [HIDMappingPair], owned: [HIDMappingPair], displaced: [HIDMappingPair]) -> [HIDMappingPair]? {
         guard let current = runHidutil(["property", "--get", "UserKeyMapping"]) else {
-            lastError = "hidutil could not read the current key mapping."; return false
+            lastError = "hidutil could not read the current key mapping."; return nil
         }
-        let merged = HIDKeyMapping.merged(current: HIDKeyMapping.parse(current), previouslyOwned: owned, desired: desired)
-        guard runHidutil(["property", "--set", HIDKeyMapping.json(merged)]) != nil else {
-            lastError = "hidutil could not apply the key mapping."; return false
+        let plan = HIDKeyMapping.plan(current: HIDKeyMapping.parse(current), previouslyOwned: owned, displaced: displaced, desired: desired)
+        guard runHidutil(["property", "--set", HIDKeyMapping.json(plan.pairs)]) != nil else {
+            lastError = "hidutil could not apply the key mapping."; return nil
         }
         lastError = nil
-        return true
+        return plan.displaced
     }
 
     static func hidutil(_ arguments: [String]) -> String? {

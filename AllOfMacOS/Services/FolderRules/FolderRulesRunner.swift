@@ -237,6 +237,9 @@ struct FolderRulePassOutput: Equatable {
     var consumedGrants: Set<String> = []
     /// Show Notification texts per rule, posted once per pass.
     var notifications: [UUID: [String]] = [:]
+    /// 7.2.2: approved or picked items left alone because they changed or
+    /// no longer match.
+    var skippedApproved = 0
 
     mutating func recheck(_ seconds: TimeInterval) {
         recheckAfter = min(recheckAfter ?? seconds, seconds)
@@ -470,12 +473,22 @@ final class FolderRulesRunner: @unchecked Sendable {
                   let folder = config.folder(request.folderID),
                   let info = FolderRuleFileReader.read(request.info.url, depth: request.info.depth,
                                                        directorySizes: rule.conditions.contains { $0.attribute == .size }),
-                  FolderRuleMatcher.matches(rule, info, now: now) else { continue }
+                  FolderRuleMatcher.matches(rule, info, now: now) else { output.skippedApproved += 1; continue }
+            // 7.2.2: the item at that path must still be the one that was
+            // shown (a file replaced under the same name is left alone).
+            guard Self.isSameItem(request.info, info) else { output.skippedApproved += 1; continue }
             let key = FolderRuleMemory.key(rule: rule.id, info)
             guard !memory.isSettled(key, signature: rule.conditionSignature) else { continue }
             run(rule, info: info, key: key, folder: folder, now: now, into: &output)
         }
         return output
+    }
+
+    /// Pure: whether a re-read item is the one that was shown (same volume
+    /// and inode; an item read without them counts as the same).
+    static func isSameItem(_ shown: FolderRuleFileInfo, _ now: FolderRuleFileInfo) -> Bool {
+        guard shown.inode != 0 else { return true }
+        return shown.inode == now.inode && shown.device == now.device
     }
 
     /// The manual "Install Disk Image…": no folder rule, the person chose the file.

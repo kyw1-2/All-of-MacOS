@@ -26,6 +26,8 @@ import FoundationModels
 
 enum AOMAIProvider: String, CaseIterable, Identifiable, Codable {
     case apple, anthropic, localProxy, openAI, deepSeek, ollama, claudeCode, codex
+    /// 7.2.2: the DeepSeek Harness desktop app's agent, headless and read-only.
+    case deepSeekHarness
 
     var id: String { rawValue }
 
@@ -39,6 +41,7 @@ enum AOMAIProvider: String, CaseIterable, Identifiable, Codable {
         case .ollama: return "Ollama"
         case .claudeCode: return "Claude Code"
         case .codex: return "Codex"
+        case .deepSeekHarness: return "DeepSeek Harness"
         }
     }
 
@@ -52,14 +55,15 @@ enum AOMAIProvider: String, CaseIterable, Identifiable, Codable {
         case .ollama: return "desktopcomputer"
         case .claudeCode: return "terminal"
         case .codex: return "chevron.left.forwardslash.chevron.right"
+        case .deepSeekHarness: return "water.waves.and.arrow.up"
         }
     }
 
     /// A fallback for `symbol` on systems without the newer glyph.
-    var fallbackSymbol: String { self == .apple ? "sparkles" : symbol }
+    var fallbackSymbol: String { self == .apple ? "sparkles" : self == .deepSeekHarness ? "water.waves" : symbol }
 
     /// Runs a local CLI (with tools) rather than calling a model.
-    var isAgent: Bool { self == .claudeCode || self == .codex }
+    var isAgent: Bool { self == .claudeCode || self == .codex || self == .deepSeekHarness }
 
     /// Needs an API key before it can answer.
     var needsKey: Bool { self == .anthropic || self == .openAI || self == .deepSeek }
@@ -78,7 +82,7 @@ enum AOMAIProvider: String, CaseIterable, Identifiable, Codable {
         case .openAI: return "https://api.openai.com/v1"
         case .deepSeek: return "https://api.deepseek.com"
         case .ollama: return "http://127.0.0.1:11434/v1"
-        case .apple, .claudeCode, .codex: return ""
+        case .apple, .claudeCode, .codex, .deepSeekHarness: return ""
         }
     }
 
@@ -142,6 +146,8 @@ enum AOMAIProvider: String, CaseIterable, Identifiable, Codable {
                     .init(id: "haiku", title: "Claude Code · Haiku", detail: "Your subscription (or your haiku route)")]
         case .codex:
             return [.init(id: "default", title: "Codex", detail: "Your ChatGPT plan · ⌘J continues in Terminal")]
+        case .deepSeekHarness:
+            return [.init(id: "default", title: "DeepSeek Harness", detail: "Your DeepSeek Harness · reads your Mac, read-only · ⌘J opens the app")]
         }
     }
 }
@@ -348,6 +354,7 @@ enum AOMAIConfig {
         case .ollama: return !models(for: .ollama).isEmpty
         case .claudeCode: return PaletteAIProvider.claude.executable != nil
         case .codex: return PaletteAIProvider.codex.executable != nil
+        case .deepSeekHarness: return AOMDeepSeekHarness.isInstalled
         }
     }
 
@@ -653,7 +660,7 @@ enum AOMAIClient {
             request.setValue("text/event-stream", forHTTPHeaderField: "accept")
             let prompt = AOMAILocalTools.isEnabled ? system + "\n" + AOMAILocalTools.promptLines.joined(separator: "\n") : system
             return openAIToolStream(request, body: openAIBody(model: ref.model, system: prompt, turns: turns))
-        case .claudeCode, .codex:
+        case .claudeCode, .codex, .deepSeekHarness:
             return failing("Agents answer through their CLI.")
         }
     }
@@ -877,7 +884,8 @@ extension AOMAIClient {
         var stopReason: String?
     }
 
-    static let maxToolRounds = 8
+    /// 7.2.2: six rounds (the last answers without tools); eight let DeepSeek keep searching for a minute.
+    static let maxToolRounds = 6
 
     static func jsonObject(_ text: String) -> [String: Any]? {
         guard let data = text.data(using: .utf8) else { return nil }
@@ -955,6 +963,9 @@ extension AOMAIClient {
                         for call in current.calls {
                             try Task.checkCancellation()
                             continuation.yield(.thinking)
+                            // What is running now, while it runs (7.2.1 showed only "Thinking…").
+                            continuation.yield(.notice((activity.suffix(2) + [AOMAILocalTools.describe(call.name, arguments: call.arguments)])
+                                .joined(separator: " · ")))
                             let result = await AOMAILocalTools.run(call.name, arguments: call.arguments)
                             GestureLog.shared.logFromAnyThread("Ask AI tool \(call.name): \(result.summary)", level: .action)
                             activity.append(result.summary)

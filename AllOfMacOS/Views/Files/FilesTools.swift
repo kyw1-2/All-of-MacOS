@@ -19,6 +19,10 @@ final class FileToolsModel: ObservableObject {
 
     let toasts = AOMToastModel()
     @Published var processReview: ProcessReview?
+    /// 7.2.2 (audit N01): the files waiting in the Batch Rename sheet.
+    @Published var renameFiles: RenameFiles?
+    /// 7.2.2 (audit N02): both compressions of one PDF, to choose from.
+    @Published var pdfComparison: PDFComparison?
     private(set) var running: Set<Tool> = []
 
     let service = MacMagicSystemToolService.shared
@@ -147,17 +151,63 @@ final class FileToolsModel: ObservableObject {
         panel.allowedContentTypes = [UTType.pdf]
         panel.nameFieldStringValue = "Merged.pdf"
         guard panel.runModal() == .OK, let destination = panel.url else { return }
-        run(.pdfMerge, { try self.service.combinePDFs(urls: urls, to: destination); return "Merged \(urls.count) PDFs" }) { self.succeed($0) }
+        run(.pdfMerge, {
+            let skipped = try self.service.combinePDFs(urls: urls, to: destination)
+            guard !skipped.isEmpty else { return "Merged \(urls.count) PDFs" }
+            return "Merged \(urls.count - skipped.count) PDFs · left out (unreadable or locked): \(skipped.joined(separator: ", "))"
+        }) { self.succeed($0) }
     }
 
+    /// Makes both versions in a temporary folder and shows their sizes; the
+    /// chosen one is saved next to the original under a new name.
     private func compressPDF() {
-        guard let url = pickFiles(types: [UTType.pdf], multiple: false, message: nil)?.first else { return }
-        let destination = url.deletingPathExtension().appendingPathExtension("compressed.pdf")
-        run(.pdfCompress, {
-            try self.service.compressPDF(url: url, to: destination)
-            let original = CleanupTools.allocatedSize(url), compressed = CleanupTools.allocatedSize(destination)
-            return "Compressed: \(SystemStatus.size(original)) → \(SystemStatus.size(compressed))"
-        }) { self.succeed($0) }
+        guard let url = pickFiles(types: [UTType.pdf], multiple: false, message: "Choose the PDF to make smaller.")?.first else { return }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("AOMCompress-\(UUID().uuidString)", isDirectory: true)
+        guard !running.contains(.pdfCompress) else { return }
+        running.insert(.pdfCompress)
+        toasts.show("Compressing \(url.lastPathComponent) two ways…", tone: .info)
+        let service = self.service
+        Task.detached(priority: .userInitiated) {
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            var options: [PDFComparison.Option] = []
+            var firstError: String?
+            for mode in MacMagicSystemToolService.PDFCompression.allCases {
+                let output = folder.appendingPathComponent("\(mode.rawValue).pdf")
+                do {
+                    try service.compressPDF(url: url, to: output, mode: mode)
+                    options.append(.init(mode: mode, file: output, size: CleanupTools.allocatedSize(output)))
+                } catch {
+                    firstError = firstError ?? error.localizedDescription
+                }
+            }
+            let original = CleanupTools.allocatedSize(url)
+            let found = options
+            let problem = firstError
+            await MainActor.run {
+                self.running.remove(.pdfCompress)
+                self.toasts.dismiss()
+                guard !found.isEmpty else {
+                    try? FileManager.default.removeItem(at: folder)
+                    self.fail("PDF Not Compressed", problem ?? "Neither way worked."); return
+                }
+                self.pdfComparison = PDFComparison(source: url, originalSize: original, options: found, folder: folder)
+            }
+        }
+    }
+
+    func savePDFComparison(_ option: PDFComparison.Option?) {
+        guard let comparison = pdfComparison else { return }
+        pdfComparison = nil
+        defer { try? FileManager.default.removeItem(at: comparison.folder) }
+        guard let option else { return }
+        let destination = MacMagicSystemToolService.freeName(nextTo: comparison.source, suffix: "compressed")
+        do {
+            try FileManager.default.moveItem(at: option.file, to: destination)
+            toasts.show("Saved \(destination.lastPathComponent) · \(SystemStatus.size(comparison.originalSize)) → \(SystemStatus.size(option.size))",
+                        tone: .success, actionTitle: "Show") {
+                NSWorkspace.shared.activateFileViewerSelecting([destination])
+            }
+        } catch { fail("PDF Not Saved", error.localizedDescription) }
     }
 
     private func splitPDF() {
@@ -396,27 +446,22 @@ final class FileToolsModel: ObservableObject {
 
     private func batchRename() {
         guard let urls = pickFiles(types: [.item], multiple: true, message: "Choose the files to rename."), !urls.isEmpty else { return }
-        let alert = NSAlert()
-        alert.messageText = "Rename \(urls.count) File\(urls.count == 1 ? "" : "s")"
-        alert.informativeText = "Replaces text in each name (extensions stay). {n} in the replacement becomes 1, 2, 3…"
-        let find = NSTextField(frame: NSRect(x: 0, y: 30, width: 300, height: 24))
-        find.placeholderString = "Find"
-        let replace = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
-        replace.placeholderString = "Replace with"
-        let stack = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 54))
-        stack.addSubview(find); stack.addSubview(replace)
-        alert.accessoryView = stack
-        alert.window.initialFirstResponder = find
-        alert.addButton(withTitle: "Rename")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        guard !find.stringValue.isEmpty || replace.stringValue.contains("{n}") else {
-            fail("Nothing to Rename", "Type the text to find, or use {n} in the replacement."); return
-        }
+        renameFiles = RenameFiles(urls: urls)
+    }
+
+    /// Runs the previewed renames (all or none) and offers Undo.
+    func applyRename(_ rows: [BatchRename.Row]) {
+        renameFiles = nil
         do {
-            let renamed = try service.batchRename(urls: urls, pattern: find.stringValue, replacement: replace.stringValue)
-            succeed("Renamed \(renamed.count) file\(renamed.count == 1 ? "" : "s")")
-        } catch { fail("Files Not Renamed", "No file was renamed: \(error.localizedDescription)") }
+            let done = try BatchRename.apply(rows)
+            let count = done.moves.count
+            guard count > 0 else { succeed("No name changed"); return }
+            toasts.show("Renamed \(count) file\(count == 1 ? "" : "s")", tone: .success, actionTitle: "Undo") { [weak self] in
+                let failed = BatchRename.undo(done)
+                if failed == 0 { self?.succeed("Names put back") }
+                else { self?.fail("Not All Names Put Back", "\(failed) file\(failed == 1 ? " was" : "s were") moved or renamed since.") }
+            }
+        } catch { fail("Files Not Renamed", error.localizedDescription) }
     }
 
     private func whatIsUsingFile() {
@@ -504,6 +549,184 @@ struct FilesToolsMenu: View {
             ProcessReviewSheet(review: review, onQuit: { model.quitProcess($0) },
                                onSort: { _ in }, onClose: { model.processReview = nil })
         }
+        .sheet(item: $model.pdfComparison) { comparison in
+            PDFComparisonSheet(comparison: comparison, onSave: { model.savePDFComparison($0) })
+        }
+        .sheet(item: $model.renameFiles) { files in
+            BatchRenameSheet(urls: files.urls, onRename: { model.applyRename($0) }, onCancel: { model.renameFiles = nil })
+        }
         .aomToast(model.toasts)
+    }
+}
+
+struct RenameFiles: Identifiable {
+    let id = UUID()
+    let urls: [URL]
+}
+
+/// 7.2.2 (audit N01): Batch Rename with presets and every new name shown
+/// before anything moves.
+struct BatchRenameSheet: View {
+    let urls: [URL]
+    let onRename: ([BatchRename.Row]) -> Void
+    let onCancel: () -> Void
+    @State private var preset = "replace"
+    @State private var find = ""
+    @State private var template = ""
+    @State private var start = 1
+    @FocusState private var focus: Field?
+    private enum Field { case find, template }
+
+    private var rows: [BatchRename.Row] { BatchRename.plan(urls, find: find, template: template, startingNumber: start) }
+
+    var body: some View {
+        let rows = self.rows
+        let problems = rows.filter { $0.problem != nil }.count
+        let changing = rows.filter(\.changes).count
+        VStack(alignment: .leading, spacing: AOMSpace.x3) {
+            HStack {
+                Text("Rename \(urls.count) File\(urls.count == 1 ? "" : "s")").font(AOMFont.title)
+                Spacer()
+                Picker("Preset", selection: $preset) {
+                    ForEach(BatchRename.presets) { Text($0.title).tag($0.id) }
+                }
+                .labelsHidden()
+                .frame(width: 170)
+                .onChange(of: preset) { _, id in
+                    guard let chosen = BatchRename.presets.first(where: { $0.id == id }) else { return }
+                    find = chosen.find
+                    template = chosen.replace
+                    focus = chosen.find.isEmpty && chosen.replace.isEmpty ? .find : .template
+                }
+            }
+            Grid(alignment: .leading, horizontalSpacing: AOMSpace.x2, verticalSpacing: AOMSpace.x2) {
+                GridRow {
+                    Text("Find").font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
+                    TextField("Text to replace (empty: the whole name)", text: $find).focused($focus, equals: .find)
+                }
+                GridRow {
+                    Text("New").font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
+                    TextField("Replacement or name, e.g. {name} {n}", text: $template).focused($focus, equals: .template)
+                }
+                GridRow {
+                    Text("Start at").font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
+                    Stepper(value: $start, in: 0...99_999) { Text("\(start)").monospacedDigit() }
+                        .fixedSize()
+                }
+            }
+            Text("{name} the old name · {n} 1, 2, 3 · {nn} 01, 02 · {date} today. Extensions stay.")
+                .font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
+            List(rows) { row in
+                HStack(spacing: AOMSpace.x2) {
+                    Text(row.source.lastPathComponent)
+                        .foregroundStyle(AOMColor.textSecondary)
+                        .lineLimit(1).truncationMode(.middle)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Image(systemName: "arrow.right").foregroundStyle(AOMColor.textTertiary).accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(row.newName)
+                            .foregroundStyle(row.problem != nil ? AOMColor.dangerText : (row.changes ? AOMColor.text : AOMColor.textTertiary))
+                            .lineLimit(1).truncationMode(.middle)
+                        if let problem = row.problem {
+                            Text(problem).font(AOMFont.caption).foregroundStyle(AOMColor.dangerText)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .font(AOMFont.body)
+                .accessibilityElement(children: .combine)
+            }
+            .listStyle(.bordered(alternatesRowBackgrounds: true))
+            .frame(minHeight: 180)
+            HStack {
+                Text(problems > 0 ? "\(problems) name\(problems == 1 ? " needs" : "s need") a change; nothing is renamed until all are fine."
+                     : "\(changing) of \(rows.count) change. Undo puts them back.")
+                    .font(AOMFont.caption)
+                    .foregroundStyle(problems > 0 ? AOMColor.dangerText : AOMColor.textSecondary)
+                Spacer()
+                Button("Cancel", action: onCancel).keyboardShortcut(.cancelAction)
+                Button("Rename") { onRename(rows) }
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(AOMPrimaryButtonStyle())
+                    .disabled(problems > 0 || changing == 0)
+            }
+        }
+        .padding(AOMSpace.x4)
+        .frame(width: 620, height: 480)
+        .onAppear { focus = .find }
+    }
+}
+
+struct PDFComparison: Identifiable {
+    struct Option: Identifiable {
+        var id: String { mode.rawValue }
+        let mode: MacMagicSystemToolService.PDFCompression
+        let file: URL
+        let size: Int64
+    }
+
+    let id = UUID()
+    let source: URL
+    let originalSize: Int64
+    let options: [Option]
+    /// The temporary folder both versions were written to.
+    let folder: URL
+
+    /// Pure: "−62%", or nil when it isn't smaller.
+    static func saving(original: Int64, compressed: Int64) -> String? {
+        guard original > 0, compressed < original else { return nil }
+        let percent = Int((Double(original - compressed) / Double(original) * 100).rounded())
+        return percent == 0 ? "<1% smaller" : "\(percent)% smaller"
+    }
+}
+
+/// 7.2.2 (audit N02): the two compressions side by side.
+struct PDFComparisonSheet: View {
+    let comparison: PDFComparison
+    let onSave: (PDFComparison.Option?) -> Void
+
+    private var best: String? {
+        comparison.options.filter { $0.size < comparison.originalSize }
+            .first { $0.mode == .keepText && Double($0.size) < Double(comparison.originalSize) * 0.9 }?.id
+            ?? comparison.options.filter { $0.size < comparison.originalSize }.min { $0.size < $1.size }?.id
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AOMSpace.x3) {
+            Text("Compress “\(comparison.source.lastPathComponent)”").font(AOMFont.title).lineLimit(1).truncationMode(.middle)
+            Text("Now \(SystemStatus.size(comparison.originalSize)). Save the one you want; it goes next to the original, which stays as it is.")
+                .font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(comparison.options) { option in
+                let saving = PDFComparison.saving(original: comparison.originalSize, compressed: option.size)
+                HStack(alignment: .top, spacing: AOMSpace.x3) {
+                    Image(systemName: option.mode == .keepText ? "doc.text" : "photo.on.rectangle")
+                        .font(.system(size: 18)).foregroundStyle(AOMColor.textSecondary).frame(width: 24)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
+                        HStack(spacing: AOMSpace.x1) {
+                            Text(option.mode.title).font(AOMFont.bodyEmphasis)
+                            if option.id == best { AOMStatusPill("Suggested", tone: .success) }
+                        }
+                        Text(option.mode.detail).font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
+                        Text("\(SystemStatus.size(option.size)) · \(saving ?? "not smaller")")
+                            .font(AOMFont.callout.monospacedDigit())
+                            .foregroundStyle(saving == nil ? AOMColor.warningText : AOMColor.text)
+                    }
+                    Spacer(minLength: AOMSpace.x2)
+                    Button("Save") { onSave(option) }
+                        .buttonStyle(AOMPrimaryButtonStyle())
+                        .disabled(saving == nil)
+                }
+                .padding(AOMSpace.x3)
+                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(AOMColor.text.opacity(0.04)))
+            }
+            HStack {
+                Spacer()
+                Button("Cancel") { onSave(nil) }.keyboardShortcut(.cancelAction)
+            }
+        }
+        .padding(AOMSpace.x4)
+        .frame(width: 480)
     }
 }

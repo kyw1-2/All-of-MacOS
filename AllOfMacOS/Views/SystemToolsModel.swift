@@ -97,7 +97,7 @@ final class SystemToolsModel: ObservableObject {
     /// The startup disk's detail popover from the This Mac strip. A popover,
     /// not a sheet: the strip is the only way in and nothing here is modal.
     @Published var showStartupDisk = false
-    var processTool: SystemToolID = .ports
+    var processTool: SystemToolID = .activity
 
     /// States read from helper processes (nvram, tmutil, launchctl), filled
     /// in off the main thread and merged into `states`.
@@ -238,9 +238,6 @@ final class SystemToolsModel: ObservableObject {
         next[.hideMenuBar] = SystemToolState(SystemTweak.bool(preferences.value("_HIHideMenuBar", domain: CFPreferenceStore.globalDomain)) ?? false)
         next[.lowPower] = SystemToolState(ProcessInfo.processInfo.isLowPowerModeEnabled)
         next[.wifi] = CWWiFiClient.shared().interface().map { SystemToolState($0.powerOn()) } ?? .value("None")
-        next[.keyboardClean] = KeyboardCleaningLock.shared.isActive ? .on("Locked") : .off()
-        let keystrokes = KeystrokeOverlay.shared
-        next[.keystrokes] = keystrokes.isActive ? .on(keystrokes.shortcutsOnly ? "Shortcuts" : "All keys") : .off()
         let tweaks: [(SystemToolID, SystemTweak)] = [(.extensions, .showAllExtensions), (.pathbar, .pathBar), (.statusbar, .statusBar),
                                                      (.posixtitle, .fullPathInTitle), (.dockactive, .dockActiveAppsOnly),
                                                      (.dockdelay, .dockInstantAutoHide), (.dockrecents, .dockRecentApps),
@@ -278,14 +275,9 @@ final class SystemToolsModel: ObservableObject {
         let generation = slowRefreshGeneration
         Task.detached(priority: .utility) {
             let interval = AOMPerformance.begin("SystemTools.slowRefresh")
-            var slow: [SystemToolID: SystemToolState] = [:]
-            if let output = try? SystemToolsCommand.run(MetalHUD.launchctl.path, MetalHUD.readArguments) {
-                slow[.metalHUD] = SystemToolState(MetalHUD.isOn(getenvOutput: output.stdout))
-            }
-            if let output = try? SystemToolsCommand.run("/usr/bin/tmutil", ["status"]), let status = DiskTools.parseBackupStatus(output.stdout) {
-                slow[.timeMachine] = status.running
-                    ? .on(status.progress.map { "\(Int(($0 * 100).rounded()))%" } ?? "Running") : .off("Idle")
-            }
+            // 7.2.2: Metal HUD (retired) and Time Machine left with their tiles,
+            // so no helper process runs here any more (Codex audit E09).
+            let slow: [SystemToolID: SystemToolState] = [:]
             let result = slow
             AOMPerformance.end("SystemTools.slowRefresh", interval)
             await MainActor.run {
@@ -426,12 +418,9 @@ final class SystemToolsModel: ObservableObject {
             runAction(id, .setWiFiPower, success: wasOn ? "Wi-Fi off" : "Wi-Fi on", failure: "macOS didn't change the Wi-Fi power.")
         case .bluetooth: bluetoothMenu()
         case .lowPower: toggleLowPowerMode()
-        case .keyboardClean: lockKeyboard()
-        case .keystrokes: keystrokesMenu()
         // Display
         case .resolution: resolutionMenu()
         case .brightness: brightnessMenu()
-        case .metalHUD: toggleMetalHUD()
         // Power & Session
         case .lockScreen: runAction(id, .lockScreen, success: nil, failure: "The screen could not be locked.")
         case .sleep: runAction(id, .sleepComputer, success: nil, failure: "pmset could not put the Mac to sleep.")
@@ -439,10 +428,8 @@ final class SystemToolsModel: ObservableObject {
         case .batteryDetails: showBatteryDetails()
         case .sleepTimer: sleepTimerMenu()
         case .awakeWhileApp: awakeWhileAppMenu()
-        case .quitAll: quitAllApps()
         // Apps
         case .activity: showActivity()
-        case .forceQuit: forceQuitMenu()
         case .killApps: AOMLauncherController.shared.show(route: .killApps)
         case .relaunchApp: relaunchAppMenu()
         case .uninstall: reviewUninstall(nil)
@@ -452,19 +439,14 @@ final class SystemToolsModel: ObservableObject {
         // Storage
         case .freeUpSpace: cleanupScan = .folderSizes; showFreeUpSpace = true
         case .eject: ejectMenu()
-        case .timeMachine: timeMachineMenu()
-        case .snapshots: showLocalSnapshots()
         case .installDMG: FolderRulesModule.installDiskImage()
         // Network
         case .networkInfo: showNetworkInfo = true
         case .speedTest:
             toast = "Testing the connection (about 20 s)…"
             runInBackground(id, { try NetworkTools.runSpeedTest() }) { self.succeed(id, $0.summary) }
-        case .ping: pingHost()
-        case .ports: portsMenu()
         case .vpn: VPNModel.shared.present()
         case .dns: flushDNS()
-        case .renewDHCP: renewDHCP()
         // Homebrew
         case .homebrew: HomebrewModel.shared.present(.outdated, refresh: true)
         // Fix It
@@ -494,6 +476,8 @@ final class SystemToolsModel: ObservableObject {
         case .shotformat: screenshotFormatMenu()
         case .menuBarSpacing: menuBarSpacingMenu()
         case .shotfolder: chooseScreenshotFolder()
+        // 7.2.2: grouped tiles (Codex audit R04–R07)
+        case .finderDisplay, .dockSettings, .screenshotDefaults, .repair: groupMenu(id)
         }
     }
 
@@ -547,6 +531,28 @@ final class SystemToolsModel: ObservableObject {
         popUp(menu)
     }
 
+    /// 7.2.2: a grouped tile's options with their current state; each runs
+    /// as its own tile did.
+    private func groupMenu(_ group: SystemToolID) {
+        let menu = NSMenu()
+        for info in SystemToolCatalog.all where info.groupedInto == group && info.isAvailable {
+            var title = info.title
+            if case .value(let value)? = states[info.id] { title += " — \(value)" }
+            let item = SystemToolMenuItem(title: title) { self.run(info.id) }
+            if case .on? = states[info.id] { item.state = .on }
+            item.toolTip = info.help
+            menu.addItem(item)
+        }
+        if group == .screenshotDefaults {
+            menu.addItem(.separator())
+            menu.addItem(SystemToolMenuItem(title: "AOM's Own Capture Settings…") {
+                AppState.current?.selectedMainTab = .capture
+                AppDelegate.current?.showMainWindow()
+            })
+        }
+        popUp(menu)
+    }
+
     func toggleHideMenuBar() {
         let wasOn = states[.hideMenuBar] == .on()
         let script = "tell application \"System Events\" to tell dock preferences to set autohide menu bar to \(wasOn ? "false" : "true")"
@@ -573,51 +579,6 @@ final class SystemToolsModel: ObservableObject {
             }
             item.state = connected ? .on : .off
             menu.addItem(item)
-        }
-        popUp(menu)
-    }
-
-    /// All keys or shortcuts only (typed text stays private), or off.
-    private func keystrokesMenu() {
-        let overlay = KeystrokeOverlay.shared
-        let menu = NSMenu()
-        if overlay.isActive {
-            menu.addItem(SystemToolMenuItem(title: "Turn Off Show Keystrokes") {
-                overlay.stop(); self.succeed(.keystrokes, "Keystrokes hidden")
-            })
-            menu.addItem(.separator())
-        }
-        for (title, shortcutsOnly) in [("Show All Keys", false), ("Show Shortcuts Only", true)] {
-            let item = SystemToolMenuItem(title: title) {
-                overlay.stop()
-                if overlay.start(shortcutsOnly: shortcutsOnly) {
-                    self.succeed(.keystrokes, shortcutsOnly ? "Showing shortcuts as you press them" : "Showing keys as you press them")
-                } else {
-                    self.fail(.keystrokes, "Keystrokes Not Shown",
-                              "Allow All of MacOS in System Settings › Privacy & Security › Accessibility. If it is already listed, remove it with − and add it again.")
-                }
-            }
-            if overlay.isActive, overlay.shortcutsOnly == shortcutsOnly { item.state = .on }
-            menu.addItem(item)
-        }
-        popUp(menu)
-    }
-
-    private func lockKeyboard() {
-        let lock = KeyboardCleaningLock.shared
-        if lock.isActive { lock.stop(); succeed(.keyboardClean, "Keyboard unlocked"); return }
-        let menu = NSMenu()
-        for seconds in [30, 60, 120] {
-            let title = seconds < 60 ? "Lock for \(seconds) Seconds" : "Lock for \(seconds / 60) Minute\(seconds == 60 ? "" : "s")"
-            menu.addItem(SystemToolMenuItem(title: title) {
-                do {
-                    try lock.start(seconds: seconds)
-                    self.lastResult = ToolResult(tool: .keyboardClean, message: "Keyboard locked for \(seconds) s", succeeded: true, date: Date())
-                    self.refreshStates()
-                    // The state flips back when the lock ends by itself.
-                    DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(seconds) + .milliseconds(700)) { self.refreshStates() }
-                } catch { self.fail(.keyboardClean, "Keyboard Not Locked", error.localizedDescription) }
-            })
         }
         popUp(menu)
     }
@@ -853,23 +814,6 @@ final class SystemToolsModel: ObservableObject {
         popUp(menu)
     }
 
-    func toggleMetalHUD() {
-        let wasOn = states[.metalHUD] == .on()
-        runInBackground(.metalHUD, { () -> Bool in
-            try SystemToolsCommand.runChecked(MetalHUD.launchctl.path, MetalHUD.writeArguments(on: !wasOn))
-            let check = try SystemToolsCommand.run(MetalHUD.launchctl.path, MetalHUD.readArguments)
-            return MetalHUD.isOn(getenvOutput: check.stdout)
-        }) { isOn in
-            self.slowStates[.metalHUD] = SystemToolState(isOn)
-            guard isOn != wasOn else {
-                self.fail(.metalHUD, "Metal HUD Not Changed", "launchctl ran, but MTL_HUD_ENABLED is still \(wasOn ? "set" : "unset").")
-                return
-            }
-            self.succeed(.metalHUD, isOn ? "Metal HUD on for apps you open from now on (apps already open don't change)"
-                                         : "Metal HUD off for apps you open from now on")
-        }
-    }
-
     // MARK: - Power & Session
 
     func confirm(_ title: String, _ message: String, button: String, destructive: Bool = true) -> Bool {
@@ -883,30 +827,6 @@ final class SystemToolsModel: ObservableObject {
         return alert.runModal() == .alertFirstButtonReturn
     }
 
-
-    private func quitAllApps() {
-        let own = ProcessInfo.processInfo.processIdentifier
-        let apps = NSWorkspace.shared.runningApplications.filter {
-            $0.activationPolicy == .regular && $0.processIdentifier != own && $0.bundleIdentifier != "com.apple.finder"
-        }
-        guard !apps.isEmpty else { succeed(.quitAll, "No other apps are open"); return }
-        let names = apps.compactMap(\.localizedName).sorted()
-        let list = names.prefix(12).joined(separator: ", ") + (names.count > 12 ? " and \(names.count - 12) more" : "")
-        guard confirm("Quit \(apps.count) App\(apps.count == 1 ? "" : "s")?",
-                      "\(list) will be asked to quit. Apps with unsaved documents may ask what to do.", button: "Quit All") else { return }
-        apps.forEach { $0.terminate() }
-        running.insert(.quitAll)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
-            self.running.remove(.quitAll)
-            let left = apps.filter { !$0.isTerminated }
-            if left.isEmpty { self.succeed(.quitAll, "Quit \(apps.count) app\(apps.count == 1 ? "" : "s")") }
-            else {
-                self.fail(.quitAll, "Some Apps Are Still Open",
-                          "Quit \(apps.count - left.count) of \(apps.count). Still open (probably asking about unsaved work): "
-                            + left.compactMap(\.localizedName).joined(separator: ", "))
-            }
-        }
-    }
 
     func showBatteryDetails() {
         runInBackground(.batteryDetails, { () -> (PowerTools.BatteryDetails?, String?) in
@@ -994,18 +914,6 @@ final class SystemToolsModel: ObservableObject {
             menu.addItem(item)
         }
         return menu
-    }
-
-    func forceQuitMenu() {
-        popUp(appMenu(ProcessTools.regularApps()) { app in
-            let name = app.localizedName ?? "the app"
-            guard self.confirm("Force Quit \(name)?", "\(name) stops at once. Unsaved changes in it are lost.", button: "Force Quit") else { return }
-            guard app.forceTerminate() else { self.fail(.forceQuit, "Not Force Quit", "macOS refused to stop \(name)."); return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                if app.isTerminated { self.succeed(.forceQuit, "\(name) force quit") }
-                else { self.fail(.forceQuit, "\(name) Is Still Open", "macOS accepted the request, but \(name) hasn't stopped yet.") }
-            }
-        })
     }
 
     func relaunchAppMenu() {
@@ -1317,66 +1225,6 @@ final class SystemToolsModel: ObservableObject {
         popUp(menu)
     }
 
-    func timeMachineMenu() {
-        if slowStates[.timeMachine]?.tone == .success { showTimeMachine(); return }
-        let menu = NSMenu()
-        menu.addItem(SystemToolMenuItem(title: "Back Up Now") { self.backUpNow() })
-        menu.addItem(SystemToolMenuItem(title: "Backup Details…") { self.showTimeMachine() })
-        popUp(menu)
-    }
-
-    func backUpNow() {
-        runInBackground(.timeMachine, { () -> Void in
-            let destinations = try SystemToolsCommand.run("/usr/bin/tmutil", ["destinationinfo"])
-            guard DiskTools.hasDestination(destinations) else {
-                throw SystemToolError.invalidInput("Time Machine has no backup disk. Set one up in System Settings › General › Time Machine.")
-            }
-            try SystemToolsCommand.runChecked("/usr/bin/tmutil", ["startbackup"])
-        }) { _ in
-            self.succeed(.timeMachine, "Time Machine backup started")
-            self.refreshSlowStates()
-        }
-    }
-
-    func showTimeMachine() {
-        runInBackground(.timeMachine, { () -> [String] in
-            let status = (try? SystemToolsCommand.run("/usr/bin/tmutil", ["status"])).flatMap { DiskTools.parseBackupStatus($0.stdout) }
-            let destinations = try SystemToolsCommand.run("/usr/bin/tmutil", ["destinationinfo"])
-            var lines = [status.map(DiskTools.backupStatusText) ?? "Status unknown"]
-            if DiskTools.hasDestination(destinations) {
-                let latest = try? SystemToolsCommand.run("/usr/bin/tmutil", ["latestbackup"])
-                if let latest, latest.succeeded, let path = latest.stdout.split(whereSeparator: \.isNewline).last {
-                    lines.append("Latest backup: " + URL(fileURLWithPath: String(path)).lastPathComponent)
-                } else {
-                    lines.append("Latest backup: not readable now (the backup disk may be disconnected)")
-                }
-            } else {
-                lines.append("No backup disk is set up.")
-            }
-            return lines
-        }) { lines in
-            self.info(.timeMachine, title: "Time Machine", lines: lines, extra: ("Time Machine Settings…", { self.openPane(.timeMachine, .timeMachine) }))
-        }
-    }
-
-
-    func showLocalSnapshots() {
-        runInBackground(.snapshots, { try SystemToolsCommand.runChecked("/usr/bin/tmutil", ["listlocalsnapshots", "/"]).stdout }) { text in
-            let names = DiskTools.parseLocalSnapshots(text)
-            let timeMachine = names.filter(DiskTools.isTimeMachineSnapshot)
-            var lines = ["\(names.count) local snapshot\(names.count == 1 ? "" : "s") of the startup disk"]
-            if !timeMachine.isEmpty { lines.append("\(timeMachine.count) from Time Machine (removable)") }
-            if names.count > timeMachine.count { lines.append("\(names.count - timeMachine.count) from macOS updates (macOS removes these itself)") }
-            lines += names.prefix(12).map { "• " + $0.replacingOccurrences(of: "com.apple.", with: "") }
-            let thin: (String, () -> Void)? = timeMachine.isEmpty ? nil : ("Thin Time Machine Snapshots…", {
-                self.administrator(.snapshots, title: "Thin Local Snapshots?",
-                                   message: "macOS removes Time Machine's local snapshots of the startup disk to free up to 20 GB. Backups on your backup disk are not touched.",
-                                   button: "Thin…", commands: [.init(path: "/usr/bin/tmutil", arguments: DiskTools.thinArguments)],
-                                   success: "Time Machine snapshots thinned")
-            })
-            self.info(.snapshots, title: "Local Snapshots", lines: lines, extra: thin)
-        }
-    }
 
     // MARK: - Network
 
@@ -1405,59 +1253,6 @@ final class SystemToolsModel: ObservableObject {
             } catch {
                 fail(.dns, "DNS Cache Not Flushed", error.localizedDescription)
             }
-        }
-    }
-
-    func renewDHCP() {
-        guard let interface = SystemStatus.preferredAddress(SystemStatus.ipv4Addresses())?.interface else {
-            fail(.renewDHCP, "No Active Interface", "No network interface has an IPv4 address to renew."); return
-        }
-        administrator(.renewDHCP, title: "Renew the DHCP Lease on \(interface)?",
-                      message: "The connection on \(interface) drops for a few seconds while the router hands out an address.",
-                      button: "Renew…", commands: [.init(path: "/usr/sbin/ipconfig", arguments: ["set", interface, "DHCP"])],
-                      success: "DHCP renewed on \(interface)")
-    }
-
-    func pingHost() {
-        guard let typed = promptText("Ping", "Host name or IP address (empty for 1.1.1.1):", placeholder: "apple.com") else { return }
-        let host = typed.isEmpty ? "1.1.1.1" : typed
-        guard NetworkTools.isValidHost(host) else { fail(.ping, "Not a Host Name", "“\(host)” isn't a host name or IP address."); return }
-        runInBackground(.ping, { try NetworkTools.ping(host: host) }) { result in
-            if result.received > 0 { self.succeed(.ping, "\(host): \(result.summary)") }
-            else { self.fail(.ping, "No Reply from \(host)", "\(result.sent) pings sent, none answered. The host may block ping, or the network is down.") }
-        }
-    }
-
-    /// What's Using a Port and Listening Ports in one sheet.
-    func portsMenu() {
-        let menu = NSMenu()
-        menu.addItem(SystemToolMenuItem(title: "A Port…") { self.portLookup() })
-        menu.addItem(SystemToolMenuItem(title: "Listening Ports") { self.showListeningPorts() })
-        popUp(menu)
-    }
-
-    private func portLookup() {
-        guard let text = promptText("What's Using a Port", "Port number (1–65535):", placeholder: "8080") else { return }
-        guard let port = NetworkTools.port(from: text) else {
-            fail(.ports, "Not a Port", "“\(text)” isn't a port number from 1 to 65535."); return
-        }
-        runInBackground(.ports, { try NetworkTools.users(ofPort: port) }) { users in
-            guard !users.isEmpty else { self.succeed(.ports, "Nothing you can see is using port \(port)"); return }
-            self.processTool = .ports
-            self.processReview = ProcessReview(title: "Port \(port)", rows: users.map {
-                .init(id: $0.id, pid: $0.pid, command: $0.command,
-                      detail: "PID \($0.pid) · \($0.proto) \($0.name)\($0.state.isEmpty ? "" : " · \($0.state)")")
-            })
-        }
-    }
-
-    private func showListeningPorts() {
-        runInBackground(.ports, { try NetworkTools.listeningUsers() }) { users in
-            guard !users.isEmpty else { self.succeed(.ports, "Nothing you can see is listening"); return }
-            self.processTool = .ports
-            self.processReview = ProcessReview(title: "Listening Ports", rows: users.map {
-                .init(id: $0.id, pid: $0.pid, command: $0.command, detail: "PID \($0.pid) · \($0.proto) \($0.name)")
-            })
         }
     }
 

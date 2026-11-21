@@ -226,51 +226,6 @@ struct AOMPasteCraftCard: View {
 
 // MARK: - 2. matchedGeometryEffect 슬라이딩 핀보드 탭 바
 
-struct AOMSlidingPinboardBar: View {
-    struct Tab: Identifiable, Equatable {
-        let id: String
-        let title: String
-        let dotColor: Color?
-    }
-
-    let tabs: [Tab]
-    @Binding var selectedID: String
-    @Namespace private var pillNamespace
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        HStack(spacing: 4) {
-            ForEach(tabs) { tab in
-                let active = tab.id == selectedID
-                Button {
-                    withAnimation(AOMCraftMotion.resolve(AOMCraftMotion.tabSlide, reduceMotion: reduceMotion)) {
-                        selectedID = tab.id
-                    }
-                } label: {
-                    HStack(spacing: 6) {
-                        if let dot = tab.dotColor {
-                            Circle().fill(dot).frame(width: 7, height: 7)
-                        }
-                        Text(tab.title)
-                            .font(.system(size: 12, weight: active ? .semibold : .medium))
-                            .foregroundStyle(active ? .primary : .secondary)
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background {
-                        if active {
-                            Capsule()
-                                .fill(Color.primary.opacity(0.10))
-                                .matchedGeometryEffect(id: "pinboard-pill", in: pillNamespace)
-                        }
-                    }
-                }
-                .buttonStyle(.plain)
-            }
-        }
-    }
-}
-
 enum AOMSwatchContrast {
     /// Compares WCAG contrast ratios on the opaque sRGB preview.
     static func prefersBlack(_ rgb: NSColor) -> Bool {

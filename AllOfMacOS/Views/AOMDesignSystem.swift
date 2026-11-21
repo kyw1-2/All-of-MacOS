@@ -20,7 +20,7 @@ struct AOMWorkspaceBackground: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.colorScheme) private var colorScheme
-    @AppStorage(AOMTranslucency.defaultsKey) private var translucent = false
+    @AppStorage(AOMTranslucency.defaultsKey) private var translucent = AOMTranslucency.defaultOn
 
     /// 6.5 (Raycast's window): the desktop seen through the window, a soft
     /// accent light from the top corner; the pages lay their canvas tint on

@@ -17,6 +17,8 @@ import Combine
 enum PaletteAIProvider: String, CaseIterable, Identifiable {
     // 7.0: kept as the agents beside the native models (AOMAIProvider).
     case claude, codex
+    /// 7.2.2: DeepSeek Harness's headless profile (AOMDeepSeekHarness).
+    case dsh
 
     var id: String { rawValue }
 
@@ -24,6 +26,7 @@ enum PaletteAIProvider: String, CaseIterable, Identifiable {
         switch self {
         case .claude: return "Claude Code"
         case .codex: return "Codex"
+        case .dsh: return "DeepSeek Harness"
         }
     }
 
@@ -31,6 +34,7 @@ enum PaletteAIProvider: String, CaseIterable, Identifiable {
         switch self {
         case .claude: return "sparkle"
         case .codex: return "chevron.left.forwardslash.chevron.right"
+        case .dsh: return "water.waves"
         }
     }
 
@@ -47,6 +51,8 @@ enum PaletteAIProvider: String, CaseIterable, Identifiable {
                     "\(home)/.npm-global/bin/codex", "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
                     "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
                     "/Applications/Codex.app/Contents/Resources/codex"]
+        case .dsh:
+            return [AOMDeepSeekHarness.executable?.path ?? "/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness"]
         }
     }
 
@@ -66,6 +72,9 @@ enum PaletteAIProvider: String, CaseIterable, Identifiable {
             var args = ["exec", "--json", "--skip-git-repo-check", "--sandbox", "read-only"]
             if model != "default" { args += ["--model", model] }
             return args + ["--", prompt]
+        case .dsh:
+            return AOMDeepSeekHarness.arguments(script: AOMDeepSeekHarness.binScript(in: AOMDeepSeekHarness.runtimeFolder()),
+                                                prompt: prompt, session: session)
         }
     }
 
@@ -74,6 +83,9 @@ enum PaletteAIProvider: String, CaseIterable, Identifiable {
         let quoted = { (text: String) in "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'" }
         let exe = quoted(executable ?? (self == .claude ? "claude" : "codex"))
         switch self {
+        case .dsh:
+            // There is no interactive dsh command; ⌘J opens the app instead.
+            return "open -b \(AOMDeepSeekHarness.bundleID)"
         case .claude:
             if let session { return "\(exe) --resume \(quoted(session))" }
             return prompt.map { "\(exe) \(quoted($0))" } ?? exe
@@ -92,6 +104,8 @@ enum PaletteAIEvent: Equatable {
     case message(String)
     case done(String?)
     case failure(String)
+    /// 7.2.2: what the agent is doing now (a command, a file), shown under the answer.
+    case activity(String)
 
     static func parse(_ line: String, provider: PaletteAIProvider) -> [PaletteAIEvent] {
         guard let data = line.data(using: .utf8),
@@ -116,6 +130,25 @@ enum PaletteAIEvent: Equatable {
                     events.append(.done(object["result"] as? String))
                 }
                 return events
+            default:
+                return []
+            }
+        case .dsh:
+            switch type {
+            case "session":
+                return (object["sessionId"] as? String).map { [.session($0)] } ?? []
+            case "text":
+                // One whole step's text at a time; steps are joined by a blank line.
+                return (object["text"] as? String).map { $0.isEmpty ? [] : [.message($0)] } ?? []
+            case "tool_call":
+                let tool = object["tool"] as? String ?? "tool"
+                let input = object["input"] as? [String: Any] ?? [:]
+                let detail = (input["command"] ?? input["file_path"] ?? input["path"] ?? input["pattern"] ?? input["query"]) as? String
+                return [.activity(detail.map { "\(tool): \(String($0.prefix(80)))" } ?? tool)]
+            case "final":
+                return [.done(object["text"] as? String)]
+            case "error":
+                return [.failure((object["message"] as? String) ?? "DeepSeek Harness reported an error.")]
             default:
                 return []
             }
@@ -177,11 +210,12 @@ final class PaletteAIChat: ObservableObject {
     @Published private(set) var chatID = UUID()
 
     /// 6.9 API kept for the agent paths and the tests.
-    var provider: PaletteAIProvider { model.provider == .codex ? .codex : .claude }
+    var provider: PaletteAIProvider { model.provider == .codex ? .codex : model.provider == .deepSeekHarness ? .dsh : .claude }
     var agent: PaletteAIProvider? {
         switch model.provider {
         case .claudeCode: return .claude
         case .codex: return .codex
+        case .deepSeekHarness: return .dsh
         default: return nil
         }
     }
@@ -292,10 +326,26 @@ final class PaletteAIChat: ObservableObject {
                 let sent = session == nil ? Self.withHistory(question, messages.dropLast(2)) : question
                 agentSession.start(executable: executable, model: ref.model, system: systemPrompt, resume: session)
                 agentSession.send(sent)
+            } else if agent == .dsh {
+                // dsh keeps its own session; a new one gets the earlier turns.
+                let session = sessions[.dsh]
+                let sent = session == nil ? Self.withHistory(question, messages.dropLast(2)) : question
+                setNotice("Starting DeepSeek Harness…")
+                Task { [weak self] in
+                    do {
+                        _ = try await Task.detached(priority: .userInitiated) { try AOMDeepSeekHarness.prepareRuntime() }.value
+                        guard let self, self.isRunning else { return }
+                        self.run(executable, arguments: agent.arguments(prompt: sent, session: session, model: ref.model), agent: .dsh)
+                    } catch {
+                        guard let self else { return }
+                        self.replaceLast(with: Message(role: .error, text: (error as? LocalizedError)?.errorDescription ?? error.localizedDescription))
+                        self.isRunning = false
+                    }
+                }
             } else {
                 // Codex has no warm session here: earlier turns go with the question.
                 let sent = Self.withHistory(question, messages.dropLast(2))
-                run(executable, arguments: agent.arguments(prompt: sent, session: nil, model: ref.model))
+                run(executable, arguments: agent.arguments(prompt: sent, session: nil, model: ref.model), agent: .codex)
             }
             return
         }
@@ -424,7 +474,7 @@ final class PaletteAIChat: ObservableObject {
     private func applyAgent(_ events: [PaletteAIEvent]) {
         for event in events {
             switch event {
-            case .session(let id): sessions[.claude] = id
+            case .session(let id): sessions[agent ?? .claude] = id
             case .delta(let text): buffer(text)
             case .message(let text): flush(); appendToAnswer(messages.last?.text.isEmpty == false ? "\n\n" + text : text)
             case .done(let text):
@@ -444,6 +494,8 @@ final class PaletteAIChat: ObservableObject {
                 flush()
                 replaceLast(with: Message(role: .error, text: text))
                 if agent == .claude { isRunning = false }
+            case .activity(let text):
+                setNotice(text)
             }
         }
     }
@@ -458,17 +510,17 @@ final class PaletteAIChat: ObservableObject {
         }
     }
 
-    private func run(_ executable: String, arguments: [String]) {
+    private func run(_ executable: String, arguments: [String], agent provider: PaletteAIProvider) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
         process.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
-        process.environment = PaletteAgentSession.environment
+        process.environment = provider == .dsh ? AOMDeepSeekHarness.environment(PaletteAgentSession.environment)
+            : PaletteAgentSession.environment
         let output = Pipe(), errors = Pipe()
         process.standardOutput = output
         process.standardError = errors
         process.standardInput = FileHandle.nullDevice
-        let provider = PaletteAIProvider.codex
         var buffer = Data()
         output.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let chunk = handle.availableData
@@ -490,7 +542,7 @@ final class PaletteAIChat: ObservableObject {
             errors.fileHandleForReading.readabilityHandler = nil
             let status = finished.terminationStatus
             let stderr = String(decoding: errorText.suffix(2000), as: UTF8.self)
-            DispatchQueue.main.async { MainActor.assumeIsolated { self?.finish(status: status, stderr: stderr) } }
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.finish(status: status, stderr: stderr, title: provider.title) } }
         }
         do {
             try process.run()
@@ -499,19 +551,20 @@ final class PaletteAIChat: ObservableObject {
                 if let process, process.isRunning { process.terminate() }
             }
         } catch {
-            replaceLast(with: Message(role: .error, text: "Couldn't start Codex: \(error.localizedDescription)"))
+            replaceLast(with: Message(role: .error, text: "Couldn't start \(provider.title): \(error.localizedDescription)"))
             isRunning = false
         }
     }
 
-    private func finish(status: Int32, stderr: String) {
+    private func finish(status: Int32, stderr: String, title: String) {
         flush()
         process = nil
         isRunning = false
         lastActivity = Date()
         if let last = messages.last, last.role == .assistant, last.text.isEmpty {
             let reason = stderr.split(separator: "\n").last.map(String.init) ?? "exit \(status)"
-            replaceLast(with: Message(role: .error, text: status == 15 ? "Stopped." : "Codex didn't answer (\(reason))."))
+            let reasonLine = stderr.split(separator: "\n").last { !$0.contains("node_main.cc") }.map(String.init) ?? reason
+            replaceLast(with: Message(role: .error, text: status == 15 ? "Stopped." : "\(title) didn't answer (\(reasonLine))."))
         }
         AOMAIChatHistory.shared.save(self)
     }
@@ -520,6 +573,7 @@ final class PaletteAIChat: ObservableObject {
     /// for each permission itself. A .command file needs no Automation access.
     /// With a native model the question starts a new Claude Code session.
     func continueInTerminal() -> Bool {
+        if agent == .dsh { return AOMDeepSeekHarness.openApp() }
         let cli = agent ?? .claude
         let session = agent != nil ? sessions[cli] : nil
         let command = cli.terminalCommand(session: session, prompt: session == nil ? lastQuestion : nil, model: model.model)

@@ -300,9 +300,18 @@ struct FolderRulesInlinePreview: View {
 struct FolderRulesPreviewRow: View {
     let item: FolderRulePreviewItem
     var showsDivider = true
+    /// 7.2.2: nil hides the checkbox (items that wouldn't run).
+    var picked: Bool? = nil
+    var onPick: () -> Void = {}
 
     var body: some View {
         HStack(alignment: .top, spacing: AOMSpace.x2) {
+            if let picked {
+                Toggle("Include “\(item.info.name)”", isOn: Binding(get: { picked }, set: { _ in onPick() }))
+                    .toggleStyle(.checkbox)
+                    .labelsHidden()
+                    .padding(.top, 2)
+            }
             Image(nsImage: NSWorkspace.shared.icon(forFile: item.info.url.path))
                 .resizable()
                 .interpolation(.high)

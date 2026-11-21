@@ -84,6 +84,17 @@ enum AOMAILocalTools {
 
     // MARK: Running a call
 
+    /// "Searching records for “uclass”…" while a call runs.
+    static func describe(_ name: String, arguments: [String: Any]) -> String {
+        switch name {
+        case "search_records": return "Searching records for “\(arguments["query"] as? String ?? "")”…"
+        case "read_file": return "Reading \(arguments["path"] as? String ?? "a file")…"
+        case "list_directory": return "Listing \(arguments["path"] as? String ?? "a folder")…"
+        case "find_files": return "Finding files named “\(arguments["name"] as? String ?? "")”…"
+        default: return "Running \(name)…"
+        }
+    }
+
     /// Runs one call off the main thread (each tool has its own time limit).
     static func run(_ name: String, arguments: [String: Any], home: URL = FileManager.default.homeDirectoryForCurrentUser) async -> AOMAIToolResult {
         await Task.detached(priority: .userInitiated) {
@@ -160,52 +171,66 @@ enum AOMAILocalTools {
         }
     }
 
-    /// Lines that contain every word of `query`, newest files first, at most
-    /// three per file and 30 in all, within about four seconds. With no such
-    /// line, lines with the most words.
-    static func search(_ query: String, sources: [Source], home: URL, budget: TimeInterval = 4) -> AOMAIToolResult {
+    /// Lines that contain every word of `query`, from the newest files of all
+    /// sources first (Codex audit B13), at most three per file and 30 in
+    /// all, within `budget` seconds. With no such line, lines with the most
+    /// words. 7.2.2: files are scanned as bytes (memmem on an ASCII-lowered
+    /// copy) — 7.2.1 split 50 MB Claude logs into Swift strings and compared
+    /// case-insensitively line by line, so one search could run for minutes
+    /// and Ask AI sat on "Thinking…".
+    static func search(_ query: String, sources: [Source], home: URL, budget: TimeInterval = 3) -> AOMAIToolResult {
         let terms = query.lowercased().split(whereSeparator: { $0.isWhitespace }).map(String.init).filter { $0.count >= 2 }
         guard !terms.isEmpty else {
             return AOMAIToolResult(text: "Give search_records a word of at least two letters.", summary: "Empty search", isError: true)
         }
         let deadline = Date().addingTimeInterval(budget)
+        var candidates: [(source: Source, url: URL, date: Date, size: Int)] = []
+        for source in sources {
+            for url in files(of: source, home: home) {
+                let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+                candidates.append((source, url, values?.contentModificationDate ?? .distantPast, values?.fileSize ?? 0))
+            }
+        }
+        candidates.sort { $0.date > $1.date }
+        let forms = terms.map(Self.forms(of:))
         var hits: [Hit] = []
         var partial: [(hit: Hit, matched: Int)] = []
         var scanned = 0
-        outer: for source in sources {
-            for url in files(of: source, home: home) {
-                if Date() > deadline || hits.count >= 30 { break outer }
-                guard let data = try? Data(contentsOf: url, options: .mappedIfSafe), data.count < 60_000_000 else { continue }
-                scanned += 1
-                let text = String(decoding: data, as: UTF8.self)
-                let date = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
-                let found = matches(in: text, terms: terms, limit: 3)
-                for match in found.full {
-                    hits.append(Hit(source: source, path: tilde(url.path, home: home), line: match.line, snippet: match.snippet, date: date))
-                }
-                if hits.isEmpty, partial.count < 60 {
-                    for match in found.partial {
-                        partial.append((Hit(source: source, path: tilde(url.path, home: home), line: match.line, snippet: match.snippet, date: date), match.matched))
-                    }
+        for candidate in candidates {
+            if Date() > deadline || hits.count >= 30 { break }
+            guard candidate.size < 150_000_000,
+                  let data = try? Data(contentsOf: candidate.url, options: .alwaysMapped) else { continue }
+            scanned += 1
+            let found = scan(data, forms: forms, limit: 3, deadline: deadline)
+            let path = tilde(candidate.url.path, home: home)
+            for match in found.full {
+                hits.append(Hit(source: candidate.source, path: path, line: match.line, snippet: match.snippet, date: candidate.date))
+            }
+            if hits.isEmpty, partial.count < 60 {
+                for match in found.partial {
+                    partial.append((Hit(source: candidate.source, path: path, line: match.line, snippet: match.snippet, date: candidate.date),
+                                    match.matched))
                 }
             }
         }
         let shown: [Hit]
         var header: String
         if !hits.isEmpty {
-            shown = hits
-            header = "\(hits.count) line(s) containing every word of “\(query)” (\(scanned) files read):"
+            shown = Array(hits.prefix(30))
+            header = "\(shown.count) line(s) containing every word of “\(query)” (\(scanned) of \(candidates.count) files read, newest first):"
         } else {
             shown = partial.sorted { $0.matched > $1.matched }.prefix(15).map(\.hit)
-            header = shown.isEmpty ? "Nothing in \(scanned) files contains “\(query)”. Try other or fewer words."
-                : "No line has every word of “\(query)”; closest \(shown.count) of \(scanned) files:"
+            header = shown.isEmpty ? "Nothing in \(scanned) of \(candidates.count) files contains “\(query)”. Try other or fewer words."
+                : "No line has every word of “\(query)”; closest \(shown.count) in \(scanned) files:"
         }
         let body = shown.map { hit in
             "[\(hit.source.rawValue)] \(hit.path):\(hit.line) (\(hit.date.formatted(date: .abbreviated, time: .omitted)))\n    \(hit.snippet)"
         }.joined(separator: "\n")
-        if Date() > deadline { header += " (stopped at the time limit; narrow the sources for more)" }
+        if scanned < candidates.count, hits.count < 30 {
+            header += " Stopped at the \(Int(budget)) s limit; pass fewer sources to read more."
+        }
         return AOMAIToolResult(text: header + (body.isEmpty ? "" : "\n" + body),
-                               summary: "Searched records for “\(query)” · \(hits.isEmpty ? shown.count : hits.count) match\(shown.count == 1 ? "" : "es")")
+                               summary: "Searched records for “\(query)” · \(shown.count) match\(shown.count == 1 ? "" : "es")")
     }
 
     struct Match: Equatable {
@@ -214,54 +239,154 @@ enum AOMAILocalTools {
         var matched: Int
     }
 
-    /// Pure: lines of `text` with every term (case-insensitive), and lines
-    /// with some of them; snippets are cut around the first term, JSON
-    /// escapes undone and secrets hidden. A file without any term is
-    /// skipped after one search.
-    static func matches(in text: String, terms: [String], limit: Int) -> (full: [Match], partial: [Match]) {
-        guard terms.contains(where: { text.range(of: $0, options: .caseInsensitive) != nil }) else { return ([], []) }
-        var full: [Match] = [], partial: [Match] = []
-        var number = 0
-        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
-            number += 1
-            guard full.count < limit else { break }
-            var matched = 0
-            var first: String.Index?
-            for term in terms {
-                guard let range = line.range(of: term, options: .caseInsensitive) else { continue }
-                matched += 1
-                if first == nil || range.lowerBound < first! { first = range.lowerBound }
+    /// The bytes a term is looked for as: its UTF-8 with ASCII lowered and,
+    /// for non-ASCII text, the JSON `\uXXXX` form Codex logs store Korean in
+    /// (Codex audit B12: "검색" escaped was never found).
+    static func forms(of term: String) -> [[UInt8]] {
+        let lowered = term.lowercased()
+        var result = [Array(lowered.utf8)]
+        if lowered.unicodeScalars.contains(where: { !$0.isASCII }) {
+            var escaped = ""
+            for unit in lowered.utf16 {
+                if unit < 0x80, let scalar = Unicode.Scalar(unit) { escaped.unicodeScalars.append(scalar) } else { escaped += String(format: "\\u%04x", unit) }
             }
-            guard matched > 0, let first else { continue }
-            let match = Match(line: number, snippet: snippet(String(line), around: line.distance(from: line.startIndex, to: first)),
-                              matched: matched)
-            if matched == terms.count { full.append(match) } else if partial.count < limit { partial.append(match) }
+            result.append(Array(escaped.utf8))
+        }
+        return result
+    }
+
+    /// Pure (tests): `matches` over a string.
+    static func matches(in text: String, terms: [String], limit: Int) -> (full: [Match], partial: [Match]) {
+        scan(Data(text.utf8), forms: terms.map { forms(of: $0.lowercased()) }, limit: limit, deadline: .distantFuture)
+    }
+
+    /// Lines of `data` with every term (any of its forms), and lines with
+    /// some; the longest term leads and the rest are checked on its lines.
+    static func scan(_ data: Data, forms: [[[UInt8]]], limit: Int, deadline: Date) -> (full: [Match], partial: [Match]) {
+        guard !forms.isEmpty, !data.isEmpty else { return ([], []) }
+        let lowered = lowercasedASCII(data)
+        let lead = forms.indices.max { (forms[$0].first?.count ?? 0) < (forms[$1].first?.count ?? 0) } ?? 0
+        var full: [Match] = [], partial: [Match] = []
+        lowered.withUnsafeBufferPointer { hay in
+            data.withUnsafeBytes { (original: UnsafeRawBufferPointer) in
+                guard let base = hay.baseAddress else { return }
+                let count = hay.count
+                func find(_ needle: [UInt8], from: Int, to: Int) -> Int? {
+                    guard !needle.isEmpty, to - from >= needle.count else { return nil }
+                    return needle.withUnsafeBufferPointer { pointer -> Int? in
+                        guard let found = memmem(base + from, to - from, pointer.baseAddress!, pointer.count) else { return nil }
+                        return UnsafeRawPointer(found) - UnsafeRawPointer(base)
+                    }
+                }
+                // A file with none of the lead term's forms costs one pass.
+                // With no line holding every term, the other terms get a
+                // pass each for the closest lines (each line counted once).
+                var seen = Set<Int>()
+                func pass(_ leading: Int) {
+                    var position = 0
+                    var lineNumber = 1
+                    var counted = 0
+                    var checks = 0
+                    while full.count < limit, position < count {
+                        checks += 1
+                        if checks % 64 == 0, Date() > deadline { break }
+                        var hit: Int?
+                        for form in forms[leading] {
+                            if let index = find(form, from: position, to: count), index < (hit ?? .max) { hit = index }
+                        }
+                        guard let hit else { break }
+                        var start = hit
+                        while start > 0, base[start - 1] != 10 { start -= 1 }
+                        let end = memchr(base + hit, 10, count - hit).map { UnsafeRawPointer($0) - UnsafeRawPointer(base) } ?? count
+                        var cursor = counted
+                        while cursor < start, let newline = memchr(base + cursor, 10, start - cursor) {
+                            lineNumber += 1
+                            cursor = (UnsafeRawPointer(newline) - UnsafeRawPointer(base)) + 1
+                        }
+                        counted = start
+                        if seen.insert(start).inserted {
+                            let matched = forms.filter { term in term.contains { find($0, from: start, to: end) != nil } }.count
+                            let match = Match(line: lineNumber, snippet: snippet(original, from: start, to: end, hit: hit), matched: matched)
+                            if matched == forms.count { full.append(match) } else if partial.count < limit { partial.append(match) }
+                        }
+                        if leading != lead, partial.count >= limit { break }
+                        position = end + 1
+                    }
+                }
+                pass(lead)
+                if full.isEmpty {
+                    for index in forms.indices where index != lead && partial.count < limit && Date() <= deadline { pass(index) }
+                }
+            }
         }
         return (full, partial)
+    }
+
+    /// Pure: `data` with A–Z lowered, eight bytes at a time (bytes of
+    /// UTF-8 sequences are left alone). Three times faster than a byte loop:
+    /// 271 MB of Claude logs in 0.3 s at -O.
+    static func lowercasedASCII(_ data: Data) -> [UInt8] {
+        var lowered = [UInt8](repeating: 0, count: data.count)
+        data.withUnsafeBytes { (source: UnsafeRawBufferPointer) in
+            lowered.withUnsafeMutableBytes { target in
+                guard let from = source.baseAddress, let to = target.baseAddress else { return }
+                let words = source.count / 8
+                for index in 0..<words {
+                    let word = from.loadUnaligned(fromByteOffset: index * 8, as: UInt64.self)
+                    let low = word & 0x7F7F_7F7F_7F7F_7F7F
+                    let atLeastA = low &+ 0x3F3F_3F3F_3F3F_3F3F // bit 7 set when ≥ "A"
+                    let pastZ = low &+ 0x2525_2525_2525_2525    // bit 7 set when > "Z"
+                    let upper = atLeastA & ~pastZ & ~word & 0x8080_8080_8080_8080
+                    to.storeBytes(of: word | (upper >> 2), toByteOffset: index * 8, as: UInt64.self)
+                }
+                for index in (words * 8)..<source.count {
+                    let byte = source[index]
+                    target[index] = byte &- 65 < 26 ? byte &+ 32 : byte
+                }
+            }
+        }
+        return lowered
+    }
+
+    /// ~600 bytes around `hit` within its line, cut on character
+    /// boundaries, then made readable.
+    private static func snippet(_ bytes: UnsafeRawBufferPointer, from lineStart: Int, to lineEnd: Int, hit: Int) -> String {
+        var start = max(lineStart, hit - 300), end = min(lineEnd, hit + 300)
+        while start > lineStart, bytes[start] & 0xC0 == 0x80 { start -= 1 }
+        while end < lineEnd, end < bytes.count, bytes[end] & 0xC0 == 0x80 { end += 1 }
+        let text = String(decoding: UnsafeRawBufferPointer(rebasing: bytes[start..<end]), as: UTF8.self)
+        let cleaned = readable(text)
+        let short = cleaned.count > 260 ? String(cleaned.prefix(260)) + "…" : cleaned
+        return (start > lineStart ? "…" : "") + short + (end < lineEnd && cleaned.count <= 260 ? "…" : "")
+    }
+
+    /// JSON escapes undone, whitespace collapsed, secrets hidden.
+    static func readable(_ raw: String) -> String {
+        var text = raw.replacingOccurrences(of: "\\n", with: " ").replacingOccurrences(of: "\\t", with: " ")
+            .replacingOccurrences(of: "\\\"", with: "\"").replacingOccurrences(of: "\\/", with: "/")
+        text = unescapeUnicode(text)
+        text = text.replacingOccurrences(of: "\n", with: " ")
+        text = text.replacingOccurrences(of: #"\s{2,}"#, with: " ", options: .regularExpression)
+        return redact(text.trimmingCharacters(in: .whitespaces))
     }
 
     /// Pure: ~240 characters around `offset`, JSON escapes undone, one line, secrets hidden.
     static func snippet(_ line: String, around offset: Int, radius: Int = 120) -> String {
         let characters = Array(line)
         let start = max(0, offset - radius), end = min(characters.count, offset + radius)
-        var text = String(characters[start..<end])
-        text = text.replacingOccurrences(of: "\\n", with: " ").replacingOccurrences(of: "\\t", with: " ")
-            .replacingOccurrences(of: "\\\"", with: "\"").replacingOccurrences(of: "\\/", with: "/")
-        text = unescapeUnicode(text)
-        text = text.replacingOccurrences(of: "\n", with: " ")
-        text = text.replacingOccurrences(of: #"\s{2,}"#, with: " ", options: .regularExpression)
-        return (start > 0 ? "…" : "") + redact(text.trimmingCharacters(in: .whitespaces)) + (end < characters.count ? "…" : "")
+        return (start > 0 ? "…" : "") + readable(String(characters[start..<end])) + (end < characters.count ? "…" : "")
     }
 
-    /// "오라" → "오라" (Codex logs escape Korean).
+    /// Codex logs escape Korean as \uXXXX; this turns it back into text.
     static func unescapeUnicode(_ text: String) -> String {
         guard text.contains("\\u") else { return text }
-        let pattern = try? NSRegularExpression(pattern: #"\\u([0-9a-fA-F]{4})"#)
+        guard let pattern = try? NSRegularExpression(pattern: #"(?:\\u[0-9a-fA-F]{4})+"#) else { return text }
         var result = text
-        for match in (pattern?.matches(in: text, range: NSRange(text.startIndex..., in: text)) ?? []).reversed() {
-            guard let range = Range(match.range, in: result), let hexRange = Range(match.range(at: 1), in: text),
-                  let value = UInt32(text[hexRange], radix: 16), let scalar = Unicode.Scalar(value) else { continue }
-            result.replaceSubrange(range, with: String(Character(scalar)))
+        // Runs of escapes decode together, so surrogate pairs (emoji) come back whole.
+        for match in pattern.matches(in: text, range: NSRange(text.startIndex..., in: text)).reversed() {
+            guard let range = Range(match.range, in: result) else { continue }
+            let units = result[range].split(separator: "u").compactMap { UInt16($0.trimmingCharacters(in: CharacterSet(charactersIn: "\\")), radix: 16) }
+            result.replaceSubrange(range, with: String(decoding: units, as: UTF16.self))
         }
         return result
     }
@@ -329,6 +454,11 @@ enum AOMAILocalTools {
         if let refusal = refusal(for: full, home: home) {
             return AOMAIToolResult(text: refusal, summary: "Refused \(tilde(full, home: home))", isError: true)
         }
+        let size = (try? FileManager.default.attributesOfItem(atPath: full)[.size] as? Int) ?? 0
+        guard size < 8_000_000 else {
+            return AOMAIToolResult(text: "\(tilde(full, home: home)) is over 8 MB; read a smaller file or search it with search_records.",
+                                   summary: "Too large: \(tilde(full, home: home))", isError: true)
+        }
         guard let data = FileManager.default.contents(atPath: full) else {
             return AOMAIToolResult(text: "\(tilde(full, home: home)) doesn't exist or can't be read.", summary: "Couldn't read \(tilde(full, home: home))", isError: true)
         }
@@ -383,18 +513,30 @@ enum AOMAILocalTools {
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
+        // Read while mdfind runs: a full pipe would otherwise stall it (Codex audit B20).
+        let collected = OutputBox()
+        let reading = DispatchGroup()
+        reading.enter()
+        DispatchQueue.global(qos: .userInitiated).async {
+            collected.data = pipe.fileHandleForReading.readDataToEndOfFile()
+            reading.leave()
+        }
         do { try process.run() } catch {
+            try? pipe.fileHandleForWriting.close()
             return AOMAIToolResult(text: "Spotlight didn't run.", summary: "Spotlight didn't run", isError: true)
         }
-        let deadline = Date().addingTimeInterval(5)
-        while process.isRunning, Date() < deadline { Thread.sleep(forTimeInterval: 0.05) }
-        if process.isRunning { process.terminate() }
-        let paths = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-            .split(separator: "\n").map(String.init)
-        let dated = paths.prefix(400).map { ($0, (try? URL(fileURLWithPath: $0).resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast) }
+        let timedOut = reading.wait(timeout: .now() + 5) == .timedOut
+        if timedOut { process.terminate(); _ = reading.wait(timeout: .now() + 1) }
+        let paths = String(decoding: collected.data, as: UTF8.self).split(separator: "\n").map(String.init)
+        let dated = paths.prefix(5_000).map { ($0, (try? URL(fileURLWithPath: $0).resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast) }
             .sorted { $0.1 > $1.1 }.prefix(40)
         let body = dated.map { "\(tilde($0.0, home: home))\t\($0.1.formatted(date: .abbreviated, time: .omitted))" }.joined(separator: "\n")
         return AOMAIToolResult(text: paths.isEmpty ? "Spotlight found nothing named like “\(needle)”." : "\(paths.count) match(es), newest first:\n" + body,
                                summary: "Found files named “\(needle)” · \(paths.count)")
     }
+}
+
+/// The bytes a background read collected.
+final class OutputBox: @unchecked Sendable {
+    var data = Data()
 }

@@ -99,12 +99,11 @@ final class SystemTools63CatalogTests: XCTestCase {
         XCTAssertEqual(SystemToolsModel.storedTools(["restart", "darkMode", "fontCaches"]), [.darkMode])
     }
 
-    func testShowKeystrokesIsAQuickToggle() {
-        let info = SystemToolCatalog.info(.keystrokes)
-        XCTAssertEqual(info.group, .toggles)
-        XCTAssertEqual(info.kind, .toggle)
-        XCTAssertTrue(info.matches("keycastr"))
-        XCTAssertTrue(info.matches("presentation"))
+    /// 7.2.2: the tile is gone (the user's cleanup); recordings and
+    /// aom://show-keystrokes still show keystrokes.
+    func testShowKeystrokesTileWasRemoved() {
+        XCTAssertNil(SystemToolID(rawValue: "keystrokes"))
+        XCTAssertTrue(SystemToolMigration.removed.contains("keystrokes"))
     }
 
     func testPermissionHintNamesTheStaleEntryTrap() {

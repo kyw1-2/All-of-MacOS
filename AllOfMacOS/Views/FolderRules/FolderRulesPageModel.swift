@@ -20,8 +20,10 @@ final class FolderRulesPageModel: ObservableObject {
     @Published var draft: FolderRule?
     /// The engine's version of `draft` when it was loaded.
     private(set) var draftBase: FolderRule?
-    @Published var preview: FolderRulePreview?
+    @Published var preview: FolderRulePreview? { didSet { prunePicked() } }
     @Published var previewLoading = false
+    /// 7.2.2 (audit N03): preview items picked for Run Selected, by id.
+    @Published var pickedPreviewItems: Set<String> = []
     /// The preview shown in place before a rule is turned on.
     @Published var turnOnPreview: FolderRulePreview?
     /// The preview in the detail, for windows too narrow for the inspector.
@@ -236,6 +238,35 @@ final class FolderRulesPageModel: ObservableObject {
             preview = result
             previewLoading = false
         }
+    }
+
+    /// The picked items that would still run.
+    var pickedItems: [FolderRulePreviewItem] {
+        (preview?.willRun ?? []).filter { pickedPreviewItems.contains($0.id) }
+    }
+
+    func togglePicked(_ item: FolderRulePreviewItem) {
+        guard item.state == .willRun else { return }
+        if pickedPreviewItems.contains(item.id) { pickedPreviewItems.remove(item.id) } else { pickedPreviewItems.insert(item.id) }
+    }
+
+    func pickAll(_ on: Bool) {
+        pickedPreviewItems = on ? Set((preview?.willRun ?? []).map(\.id)) : []
+    }
+
+    func runPicked() {
+        guard let rule = draft else { return }
+        let items = pickedItems
+        guard !items.isEmpty else { return }
+        engine.runSelected(rule, items: items)
+        pickedPreviewItems = []
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.refreshPreview() }
+    }
+
+    private func prunePicked() {
+        let live = Set((preview?.willRun ?? []).map(\.id))
+        let kept = pickedPreviewItems.intersection(live)
+        if kept != pickedPreviewItems { pickedPreviewItems = kept }
     }
 
     func test(_ file: URL) {

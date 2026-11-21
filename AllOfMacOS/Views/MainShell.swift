@@ -203,6 +203,9 @@ struct AOMSidebar: View, Equatable {
     }
 
     @ObservedObject private var layout = AOMWorkspaceLayout.shared
+    /// 7.2.2 (Codex audit R09): Activity leaves the sidebar unless kept there;
+    /// ⌘8, Workspace's activity link and the launcher still open it.
+    @AppStorage("AOMSidebarShowsActivity") private var showsActivity = false
     @Environment(\.undoManager) private var undoManager
     @Environment(\.openSettings) private var openSettings
 
@@ -211,7 +214,9 @@ struct AOMSidebar: View, Equatable {
             navigationItem(.home)
             ForEach(AOMFeatureGroup.allCases) { group in
                 Section(group.rawValue) {
-                    ForEach(group.tabs) { tab in navigationItem(tab) }
+                    ForEach(group.tabs.filter { $0 != .insights || showsActivity || selected == .insights }) { tab in
+                        navigationItem(tab)
+                    }
                 }
             }
         }
@@ -286,6 +291,8 @@ struct AOMSidebar: View, Equatable {
                status.isOn != nil, let setOn = status.setOn {
                 Toggle(module.title, isOn: Binding(get: { status.isOn ?? false }, set: { setOn($0) }))
             }
+        case .insights:
+            Toggle("Keep in Sidebar", isOn: $showsActivity)
         default:
             EmptyView()
         }

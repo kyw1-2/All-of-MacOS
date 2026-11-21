@@ -379,28 +379,3 @@ private struct AOMMenuBarTile: View {
     }
 }
 
-/// One pinned action: its icon over its name (Control Center's buttons).
-private struct AOMMenuBarQuickButton: View {
-    let kind: WorkspaceQuickActionKind
-    let run: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: run) {
-            VStack(spacing: 3) {
-                AOMAppIcon(AOMIdentity(symbol: kind.symbol, color: kind.module.hue), size: 26)
-                Text(kind.title).font(.system(size: 10, weight: .medium)).foregroundStyle(AOMColor.textSecondary)
-                    .lineLimit(1).minimumScaleFactor(0.8)
-            }
-                .frame(maxWidth: .infinity)
-                .frame(height: 52)
-                .background(hovering ? AOMColor.rowHover : Color.clear,
-                            in: RoundedRectangle(cornerRadius: AOMRadius.well + 2, style: .continuous))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .help(kind.shortcut.map { "\(kind.title) (\($0))" } ?? kind.title)
-        .accessibilityLabel(kind.title)
-    }
-}

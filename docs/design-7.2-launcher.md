@@ -70,3 +70,76 @@ Two reports right after 7.2 was installed:
      `Runbook-Wiki-Sync.md` and `~/.ssh/config`, and answered with `ssh oracle …` and the sources (`AOM721AIToolTests` covers
      the pure parts and starts a stand-in router).
    - Claude Code and Codex (the CLI agents) already read files in their read-only modes; Apple Intelligence has no tools yet.
+
+## 7.2.2 — the user's cleanup, DeepSeek Harness, and the 7.2.1 audit
+
+Inputs: the user's requests after 7.2.1 ("딥시크하네스도 저기다가 연결해줘", the System Tools items they asked to remove,
+"ai요청보니까 끊기고 난리", "메인윈도우에서 글래스효과도 다시"), their answers to the remove/group questions, and the
+integrated audit `AOM-7.2.1-통합감사보고서-2026-11-21.pdf` (Claude, 2026-11-21: bugs B01–B26, efficiency E01–E09,
+removals R01–R10, additions N01–N09).
+
+### Ask AI
+
+- **DeepSeek Harness** (`AOMDeepSeekHarness`, `PaletteAIProvider.dsh`). The desktop app (`com.deepseek.dsh-desktop`)
+  has no command on the PATH; its `dsh` runtime lives in `app.asar`, and its launcher has a headless profile:
+  `dsh --profile headless --json [--session-id id] -- "task"` prints newline-delimited `session`, `tool_call`, `text`,
+  `final` and `error` events. The app's Electron binary runs Node with `ELECTRON_RUN_AS_NODE=1`. Node can't import ES
+  modules from inside an asar (every plugin failed), so the `dsh` subtree is copied once per app version to
+  `~/Library/Caches/AllOfMacOS/DeepSeekHarness/<version>` (header: pickle, data at 8 + header size; links are relative to
+  the archive root). `DSH_PERMISSION_MODE=read-only`; tool calls show under the answer; ⌘J opens the app.
+- **Stalls.** `search_records` read Claude logs (360 MB) as Swift strings and matched line by line. It is now a byte
+  scan: an A–Z lowering eight bytes at a time (271 MB in 0.29 s at -O, against 0.91 s for a byte loop, same 174 hits),
+  `memmem` for the longest word, the others checked on its line. With no full line, the other words get a pass each for
+  the closest lines. Newest files first across sources (B13), `\uXXXX` forms for Korean (B12), 3 s budget, six tool
+  rounds, a progress line per step. `AOMLocalProxy` counts as healthy only on 200 from both `/health` and `/` (B23).
+
+### Removed and grouped (asked one by one)
+
+| Asked | Answer | Done |
+|---|---|---|
+| Force Quit · Quit All | delete | gone; stored ids become Kill Apps |
+| Ping · Ports · Renew DHCP | delete | gone (Network Info stays) |
+| Time Machine · Local Snapshots | delete | gone |
+| Lock Keyboard · Show Keystrokes tile (and Metal HUD) | delete | gone; recordings and `aom://show-keystrokes` keep keystrokes |
+| Finder display (5), Dock (3), screenshot defaults (3), repair (2) | group | one tile each with a menu of every option and its state; search still finds each option |
+| Statistics tab, Large Type | demote | Statistics hides from the sidebar unless kept; Large Type is last in Send To |
+| Home folder collapse | not chosen | unchanged |
+
+R01 (seven unused views, 489 lines) and R03 (Test HUD menu item debug-only) went in without a question; E09 (no helper
+process on the slow refresh) too.
+
+### Added (N01–N03, chosen by the user)
+
+- **N01 Batch Rename** (`BatchRename`): a sheet with presets, tokens and every new name before anything moves; any
+  problem (duplicate, existing file, empty, `/` or `:`, too long) blocks the set; case-only renames go through a
+  temporary name; a failed move puts the earlier ones back (B02); Undo in the toast. `{n}` without text to find now
+  numbers the files (B07).
+- **N02 Compress PDF**: *Keep Text* (`PDFDocumentWriteOption.saveImagesAsJPEGOption` + `optimizeImagesForScreenOption`,
+  macOS 13+) and *Pages as Images* (now 150 dpi, B04) are both made in a temporary folder and shown with sizes; the
+  saved one is "Name (compressed).pdf", then "(compressed 2)", never over a file (B03). Merge names unreadable or
+  locked PDFs (B05).
+- **N03 Folder Rules**: preview items that would run get checkboxes, Select All and Run on N Selected
+  (`FolderRulesEngine.runSelected`). The click is the approval; each item is re-read and must have the same volume and
+  inode as in the preview (`FolderRulesRunner.isSameItem`) and still match, else it is left alone and counted.
+
+### Audit bugs fixed here
+
+B02, B03, B04, B05, B07 (above), B11 (a script's password argument is typed into a secure field and never shown in the
+row title), B12, B13, B23, and B24: `HIDKeyMapping.plan` remembers the pairs AOM's own displaced (Caps Lock → Escape
+replaced by the Hyper key's Caps Lock → F18) and puts them back when AOM lets the key go, but only while the key still
+holds AOM's pair.
+
+Not done in 7.2.2 (a later pass): B01, B06, B08, B09, B10 (P1/P2 outside launcher and AI), B14–B22, B25–B26, E01–E08,
+N04–N09.
+
+### Verification
+
+- `AOM722Tests` (16): DeepSeek Harness arguments, environment, events and asar extraction; byte scan, escaped Korean
+  and the lowering against a byte loop; removed and grouped tools; rename plan, problems, rollback and Undo; both PDF
+  compressions (text kept / not), free names, merge reporting; picked-item identity and the run message; B24's plan and
+  give-back. `AOM721AIToolTests` updated for the closest-lines pass. Full suite: 390 tests, 0 failures, 17 skipped.
+- Real records: the debug build read 4 of 289 files in the 3 s budget (unoptimised byte loop), which is why the word
+  lowering went in; the release core reads 271 MB in 0.3 s.
+- Previews: System Tools without the removed tiles and the sidebar without Statistics. The glass needs the desktop
+  behind the window, which AOM's own snapshot can't show; the code path (no stored setting → on → behind-window
+  material, 62 % page tint) was checked, the look itself only on the installed app.

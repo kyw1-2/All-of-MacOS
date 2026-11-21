@@ -2465,16 +2465,23 @@ struct QuickCommandPalette: View {
                     .accessibilityLabel("Quicklink \(match.link.name)")
             }
             // 7.0: the prompt in launcher ink (the system placeholder is too faint over glass).
-            TextField("", text: $query,
-                      prompt: Text(navigation.current == .ai && !ai.messages.isEmpty ? "Ask a follow-up…"
-                                   : navigation.current?.placeholder ?? "Search apps, commands, menus, files, or calculate…")
-                        .foregroundStyle(AOMCraftColor.inkTertiary))
+            let prompt = Text(navigation.current == .ai && !ai.messages.isEmpty ? "Ask a follow-up…"
+                              : navigation.current?.placeholder ?? "Search apps, commands, menus, files, or calculate…")
+                .foregroundStyle(AOMCraftColor.inkTertiary)
+            Group {
+                // 7.2.2 (audit B11): a script's password argument is typed
+                // into a secure field and never shown.
+                if secureEntry {
+                    SecureField("", text: $query, prompt: prompt).accessibilityLabel("Password")
+                } else {
+                    TextField("", text: $query, prompt: prompt).accessibilityLabel("Search")
+                }
+            }
                 .textFieldStyle(.plain)
                 .foregroundStyle(AOMCraftColor.ink)
                 // Raycast's search line is the largest type in the panel.
                 .font(host == .launcher ? PaletteMetrics.launcherQueryFont : AOMFont.pageStatus.weight(.regular))
                 .focused($isFieldFocused)
-                .accessibilityLabel("Search")
             if recentFiles.isLoading {
                 // Spotlight is still answering (report 04 §5.5).
                 ProgressView().controlSize(.small).scaleEffect(0.8)

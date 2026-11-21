@@ -342,6 +342,58 @@ final class FolderRulesEngine: ObservableObject {
         }
     }
 
+    /// 7.2.2 (audit N03): runs the rule on the preview items the person
+    /// picked — the click is the approval, so items that would ask run too.
+    /// Each item is re-read and re-matched first; one replaced or changed
+    /// since the preview is left alone and counted in the message.
+    func runSelected(_ rule: FolderRule, items: [FolderRulePreviewItem]) {
+        let picked = items.filter { $0.state == .willRun }
+        guard !picked.isEmpty else { return }
+        guard gateIsOpen() else {
+            message = FolderRulesMessage(text: "AOM is paused. Resume it to run the rule.", tone: .warning)
+            return
+        }
+        var config = self.config
+        if let index = config.rules.firstIndex(where: { $0.id == rule.id }) {
+            config.rules[index] = rule
+        } else {
+            config.rules.append(rule)
+        }
+        let requests = picked.map {
+            FolderRuleApprovalRequest(key: FolderRuleMemory.key(rule: rule.id, $0.info), ruleID: rule.id,
+                                      folderID: rule.folderID, info: $0.info)
+        }
+        let keys = Set(requests.map(\.key))
+        for index in approvals.indices.reversed() where approvals[index].ruleID == rule.id {
+            approvals[index].requests.removeAll { keys.contains($0.key) }
+            if approvals[index].requests.isEmpty { approvals.remove(at: index) }
+        }
+        let runner = self.runner
+        let store = self.store
+        jobs += 1
+        refreshStatus()
+        runner.queue.async { [weak self] in
+            let output = runner.runApproved(requests, config: config)
+            try? store.save(memory: runner.memory)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.finishPass(output, wasPass: false)
+                    self.message = Self.selectedRunMessage(ran: output.runs.count, skipped: output.skippedApproved,
+                                                           failed: output.runs.filter(\.outcome.failed).count)
+                }
+            }
+        }
+    }
+
+    /// Pure: the toast after Run Selected.
+    static func selectedRunMessage(ran: Int, skipped: Int, failed: Int) -> FolderRulesMessage {
+        var parts = [ran == 1 ? "Ran on 1 item" : "Ran on \(ran) items"]
+        if failed > 0 { parts.append("\(failed) failed") }
+        if skipped > 0 { parts.append(skipped == 1 ? "1 changed since the preview and was left alone" : "\(skipped) changed since the preview and were left alone") }
+        return FolderRulesMessage(text: parts.joined(separator: " · ") + ".", tone: failed > 0 || skipped > 0 ? .warning : .success)
+    }
+
     /// Skip: the rule leaves those items alone from now on.
     func skip(_ id: UUID) {
         guard let index = approvals.firstIndex(where: { $0.id == id }) else { return }

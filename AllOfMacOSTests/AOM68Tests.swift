@@ -284,7 +284,7 @@ final class AOM610BatteryTests: XCTestCase {
 /// Battery card now cover.
 final class AOM611ToolsTests: XCTestCase {
     func testRetiredToolsLeaveThePageAndStoredListsMoveToKillApps() {
-        let retired: Set<SystemToolID> = [.lockScreen, .sleep, .sleepDisplays, .batteryDetails, .metalHUD, .forceQuit, .quitAll]
+        let retired: Set<SystemToolID> = [.lockScreen, .sleep, .sleepDisplays, .batteryDetails]
         XCTAssertEqual(SystemToolCatalog.retiredIDs, retired)
         XCTAssertTrue(SystemToolCatalog.available.allSatisfy { !retired.contains($0.id) })
         XCTAssertEqual(SystemToolsModel.storedTools(["forceQuit", "lockScreen", "quitAll", "darkMode", "batteryDetails"]),

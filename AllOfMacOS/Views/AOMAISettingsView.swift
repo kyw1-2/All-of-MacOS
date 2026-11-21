@@ -168,6 +168,7 @@ private struct AOMAIProviderSettingsRow: View {
         case .ollama: return ready ? "\(modelCount) local models" : "Not running, or no models fetched"
         case .claudeCode: return PaletteAIProvider.claude.executable.map { "Installed — \($0)" } ?? "Not installed"
         case .codex: return PaletteAIProvider.codex.executable.map { "Installed — \($0)" } ?? "Not installed"
+        case .deepSeekHarness: return AOMDeepSeekHarness.appURL.map { "Installed — \($0.path) · \(AOMDeepSeekHarness.version)" } ?? "Not installed"
         }
     }
 

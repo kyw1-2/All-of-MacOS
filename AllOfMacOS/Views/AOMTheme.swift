@@ -113,7 +113,7 @@ struct AOMCardSurface: ViewModifier {
     @Environment(\.accessibilityShowBorders) private var showBorders
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorScheme) private var colorScheme
-    @AppStorage(AOMTranslucency.defaultsKey) private var translucent = false
+    @AppStorage(AOMTranslucency.defaultsKey) private var translucent = AOMTranslucency.defaultOn
 
     @ViewBuilder
     func body(content: Content) -> some View {
@@ -304,29 +304,6 @@ private struct AOMRowButtonBody: View {
             .onHover { hovering = $0 }
     }
 }
-private struct AOMCardTileBody: View {
-    let configuration: ButtonStyle.Configuration
-    let style: AOMCardStyle
-    let radius: CGFloat
-    let padding: CGFloat?
-    @State private var hovering = false
-    @Environment(\.isEnabled) private var isEnabled
-
-    var body: some View {
-        configuration.label
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            // Press darkens the fill (HIG Buttons: always a press state);
-            // the content stays at full contrast.
-            .modifier(AOMCardSurface(style: style, radius: radius, padding: padding,
-                                     hovering: hovering && isEnabled, pressed: configuration.isPressed && isEnabled))
-            .contentShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
-            .opacity(isEnabled ? 1 : 0.5)
-            .aomAnimation(.quick, value: configuration.isPressed)
-            .aomAnimation(.quick, value: hovering)
-            .onHover { hovering = $0 }
-    }
-}
-
 // MARK: - Buttons
 
 /// A secondary action in content: the system bordered style. The tint is

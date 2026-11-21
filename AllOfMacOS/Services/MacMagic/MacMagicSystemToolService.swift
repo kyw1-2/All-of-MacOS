@@ -249,38 +249,88 @@ final class MacMagicSystemToolService {
 
     // MARK: - PDF Tools
 
-    /// Combines PDF documents in order into a single file at the destination.
-    func combinePDFs(urls: [URL], to destination: URL) throws {
+    /// Merges in name order. 7.2.2 (audit B05): a PDF that can't be read or
+    /// is locked is no longer dropped silently — its name is returned so the
+    /// result says so, and nothing is written when none could be read.
+    @discardableResult
+    func combinePDFs(urls: [URL], to destination: URL) throws -> [String] {
         let merged = PDFDocument()
         var index = 0
+        var skipped: [String] = []
         for url in urls.sorted(by: { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }) {
-            guard let document = PDFDocument(url: url) else { continue }
+            guard let document = PDFDocument(url: url), !document.isLocked, document.pageCount > 0 else {
+                skipped.append(url.lastPathComponent)
+                continue
+            }
             for page in 0..<document.pageCount {
                 guard let page = document.page(at: page) else { continue }
                 merged.insert(page, at: index)
                 index += 1
             }
         }
-        guard merged.pageCount > 0 else { throw CocoaError(.fileWriteUnknown) }
+        guard merged.pageCount > 0 else { throw SystemToolError.invalidInput("None of the PDFs could be read (\(skipped.joined(separator: ", ")))") }
         guard merged.write(to: destination) else { throw CocoaError(.fileWriteUnknown) }
+        return skipped
     }
 
-    /// Compresses a PDF by re-rendering every page as a scaled JPEG-backed
-    /// PDF page (MacMagic's compresspdfs approach).
-    func compressPDF(url: URL, to destination: URL, quality: Double = 0.65) throws {
-        guard let source = PDFDocument(url: url) else { throw CocoaError(.fileReadUnknown) }
-        let output = PDFDocument()
-        for index in 0..<source.pageCount {
-            guard let page = source.page(at: index) else { continue }
-            let thumbnail = page.thumbnail(of: page.bounds(for: .mediaBox).size, for: .mediaBox)
-            guard let tiff = thumbnail.tiffRepresentation,
-                  let bitmap = NSBitmapImageRep(data: tiff),
-                  let jpeg = bitmap.representation(using: .jpeg, properties: [.compressionFactor: quality]) else { continue }
-            if let pageImage = PDFPage(image: NSImage(data: jpeg) ?? NSImage()) {
-                output.insert(pageImage, at: index)
-            }
+    /// 7.2.2 (audit N02, B04): two ways to make a PDF smaller.
+    enum PDFCompression: String, CaseIterable, Identifiable {
+        /// Text, links and vector drawings stay; only the images inside are
+        /// recompressed as JPEG at screen resolution.
+        case keepText
+        /// Every page becomes one JPEG image (MacMagic's compresspdfs): the
+        /// smallest for scans, but the text can no longer be selected or searched.
+        case pagesAsImages
+
+        var id: String { rawValue }
+        var title: String { self == .keepText ? "Keep Text" : "Pages as Images" }
+        var detail: String {
+            self == .keepText ? "Text stays selectable; images are recompressed."
+                              : "Each page becomes a picture; text can't be selected or searched."
         }
-        guard output.write(to: destination) else { throw CocoaError(.fileWriteUnknown) }
+    }
+
+    func compressPDF(url: URL, to destination: URL, mode: PDFCompression = .keepText, quality: Double = 0.65) throws {
+        guard let source = PDFDocument(url: url) else { throw CocoaError(.fileReadUnknown) }
+        guard !source.isLocked else { throw SystemToolError.invalidInput("The PDF is password-protected. Remove the password first.") }
+        switch mode {
+        case .keepText:
+            let options: [PDFDocumentWriteOption: Any] = [.saveImagesAsJPEGOption: true, .optimizeImagesForScreenOption: true]
+            guard source.write(to: destination, withOptions: options) else { throw CocoaError(.fileWriteUnknown) }
+        case .pagesAsImages:
+            let output = PDFDocument()
+            for index in 0..<source.pageCount {
+                guard let page = source.page(at: index) else { continue }
+                // 150 dpi (7.2.1 drew at 72 dpi, which blurred small text).
+                let bounds = page.bounds(for: .mediaBox).size
+                let scale = min(150.0 / 72.0, 4_000 / max(bounds.width, bounds.height, 1))
+                let thumbnail = page.thumbnail(of: CGSize(width: bounds.width * scale, height: bounds.height * scale), for: .mediaBox)
+                guard let tiff = thumbnail.tiffRepresentation,
+                      let bitmap = NSBitmapImageRep(data: tiff),
+                      let jpeg = bitmap.representation(using: .jpeg, properties: [.compressionFactor: quality]),
+                      let image = NSImage(data: jpeg) else { throw CocoaError(.fileWriteUnknown) }
+                image.size = bounds
+                guard let pageImage = PDFPage(image: image) else { throw CocoaError(.fileWriteUnknown) }
+                output.insert(pageImage, at: output.pageCount)
+            }
+            guard output.pageCount == source.pageCount else { throw CocoaError(.fileWriteUnknown) }
+            guard output.write(to: destination) else { throw CocoaError(.fileWriteUnknown) }
+        }
+    }
+
+    /// Pure: "Report (compressed).pdf", then "(compressed 2)" … — never an
+    /// existing file (7.2.1 overwrote "Report.compressed.pdf", audit B03).
+    static func freeName(nextTo source: URL, suffix: String, ext: String = "pdf",
+                         exists: (URL) -> Bool = { FileManager.default.fileExists(atPath: $0.path) }) -> URL {
+        let folder = source.deletingLastPathComponent()
+        let base = source.deletingPathExtension().lastPathComponent
+        var number = 1
+        while true {
+            let label = number == 1 ? suffix : "\(suffix) \(number)"
+            let candidate = folder.appendingPathComponent("\(base) (\(label)).\(ext)")
+            if !exists(candidate) { return candidate }
+            number += 1
+        }
     }
 
     // MARK: - Media Tools
@@ -387,41 +437,14 @@ final class MacMagicSystemToolService {
 
     // MARK: - File Management
 
-    /// Plain-text batch rename with an optional sequential token "{n}".
-    /// Validate the plan before moving files; surface filesystem failures.
+    /// 7.2.2: the preview, all-or-nothing moves and Undo live in `BatchRename`.
     func batchRename(urls: [URL], pattern: String, replacement: String, startingNumber: Int = 1) throws -> [URL] {
-        var renamed: [URL] = []
-        var targets = Set<URL>()
-        for (index, url) in urls.enumerated() {
-            guard url.isFileURL, FileManager.default.fileExists(atPath: url.path) else {
-                throw CocoaError(.fileNoSuchFile)
-            }
-            let (number, overflow) = startingNumber.addingReportingOverflow(index)
-            guard !overflow else { throw CocoaError(.fileWriteInvalidFileName) }
-            let name = url.deletingPathExtension().lastPathComponent
-            let ext = url.pathExtension
-            // This is a plain-text replacement: "$1" and backslashes are literal.
-            let newName = name.replacingOccurrences(of: pattern, with: replacement)
-                .replacingOccurrences(of: "{n}", with: String(number))
-            guard !newName.isEmpty, newName != ".", newName != "..",
-                  !newName.contains("/"), !newName.contains("\0") else {
-                throw CocoaError(.fileWriteInvalidFileName)
-            }
-            let filename = ext.isEmpty ? newName : "\(newName).\(ext)"
-            let target = url.deletingLastPathComponent().appendingPathComponent(filename)
-            guard targets.insert(target.standardizedFileURL).inserted else {
-                throw CocoaError(.fileWriteFileExists)
-            }
-            if target.standardizedFileURL != url.standardizedFileURL,
-               FileManager.default.fileExists(atPath: target.path) {
-                throw CocoaError(.fileWriteFileExists)
-            }
-            renamed.append(target)
+        for url in urls where !url.isFileURL || !FileManager.default.fileExists(atPath: url.path) {
+            throw CocoaError(.fileNoSuchFile)
         }
-        for (source, target) in zip(urls, renamed) where source.standardizedFileURL != target.standardizedFileURL {
-            try FileManager.default.moveItem(at: source, to: target)
-        }
-        return renamed
+        let rows = BatchRename.plan(urls, find: pattern, template: replacement, startingNumber: startingNumber)
+        try BatchRename.apply(rows)
+        return rows.map(\.target)
     }
 
     /// Empties the user Trash directory and reports what it deleted and what

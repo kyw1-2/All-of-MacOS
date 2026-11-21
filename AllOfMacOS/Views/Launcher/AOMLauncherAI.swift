@@ -300,6 +300,7 @@ extension AOMAIProvider {
         case .openAI, .codex: return Color(nsColor: NSColor(srgbRed: 0.30, green: 0.32, blue: 0.36, alpha: 1))
         case .deepSeek: return Color(nsColor: NSColor(srgbRed: 0.30, green: 0.42, blue: 1.0, alpha: 1))
         case .ollama: return Color(nsColor: NSColor(srgbRed: 0.42, green: 0.44, blue: 0.48, alpha: 1))
+        case .deepSeekHarness: return Color(nsColor: NSColor(srgbRed: 0.18, green: 0.36, blue: 0.92, alpha: 1))
         }
     }
 
@@ -395,7 +396,7 @@ struct AOMAIModelMenu: View {
         case .anthropic, .openAI, .deepSeek: return "add a key in Settings"
         case .localProxy: return "not running"
         case .ollama: return "not running"
-        case .claudeCode, .codex: return "not installed"
+        case .claudeCode, .codex, .deepSeekHarness: return "not installed"
         }
     }
 }
@@ -599,6 +600,7 @@ struct AOMAIHomeHeader: View {
         case .ollama: return "A local model through Ollama. \(paste)"
         case .claudeCode: return "Your Claude subscription through Claude Code, read-only and kept warm. ⌘J continues in Terminal."
         case .codex: return "Your ChatGPT plan through Codex, read-only. ⌘J continues in Terminal."
+        case .deepSeekHarness: return "Your DeepSeek Harness, read-only: it reads files and runs read-only commands to answer. ⌘J opens the app."
         }
     }
 
@@ -608,7 +610,7 @@ struct AOMAIHomeHeader: View {
         case .anthropic, .openAI, .deepSeek: return "Add your \(provider.title) API key in Settings › AI, or ⌘P for another model."
         case .localProxy: return "Nothing answers at \(AOMAIConfig.baseURL(for: .localProxy)). ⌘P picks another model."
         case .ollama: return "Start Ollama, then fetch its models in Settings › AI."
-        case .claudeCode, .codex: return "\(provider.title) isn't installed on this Mac. ⌘P picks another model."
+        case .claudeCode, .codex, .deepSeekHarness: return "\(provider.title) isn't installed on this Mac. ⌘P picks another model."
         }
     }
 }

@@ -57,7 +57,7 @@ enum AOMLocalProxy {
             var request = URLRequest(url: url)
             request.timeoutInterval = 1
             if let (_, response) = try? await session.data(for: request), let status = (response as? HTTPURLResponse)?.statusCode,
-               path == "/health" ? status == 200 : status < 500 {
+               status == 200 {  // a 404 root is some other server, not the router (Codex audit B23)
                 return true
             }
         }

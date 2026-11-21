@@ -1,3 +1,27 @@
+## [7.2.2] - 2026-11-21
+
+Requests from the user after 7.2.1, plus the integrated audit of 7.2.1 (`AOM-7.2.1-통합감사보고서-2026-11-21.pdf`). What was taken and why: `docs/design-7.2-launcher.md` § 7.2.2.
+
+### Ask AI
+- **DeepSeek Harness is an Ask AI agent** next to Claude Code and Codex. It uses your own DeepSeek Harness app and sign-in, runs read-only in your home folder and continues the conversation. Each step it takes shows under the answer, and ⌘J opens the app. The app's runtime is copied out of its archive once per version (Node can't load it from inside), to `~/Library/Caches/AllOfMacOS/DeepSeekHarness`.
+- **Answers no longer stall.** A records search read 360 MB of Claude logs as Swift strings line by line, so Ask AI could sit on "Thinking…" for minutes. Files are now scanned as bytes (271 MB in 0.3 s) within a 3 s budget, newest first. Korean stored as `\uXXXX` in Codex logs is found, and the closest lines come back when no line has every word. Each step shows what it is doing ("Searching records for “x”…"), a model gets six tool rounds, and a router that answers its port with something else no longer counts as healthy.
+
+### Main window
+- **Glass again:** the desktop shows through the main window by default (Settings › General › Translucent window turns it off; Reduce Transparency and Increase Contrast still win).
+- **Statistics leaves the sidebar** unless you keep it (right-click › Keep in Sidebar); Large Type moved to the end of Send To.
+
+### System Tools, smaller
+- **Removed:** Force Quit and Quit All (Kill Apps does both), Ping, Ports and Renew DHCP, Time Machine and Local Snapshots, Lock Keyboard for cleaning, the Show Keystrokes tile (recordings and `aom://show-keystrokes` keep it) and Metal HUD. A starred removed tool drops from your list; Force Quit and Quit All become Kill Apps.
+- **Grouped:** the five Finder display options, three Dock settings, three screenshot defaults, and the two repair commands (Rebuild Open With, Reindex Spotlight) are now one tile each, a menu with every option and its state. Search still finds each option by name.
+- The page refreshes without starting helper processes when idle; seven unused views (489 lines) were deleted; the Test HUD menu item is debug-only.
+
+### Files, Folder Rules and keys (audit N01–N03, B11, B24)
+- **Batch Rename shows every new name first.** Presets: Replace Text, Add Numbers, Number Only, Date in Front, Spaces to Dashes; `{name}`, `{n}`, `{nn}`, `{nnn}`, `{date}`. A duplicate, an existing file or an empty name is marked, and nothing is renamed until all are fine. A failed move puts the earlier ones back, and Undo restores the old names. `{n}` with nothing to find used to be ignored.
+- **Compress PDF compares two ways:** *Keep Text* (text and links stay; images are recompressed) and *Pages as Images* (smallest for scans, now at 150 dpi instead of 72). Each shows its size and saving, and the one you save goes next to the original as "Name (compressed).pdf", never over an existing file. Merge PDFs names the files it couldn't read instead of leaving them out silently.
+- **Script passwords stay hidden:** a script argument declared as a password is typed into a secure field and never shown in the row (audit B11).
+- **Key remapping gives back what it replaced:** turning the Hyper key off (or quitting) restores a mapping that was on the key before, such as Caps Lock → Escape, unless something changed it since (audit B24).
+- **Folder Rules can run on picked items:** the rule preview has a checkbox per item that would run, Select All, and Run on N Selected. Each item is re-read first, and one replaced or changed since the preview is left alone and counted in the message.
+
 ## [7.2.1] - 2026-11-21
 
 ### Ask AI reads your Mac when you ask

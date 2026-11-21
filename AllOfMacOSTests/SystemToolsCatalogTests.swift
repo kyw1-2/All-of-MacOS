@@ -39,8 +39,6 @@ final class SystemToolMigrationTests: XCTestCase {
         let expected: [String: SystemToolID] = [
             "topCPU": .activity, "topMemory": .activity,
             "ejectAll": .eject, "ejectDisk": .eject,
-            "backupNow": .timeMachine, "backupStatus": .timeMachine,
-            "portLookup": .ports, "listeningPorts": .ports,
             "copyIP": .networkInfo, "publicIP": .networkInfo, "wifiDetails": .networkInfo, "dnsServers": .networkInfo,
             "cache": .freeUpSpace, "largeFiles": .freeUpSpace, "oldDownloads": .freeUpSpace,
             "devJunk": .freeUpSpace, "duplicates": .freeUpSpace, "folderSizes": .freeUpSpace,

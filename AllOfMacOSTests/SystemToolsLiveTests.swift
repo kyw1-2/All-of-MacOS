@@ -223,20 +223,6 @@ final class SystemToolsLiveTests: XCTestCase {
         XCTAssertNoThrow(try Homebrew.parseServices(run(Homebrew.Command.services.arguments)))
     }
 
-    // MARK: Display
-
-    func testMetalHUDRoundTrip() throws {
-        let read = try SystemToolsCommand.run(MetalHUD.launchctl.path, MetalHUD.readArguments)
-        try XCTSkipIf(MetalHUD.isOn(getenvOutput: read.stdout), "Metal HUD is in use")
-        _ = try SystemToolsCommand.runChecked(MetalHUD.launchctl.path, MetalHUD.writeArguments(on: true))
-        defer { _ = try? SystemToolsCommand.run(MetalHUD.launchctl.path, MetalHUD.writeArguments(on: false)) }
-        let on = try SystemToolsCommand.run(MetalHUD.launchctl.path, MetalHUD.readArguments)
-        XCTAssertTrue(MetalHUD.isOn(getenvOutput: on.stdout))
-        _ = try SystemToolsCommand.runChecked(MetalHUD.launchctl.path, MetalHUD.writeArguments(on: false))
-        let off = try SystemToolsCommand.run(MetalHUD.launchctl.path, MetalHUD.readArguments)
-        XCTAssertFalse(MetalHUD.isOn(getenvOutput: off.stdout))
-    }
-
     // MARK: Every tool has a working command path
 
     func testEveryCommandEachToolRunsExists() {

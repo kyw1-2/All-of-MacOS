@@ -786,12 +786,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         hudItem.state = (UserDefaults.standard.object(forKey: "AOMHUDEnabled") as? Bool ?? true) ? .on : .off
         hudItem.keyEquivalentModifierMask = []
         moreMenu.addItem(hudItem)
-        // A developer check, not an everyday command: it replaces Gesture HUD
-        // only while ⌥ Option is held (an alternate item).
+        // A developer check, not an everyday command (Codex audit R03): debug
+        // builds only, as ⌥'s alternate of Gesture HUD.
+        #if DEBUG
         let hudTest = entry("Test HUD Overlay", "sparkles", #selector(testHUD))
         hudTest.keyEquivalentModifierMask = [.option]
         hudTest.isAlternate = true
         moreMenu.addItem(hudTest)
+        #endif
         moreMenu.addItem(.separator())
         moreMenu.addItem(entry("Restart All of MacOS", "arrow.clockwise", #selector(restartApp)))
         more.submenu = moreMenu

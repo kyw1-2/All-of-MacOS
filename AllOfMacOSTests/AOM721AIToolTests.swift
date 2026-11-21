@@ -47,7 +47,9 @@ final class AOM721AIToolTests: XCTestCase {
         let text = "one\nThe Oracle box: ssh oracle\nssh elsewhere\n"
         let found = AOMAILocalTools.matches(in: text, terms: ["ssh", "oracle"], limit: 3)
         XCTAssertEqual(found.full.map(\.line), [2])
-        XCTAssertEqual(found.partial.map(\.line), [3])
+        let closest = AOMAILocalTools.matches(in: "one\nssh elsewhere\nmore oracle\n", terms: ["ssh", "oracle"], limit: 3)
+        XCTAssertTrue(closest.full.isEmpty)
+        XCTAssertEqual(closest.partial.map(\.line).sorted(), [2, 3], "with no full line, each word's lines are the closest")
         XCTAssertTrue(AOMAILocalTools.matches(in: "nothing here", terms: ["oracle"], limit: 3).full.isEmpty)
         XCTAssertEqual(AOMAILocalTools.unescapeUnicode(#"오라클"#), "오라클")
         let long = String(repeating: "a", count: 500) + " oracle " + String(repeating: "b", count: 500)

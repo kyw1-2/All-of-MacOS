@@ -640,13 +640,15 @@ enum AOMTranslucency {
     static let pageAlphaDark: CGFloat = 0.55
     static let cardAlphaLight: CGFloat = 0.82
     static let cardAlphaDark: CGFloat = 0.72
+    /// The main window lets the desktop through unless turned off.
+    static let defaultOn = true
 
     static var isOn: Bool {
         guard !NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency,
               !NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast else { return false }
-        // 7.0 (craft rules): the main window is an opaque warm canvas; glass
-        // is for floating chrome. A Mac that turned it on keeps it.
-        return UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? false
+        // 7.2.2: glass again by default (the user found 7.0's opaque canvas
+        // too plain); Settings › General › Translucent window turns it off.
+        return UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? defaultOn
     }
 
     /// Pure: the page tint's alpha for these settings.

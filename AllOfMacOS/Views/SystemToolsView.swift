@@ -10,7 +10,6 @@ struct SystemToolsView: View {
     @StateObject private var model = SystemToolsModel()
     @StateObject private var status = SystemStatusMonitor()
     @ObservedObject private var keepAwake = KeepAwakeService.shared
-    @ObservedObject private var keyboardLock = KeyboardCleaningLock.shared
     @ObservedObject private var sleepTimer = SleepTimerService.shared
     @ObservedObject private var appAwake = AppAwakeService.shared
     @ObservedObject private var homebrew = HomebrewModel.shared
@@ -29,7 +28,9 @@ struct SystemToolsView: View {
     private var visibleGroups: [(group: SystemToolGroup, tools: [SystemToolInfo])] {
         SystemToolGroup.allCases.compactMap { group in
             guard selectedGroup == nil || selectedGroup == group else { return nil }
-            let tools = SystemToolCatalog.availableTools(in: group).filter { $0.matches(query) }
+            // 7.2.2: a grouped tile's options show only while searching.
+            let searching = !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            let tools = SystemToolCatalog.availableTools(in: group).filter { $0.matches(query) && (searching || $0.groupedInto == nil) }
             return tools.isEmpty ? nil : (group, tools)
         }
     }
@@ -119,7 +120,6 @@ struct SystemToolsView: View {
         // Keep Awake and the keyboard lock also change from menus and timers.
         // A hidden page catches up when it is selected (`model.appear()`).
         .onChange(of: keepAwake.current) { _, _ in refreshIfActive() }
-        .onChange(of: keyboardLock.endsAt) { _, _ in refreshIfActive() }
         .onChange(of: sleepTimer.firesAt) { _, _ in refreshIfActive() }
         .onChange(of: appAwake.appName) { _, _ in refreshIfActive() }
         .onChange(of: homebrew.outdated) { _, _ in refreshIfActive() }

@@ -961,13 +961,22 @@ extension QuickCommandPalette {
         return items
     }
 
+    /// 7.2.2 (audit B11): the field hides what is typed for a password argument.
+    var secureEntry: Bool {
+        guard case .scriptArgument(let id)? = navigation.current else { return false }
+        return data.scripts.first { $0.id == id }?.argument?.secure == true
+    }
+
     func scriptArgumentItems(_ id: String) -> [PaletteItem] {
         guard let script = data.scripts.first(where: { $0.id == id }) else { return [] }
         let argument = trimmed
         let ready = !argument.isEmpty || script.argument?.optional == true
         let effect: PaletteAction.Effect = (PaletteScripts.isTrusted(script) && !script.needsConfirmation && script.mode != .fullOutput) ? .close : .stay
-        return [screenRow("script.arg.run", argument.isEmpty ? "Run “\(script.title)”" : "Run “\(script.title)” with “\(argument)”",
-                          script.argument?.placeholder ?? "Argument", icon: "play.fill", group: nil,
+        let secure = script.argument?.secure == true
+        let title = argument.isEmpty || secure ? "Run “\(script.title)”" : "Run “\(script.title)” with “\(argument)”"
+        let detail = secure && !argument.isEmpty ? "\(script.argument?.placeholder ?? "Password") · \(argument.count) characters, hidden"
+            : script.argument?.placeholder ?? "Argument"
+        return [screenRow("script.arg.run", title, detail, icon: "play.fill", group: nil,
                           primary: PaletteAction(title: "Run", symbol: "play", effect: ready ? effect : .stay) {
                               if ready { runScript(script, argument: argument) }
                           }, dimmed: !ready)]
@@ -1113,8 +1122,6 @@ extension QuickCommandPalette {
                       primary: PaletteAction(title: "Type") { insertIntoFrontApp(text, announce: payload.title) }),
             screenRow("send.copy", "Copy", "To the clipboard", icon: "doc.on.doc", group: "Send",
                       primary: PaletteAction(title: "Copy") { copyToClipboard(text, announce: payload.title) }),
-            screenRow("send.largeType", "Show in Large Type", "Across the screen; any key closes it", icon: "textformat.size", group: "Send",
-                      primary: PaletteAction(title: "Show") { AOMLargeType.show(text) }),
         ]
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if let url = URL(string: trimmedText), let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme) {
@@ -1153,6 +1160,9 @@ extension QuickCommandPalette {
         }
         items.append(screenRow("send.snippet", "Save as Snippet…", "Choose a keyword that types it", icon: "text.badge.plus", group: "Save",
                                primary: PaletteAction(title: "Choose Keyword", effect: .push(.newSnippet(text))) {}))
+        // Codex audit R08: kept for presenting, last in the list.
+        items.append(screenRow("send.largeType", "Show in Large Type", "Across the screen; any key closes it", icon: "textformat.size",
+                               group: "More", primary: PaletteAction(title: "Show") { AOMLargeType.show(text) }))
         return items
     }
 
