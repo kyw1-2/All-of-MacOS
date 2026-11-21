@@ -1930,6 +1930,18 @@ struct QuickCommandPalette: View {
                 if signature != aiSignature { aiSignature = signature; sourcesChanged() }
             }
         }
+        .onChange(of: query) { _, _ in
+            // A popped screen gives its selected row back with its query.
+            if let restore = pendingSelection {
+                selectedID = restore
+                pendingSelection = nil
+            } else {
+                selectedID = nil
+            }
+            showsActions = false
+            // A confirmation is answered, not searched.
+            if navigation.current?.isSearchable == false, !query.isEmpty { query = "" }
+        }
         .onDisappear {
             session.end()
             recentFiles.stop()
@@ -2360,18 +2372,6 @@ struct QuickCommandPalette: View {
                 // Raycast's search line is the largest type in the panel.
                 .font(host == .launcher ? PaletteMetrics.launcherQueryFont : AOMFont.pageStatus.weight(.regular))
                 .focused($isFieldFocused)
-                .onChange(of: query) { _, _ in
-                    // A popped screen gives its selected row back with its query.
-                    if let restore = pendingSelection {
-                        selectedID = restore
-                        pendingSelection = nil
-                    } else {
-                        selectedID = nil
-                    }
-                    showsActions = false
-                    // A confirmation is answered, not searched.
-                    if navigation.current?.isSearchable == false, !query.isEmpty { query = "" }
-                }
                 .accessibilityLabel("Search")
             if recentFiles.isLoading {
                 // Spotlight is still answering (report 04 §5.5).
