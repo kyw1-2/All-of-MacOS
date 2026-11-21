@@ -291,6 +291,7 @@ enum AOMAIConfig {
 
     /// The models listed for a provider: those fetched from it, else the suggestions.
     static func models(for provider: AOMAIProvider) -> [AOMAIModelOption] {
+        if provider == .codex { return provider.suggestedModels + CodexModelCatalog.current() }
         if let data = UserDefaults.standard.data(forKey: "AOMAIModels_\(provider.rawValue)"),
            let fetched = try? JSONDecoder().decode([AOMAIModelOption].self, from: data), !fetched.isEmpty {
             // Keep the curated names for the known ones, add the rest.

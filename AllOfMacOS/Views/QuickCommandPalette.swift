@@ -322,6 +322,8 @@ struct QuickCommandPalette: View {
     }
 
     static let screenCommands: [ScreenCommand] = [
+        .init(id: "automation.catalog", route: .automationCatalog, subtitle: "Choose an action to configure · 자동화 만들기",
+              aliases: ["configure automation", "자동화 만들기"]),
         .init(id: "system.screen.killApps", route: .killApps,
               subtitle: "Quit or force quit a running app · 앱 종료",
               aliases: ["killapps", "kill apps", "kill app", "kill", "quit apps", "quit app", "force quit",
@@ -451,6 +453,16 @@ struct QuickCommandPalette: View {
         let links = quicklinks.links
         if let match = PaletteQuicklinks.match(query, in: links) {
             let link = match.link
+            if link.keyword.lowercased() == "brew", link.template == "https://formulae.brew.sh/formula/{query}" {
+                if LauncherTool.entries.contains(where: { $0.aliases.contains(trimmed.lowercased()) }) { return [] }
+                let term = LauncherTool.packageQuery(match.query)
+                if Homebrew.isValidSearchText(term) {
+                    let tool = LauncherTool.brew(.search, term)
+                    return [PaletteItem(id: "brew.lookup", title: "Search Homebrew for “\(term)”",
+                                        subtitle: "Formulae and casks · in this launcher", icon: tool.symbol, section: .commands,
+                                        primary: PaletteAction(title: "Search", effect: .push(.tool(tool))) {}, placement: .pinned)]
+                }
+            }
             guard !match.query.isEmpty, let url = PaletteQuicklinks.url(for: link, query: match.query) else {
                 return [PaletteItem(id: "quicklink.\(link.id)", title: "Search \(link.name)…",
                                     subtitle: "Type what to search for after “\(link.keyword) ”", icon: "link",
@@ -637,6 +649,10 @@ struct QuickCommandPalette: View {
                 keywords: "coreaudiod core audio homepod airplay 홈팟 오디오 재시작 restart") {
             AudioRecovery.restartCoreAudio()
         }
+        command("clipboard.stack.next", "Paste Next in Stack", "Paste the next queued item · 순서대로 붙여넣기",
+                "doc.on.clipboard", keywords: "paste stack next 다음 붙여넣기") {
+            ClipboardPanelController.shared.pasteNext()
+        }
         command("menus.edit", "Floating Menus & Widgets", "Create menus, clocks and variable widgets · 플로팅 메뉴",
                 "rectangle.grid.2x2") {
             FloatingMenuController.shared.edit()
@@ -654,16 +670,17 @@ struct QuickCommandPalette: View {
             items += batteryItems()
             items += PaletteAICommand.all.map(aiCommandItem)
         }
-        // Every action is searchable, including capabilities which previously
-        // existed only inside the automation picker. Opening creates a draft.
-        if isSearching {
-            for type in ActionType.allCases {
-                items.append(PaletteItem(id: "action.\(type.rawValue)", title: type.rawValue,
-                    subtitle: type.description + " · Configure Automation", icon: type.iconName, section: .commands,
-                    primary: PaletteAction(title: "Configure Automation") { close(); showAOM(); appState.createDraft(for: type) }))
-            }
-        }
         return items
+    }
+
+    private func automationCatalogItems() -> [PaletteItem] {
+        ActionType.allCases.map { type in
+            PaletteItem(id: "action.\(type.rawValue)", title: type.rawValue, subtitle: type.description,
+                        icon: type.iconName, section: .commands,
+                        primary: PaletteAction(title: "Configure Automation") {
+                            close(); showAOM(); appState.createDraft(for: type)
+                        })
+        }
     }
 
     private func automationItems() -> [PaletteItem] {
@@ -795,25 +812,16 @@ struct QuickCommandPalette: View {
             item.identity = category.identity
             return item
         }
-        items.append(Self.homebrewItem {
-            close()
-            appState.selectedMainTab = .tools
-            showAOM()
-            HomebrewModel.shared.present(.outdated, refresh: true)
-        })
+        items += LauncherTool.entries.map { tool in
+            var item = PaletteItem(id: tool.id, title: tool.title, subtitle: tool.subtitle, icon: tool.symbol,
+                                   section: .commands, primary: PaletteAction(title: "Open", effect: .push(.tool(tool))) {})
+            item.aliases = tool.aliases
+            return item
+        }
         items.append(PaletteItem(id: "go.settings", title: "Settings", subtitle: "Open All of MacOS Settings",
                                  icon: "gearshape", section: .navigation, shortcut: "⌘,",
                                  primary: PaletteAction(title: "Open") { close(); openAOMSettings() }))
         return items
-    }
-
-    /// A native manager entry, distinct from the brew formula web quicklink.
-    /// Always discoverable; the sheet explains when Homebrew is not installed.
-    static func homebrewItem(open: @escaping () -> Void) -> PaletteItem {
-        PaletteItem(id: "go.homebrew", title: "Homebrew",
-                    subtitle: "System Tools · brew outdated packages, updates, services, doctor · 홈브루",
-                    icon: "mug", section: .navigation,
-                    primary: PaletteAction(title: "Open Homebrew", run: open))
     }
 
     // BTT / Raycast launcher: installed apps, plus running apps elsewhere
@@ -990,10 +998,9 @@ struct QuickCommandPalette: View {
         }
         let text = trimmed
         items.append(PaletteItem(id: "files.search", title: "Search Files for “\(text)”",
-                                 subtitle: "Spotlight results in Finder", icon: "doc.text.magnifyingglass", section: .files,
-                                 primary: PaletteAction(title: "Search") {
-                                     close(); NSWorkspace.shared.showSearchResults(forQueryString: text)
-                                 }, placement: .fallback))
+                                 subtitle: "Spotlight results in this launcher", icon: "doc.text.magnifyingglass", section: .files,
+                                 primary: PaletteAction(title: "Search", effect: .push(.tool(.files(text)))) {},
+                                 placement: .fallback))
         return items
     }
 
@@ -1088,6 +1095,14 @@ struct QuickCommandPalette: View {
     /// What a screen starts when it opens.
     private func enter(_ route: PaletteRoute) {
         switch route {
+        case .tool(.brew(let tab, let term)):
+            let brew = HomebrewModel.shared
+            brew.prepare(tab, refresh: true)
+            if tab == .search {
+                brew.searchText = term
+                if !term.isEmpty { brew.whenIdle { if brew.searchText == term, brew.tab == .search { brew.search() } } }
+            }
+        case .tool, .automationCatalog: break
         case .killApps: screens.watchApps(true)
         case .uninstallReview(let app): screens.beginUninstall(app)
         case .soundDevices: screens.loadSound()
@@ -1122,13 +1137,20 @@ struct QuickCommandPalette: View {
 
     /// Opens Ask AI (if needed) and sends the question.
     private func askAI(_ question: String) {
+        if ai.isRunning {
+            if navigation.current != .ai { push(.ai); query = question }
+            screens.show("Still answering — ⌘. stops it")
+            return
+        }
         if navigation.current != .ai { push(.ai) }
-        guard !ai.isRunning else { screens.show("Still answering — ⌘. stops it"); return }
         query = ""
         ai.ask(question)
     }
 
-    /// ⇥ on Ask AI: the next model that can answer.
+    private func quickAsk() {
+        if trimmed.isEmpty { push(.ai) } else { askAI(trimmed) }
+    }
+
     private func nextModel() {
         let ready = AOMAIConfig.pickerModels().filter(\.ready).flatMap { group in
             group.models.map { AOMAIModelRef(provider: group.provider, model: $0.id) }
@@ -1315,6 +1337,8 @@ struct QuickCommandPalette: View {
 
     private func routeItems(_ route: PaletteRoute) -> [PaletteItem] {
         switch route {
+        case .tool: return []
+        case .automationCatalog: return automationCatalogItems()
         case .killApps: return killAppItems()
         case .uninstallApps: return uninstallListItems()
         case .uninstallReview: return uninstallReviewItems()
@@ -1625,6 +1649,11 @@ struct QuickCommandPalette: View {
             if entry.kind == .text || entry.kind == .link {
                 secondaries.append(PaletteAction(title: "Copy as Plain Text", symbol: "textformat") { copyEntry(entry.id, plainText: true) })
             }
+            secondaries.append(PaletteAction(title: "Add to Paste Stack", symbol: "square.stack", effect: .stay) {
+                let state = ClipboardPanelController.shared.state
+                if !state.stack.contains(entry.id) { state.stack.append(entry.id) }
+                screens.show("Paste Stack · \(state.stack.count) queued")
+            })
             var item = screenRow("cliphistory.\(entry.id.uuidString)", entry.title,
                            [entry.sourceName, AOMRelativeTime.string(entry.lastCopiedAt)].compactMap { $0 }.joined(separator: " · "),
                            icon: entry.kind.symbol, group: nil, section: .clipboard,
@@ -1810,41 +1839,12 @@ struct QuickCommandPalette: View {
                     .accessibilityHidden(true)
             }
 
-            VStack(spacing: 0) {
-                searchField(count: items.count)
-                AOMDivider()
-                if navigation.current == .ai {
-                    // 7.0: Raycast's Quick AI — the model on top, then the
-                    // transcript (or, before a question, the AI rows).
-                    if ai.messages.isEmpty {
-                        AOMAIHomeHeader(chat: ai, frontApp: frontAppForAI?.localizedName)
-                        if let notice = screens.notice { noticeLine(notice) }
-                        AOMDivider()
-                        resultList(items, selected: selected)
-                    } else {
-                        if let notice = screens.notice { noticeLine(notice) }
-                        AOMAITranscriptView(chat: ai) { copyToClipboard($0, announce: "Answer") }
-                    }
+            Group {
+                if case .tool(let tool) = navigation.current {
+                    LauncherToolContent(tool: tool, back: pop)
                 } else {
-                    if let header {
-                        routeHeaderView(header, fills: items.isEmpty)
-                        if !items.isEmpty { AOMDivider() }
-                    } else if let notice = screens.notice, !navigation.isRoot {
-                        noticeLine(notice)
-                    }
-                    if !items.isEmpty {
-                        if showsDetailPane {
-                            // 7.0: Raycast's list with a detail on the right.
-                            AOMLauncherSplitView(list: { resultList(items, selected: selected) },
-                                                 detail: { detailPane(selected) })
-                        } else {
-                            resultList(items, selected: selected)
-                        }
-                    } else if header == nil {
-                        emptyState
-                    }
+                    paletteContents(items: items, selected: selected, header: header)
                 }
-                actionBar(selected)
             }
             .frame(width: size.width, height: size.height)
             .overlay(alignment: .bottomTrailing) {
@@ -1876,10 +1876,12 @@ struct QuickCommandPalette: View {
                         .keyboardShortcut("n", modifiers: .command).opacity(0).accessibilityHidden(true)
                     Button("Ask Again") { ai.regenerate() }
                         .keyboardShortcut("r", modifiers: .command).opacity(0).accessibilityHidden(true)
-                    Button("Choose Model") { push(.aiModels) }
-                        .keyboardShortcut("p", modifiers: .command).opacity(0).accessibilityHidden(true)
                     Button("Stop") { ai.cancel() }
                         .keyboardShortcut(".", modifiers: .command).opacity(0).accessibilityHidden(true)
+                }
+                if navigation.isRoot || navigation.current == .ai {
+                    Button("Choose Model") { push(.aiModels) }
+                        .keyboardShortcut("p", modifiers: .command).opacity(0).accessibilityHidden(true)
                 }
                 // ⌘, opens Settings from the palette, as in Raycast.
                 Button("Settings") { close(); openAOMSettings() }
@@ -1913,17 +1915,6 @@ struct QuickCommandPalette: View {
                 if signature != aiSignature { aiSignature = signature; sourcesChanged() }
             }
         }
-        // 6.9: ⇥ asks AI from the root (Raycast's Quick AI); 7.0: on Ask AI it moves to the next model.
-        .onKeyPress(.tab) {
-            if navigation.current == .ai {
-                nextModel()
-                return .handled
-            }
-            guard navigation.isRoot, host == .launcher || host == .window else { return .ignored }
-            let question = trimmed
-            if question.isEmpty { push(.ai) } else { askAI(question) }
-            return .handled
-        }
         .onDisappear {
             session.end()
             recentFiles.stop()
@@ -1939,9 +1930,10 @@ struct QuickCommandPalette: View {
             case .close: close()
             }
         }
-        .onKeyPress(.upArrow) { moveSelection(-1, in: items, selected: selected); return .handled }
-        .onKeyPress(.downArrow) { moveSelection(1, in: items, selected: selected); return .handled }
+        .onKeyPress(.upArrow) { if case .tool = navigation.current { return .ignored }; moveSelection(-1, in: items, selected: selected); return .handled }
+        .onKeyPress(.downArrow) { if case .tool = navigation.current { return .ignored }; moveSelection(1, in: items, selected: selected); return .handled }
         .onKeyPress(.return, phases: .down) { press in
+            if case .tool = navigation.current { return .ignored }
             // On Ask AI a typed line is a question, not a row choice.
             if navigation.current == .ai, !trimmed.isEmpty, !press.modifiers.contains(.command) {
                 askAI(trimmed)
@@ -1978,6 +1970,46 @@ struct QuickCommandPalette: View {
     private var showsDetailPane: Bool {
         host == .launcher && (navigation.current == .clipboard || navigation.current == .windowLayouts)
             && AOMLauncherController.shared.panelSize.width >= 600
+    }
+
+    @ViewBuilder
+    private func paletteContents(items: [PaletteItem], selected: PaletteItem?, header: RouteHeader?) -> some View {
+        VStack(spacing: 0) {
+            searchField(count: items.count)
+            AOMDivider()
+            if navigation.current == .ai {
+                // 7.0: Raycast's Quick AI — the model on top, then the
+                // transcript (or, before a question, the AI rows).
+                if ai.messages.isEmpty {
+                    AOMAIHomeHeader(chat: ai, frontApp: frontAppForAI?.localizedName)
+                    if let notice = screens.notice { noticeLine(notice) }
+                    AOMDivider()
+                    resultList(items, selected: selected)
+                } else {
+                    if let notice = screens.notice { noticeLine(notice) }
+                    AOMAITranscriptView(chat: ai) { copyToClipboard($0, announce: "Answer") }
+                }
+            } else {
+                if let header {
+                    routeHeaderView(header, fills: items.isEmpty)
+                    if !items.isEmpty { AOMDivider() }
+                } else if let notice = screens.notice, !navigation.isRoot {
+                    noticeLine(notice)
+                }
+                if !items.isEmpty {
+                    if showsDetailPane {
+                        // 7.0: Raycast's list with a detail on the right.
+                        AOMLauncherSplitView(list: { resultList(items, selected: selected) },
+                                             detail: { detailPane(selected) })
+                    } else {
+                        resultList(items, selected: selected)
+                    }
+                } else if header == nil {
+                    emptyState
+                }
+            }
+            actionBar(selected)
+        }
     }
 
     @ViewBuilder
@@ -2292,7 +2324,8 @@ struct QuickCommandPalette: View {
                 .buttonStyle(.plain)
                 .help("Back (esc)")
                 .accessibilityLabel("Back from \(route.title)")
-            } else if let match = PaletteQuicklinks.match(query, in: quicklinks.links) {
+            } else if let match = PaletteQuicklinks.match(query, in: quicklinks.links),
+                      !(match.link.keyword == "brew" && match.link.template == "https://formulae.brew.sh/formula/{query}") {
                 // The matched quicklink reads as a token before the search.
                 Text(match.link.name)
                     .font(AOMFont.token.weight(.medium))
@@ -2312,6 +2345,13 @@ struct QuickCommandPalette: View {
                 // Raycast's search line is the largest type in the panel.
                 .font(host == .launcher ? PaletteMetrics.launcherQueryFont : AOMFont.pageStatus.weight(.regular))
                 .focused($isFieldFocused)
+                .background(PaletteTabKey { event in
+                    guard isFieldFocused, !showsActions, navigation.isRoot || navigation.current == .ai else { return false }
+                    if !event.isARepeat {
+                        if navigation.current == .ai { nextModel() } else { quickAsk() }
+                    }
+                    return true
+                })
                 .onChange(of: query) { _, _ in
                     // A popped screen gives its selected row back with its query.
                     if let restore = pendingSelection {
@@ -2333,16 +2373,17 @@ struct QuickCommandPalette: View {
             if navigation.current == .ai {
                 // Raycast's model dropdown at the end of the field.
                 AOMAIModelMenu(chat: ai)
+            } else if navigation.isRoot {
+                Button(ai.model.title) { push(.aiModels) }
+                    .buttonStyle(.plain).lineLimit(1).help("Choose model (⌘P)")
+                Button("⇥ Ask AI") { quickAsk() }
+                    .buttonStyle(.plain)
+                    .help("Ask the current model using this search")
+                    .accessibilityLabel("Ask AI with Tab")
             } else if isSearching {
                 Text("\(count) result\(count == 1 ? "" : "s")")
                     .font(AOMFont.caption.monospacedDigit())
                     .foregroundStyle(AOMCraftColor.inkTertiary)
-            } else if host == .launcher, navigation.isRoot, AOMLauncherShortcut.isRegistered {
-                // The key that brings this back from any app.
-                HStack(spacing: AOMSpace.x0_5 + 1) {
-                    ForEach(AOMLauncherShortcut.current.keycaps, id: \.self) { AOMKeycap(text: $0) }
-                }
-                .help("Open from any app with \(AOMLauncherShortcut.current.displayString)")
             }
         }
         .padding(.horizontal, AOMSpace.x4)

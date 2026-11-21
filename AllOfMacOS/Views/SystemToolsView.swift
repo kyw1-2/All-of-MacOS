@@ -107,7 +107,7 @@ struct SystemToolsView: View {
             StartupDiskSheet(model: model)
         }
         .sheet(isPresented: $model.showNetworkInfo) {
-            NetworkInfoSheet(model: model)
+            NetworkInfoSheet(toasts: model.toasts)
         }
         .sheet(isPresented: $homebrew.isPresented, onDismiss: { model.refreshStates() }) {
             HomebrewSheet(model: homebrew)

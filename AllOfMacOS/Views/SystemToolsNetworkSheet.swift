@@ -5,7 +5,8 @@ import SwiftUI
 /// the sheet opens or the user refreshes), Wi-Fi details and DNS servers,
 /// each one line that copies itself.
 struct NetworkInfoSheet: View {
-    @ObservedObject var model: SystemToolsModel
+    let toasts: AOMToastModel
+    var back: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var publicIP: String?
     @State private var publicIPError: String?
@@ -25,7 +26,8 @@ struct NetworkInfoSheet: View {
                 Text("Network Info").font(AOMFont.pageStatus)
                 Spacer()
                 Button("Refresh") { refresh() }
-                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction).buttonStyle(AOMPrimaryButtonStyle())
+                if let back { Button("Back", action: back) }
+                else { Button("Done") { dismiss() }.keyboardShortcut(.defaultAction).buttonStyle(AOMPrimaryButtonStyle()) }
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
@@ -60,11 +62,11 @@ struct NetworkInfoSheet: View {
             }
         }
         .padding(AOMSpace.x4)
-        .frame(minWidth: 520, idealWidth: 560, minHeight: 400, idealHeight: 480)
+        .frame(minWidth: back == nil ? 520 : 0, idealWidth: 560, minHeight: back == nil ? 400 : 0, idealHeight: 480)
         .background(AOMColor.canvas)
-        .aomToast(model.toasts)
+        .aomToast(toasts)
         .onAppear(perform: refresh)
-        .onExitCommand { dismiss() }
+        .onExitCommand { if let back { back() } else { dismiss() } }
     }
 
     private func refresh() {
@@ -83,6 +85,6 @@ struct NetworkInfoSheet: View {
         guard let text else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
-        model.toasts.show("Copied \(text)", tone: .success)
+        toasts.show("Copied \(text)", tone: .success)
     }
 }

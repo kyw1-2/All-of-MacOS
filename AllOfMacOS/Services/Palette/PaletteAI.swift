@@ -45,6 +45,7 @@ enum PaletteAIProvider: String, CaseIterable, Identifiable {
         case .codex:
             return ["/opt/homebrew/bin/codex", "/usr/local/bin/codex", "\(home)/.local/bin/codex",
                     "\(home)/.npm-global/bin/codex", "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
+                    "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
                     "/Applications/Codex.app/Contents/Resources/codex"]
         }
     }
@@ -54,7 +55,7 @@ enum PaletteAIProvider: String, CaseIterable, Identifiable {
     }
 
     /// Pure: the arguments of one read-only turn.
-    func arguments(prompt: String, session: String?) -> [String] {
+    func arguments(prompt: String, session: String?, model: String = "default") -> [String] {
         switch self {
         case .claude:
             var args = ["-p", prompt, "--output-format", "stream-json", "--include-partial-messages", "--verbose",
@@ -62,12 +63,14 @@ enum PaletteAIProvider: String, CaseIterable, Identifiable {
             if let session { args += ["--resume", session] }
             return args
         case .codex:
-            return ["exec", "--json", "--skip-git-repo-check", "--sandbox", "read-only", prompt]
+            var args = ["exec", "--json", "--skip-git-repo-check", "--sandbox", "read-only"]
+            if model != "default" { args += ["--model", model] }
+            return args + ["--", prompt]
         }
     }
 
     /// The interactive command that continues a conversation in Terminal.
-    func terminalCommand(session: String?, prompt: String?) -> String {
+    func terminalCommand(session: String?, prompt: String?, model: String = "default") -> String {
         let quoted = { (text: String) in "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'" }
         let exe = quoted(executable ?? (self == .claude ? "claude" : "codex"))
         switch self {
@@ -75,8 +78,9 @@ enum PaletteAIProvider: String, CaseIterable, Identifiable {
             if let session { return "\(exe) --resume \(quoted(session))" }
             return prompt.map { "\(exe) \(quoted($0))" } ?? exe
         case .codex:
-            if let session { return "\(exe) resume \(quoted(session))" }
-            return prompt.map { "\(exe) \(quoted($0))" } ?? exe
+            let command = model == "default" ? exe : "\(exe) --model \(quoted(model))"
+            if let session { return "\(command) resume \(quoted(session))" }
+            return prompt.map { "\(command) -- \(quoted($0))" } ?? command
         }
     }
 }
@@ -289,7 +293,7 @@ final class PaletteAIChat: ObservableObject {
             } else {
                 // Codex has no warm session here: earlier turns go with the question.
                 let sent = Self.withHistory(question, messages.dropLast(2))
-                run(executable, arguments: agent.arguments(prompt: sent, session: nil))
+                run(executable, arguments: agent.arguments(prompt: sent, session: nil, model: ref.model))
             }
             return
         }
@@ -516,7 +520,7 @@ final class PaletteAIChat: ObservableObject {
     func continueInTerminal() -> Bool {
         let cli = agent ?? .claude
         let session = agent != nil ? sessions[cli] : nil
-        let command = cli.terminalCommand(session: session, prompt: session == nil ? lastQuestion : nil)
+        let command = cli.terminalCommand(session: session, prompt: session == nil ? lastQuestion : nil, model: model.model)
         let folder = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/AllOfMacOS/AI", isDirectory: true)
         let file = folder.appendingPathComponent("continue-\(cli.rawValue).command")

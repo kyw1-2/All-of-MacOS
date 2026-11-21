@@ -61,12 +61,23 @@ final class HomebrewModel: ObservableObject {
     /// Opens the sheet on `tab`; `refresh` loads that tab's list the first
     /// time (or again, for Outdated) unless a job is running.
     func present(_ tab: Tab, refresh: Bool) {
-        self.tab = tab
         isPresented = true
+        prepare(tab, refresh: refresh)
+    }
+
+    func prepare(_ tab: Tab, refresh: Bool) {
+        self.tab = tab
         brew = Homebrew.locate()
         guard brew != nil else { return }
-        if version == nil, !isBusy { readVersion { [weak self] in if refresh { self?.load(tab, force: tab == .outdated) } } }
-        else if refresh { load(tab, force: tab == .outdated) }
+        whenIdle { [weak self] in
+            guard let self, self.tab == tab else { return }
+            let loadSelection = { [weak self] in
+                guard let self, refresh, self.tab == tab else { return }
+                self.load(tab, force: tab == .outdated)
+            }
+            if self.version == nil { self.readVersion(then: loadSelection) }
+            else { loadSelection() }
+        }
     }
 
     func load(_ tab: Tab, force: Bool = false) {
@@ -122,6 +133,8 @@ final class HomebrewModel: ObservableObject {
         guard Homebrew.isValidSearchText(text) else {
             toasts.show("Type a name of letters, digits and - . _ @ + to search", tone: .warning); return
         }
+        guard !isBusy else { return }
+        searchResults = nil
         run(.search(text, .formula), logs: false) { [weak self] formulae in
             guard let self else { return }
             guard formulae.succeeded || formulae.status == 1 else { self.failed(.search(text, .formula), formulae); return }
@@ -349,7 +362,7 @@ final class HomebrewModel: ObservableObject {
         alert.addButton(withTitle: button)
         alert.addButton(withTitle: "Cancel")
         if destructive { alert.buttons.first?.hasDestructiveAction = true }
-        return alert.runModal() == .alertFirstButtonReturn
+        return AOMLauncherController.shared.withModalInteraction { alert.runModal() == .alertFirstButtonReturn }
     }
 
     /// Isolated UI previews only: sample lists, no brew run.
@@ -374,6 +387,7 @@ final class HomebrewModel: ObservableObject {
 /// Search; the running job with Cancel; the live output; and the activity.
 struct HomebrewSheet: View {
     @ObservedObject var model: HomebrewModel
+    var back: (() -> Void)? = nil
     @State private var installedFilter = ""
     @State private var showsOutput = true
     @FocusState private var searchFocused: Bool
@@ -387,18 +401,19 @@ struct HomebrewSheet: View {
             if model.brew == nil {
                 AOMEmptyState("Homebrew isn't installed", systemImage: "mug",
                               message: "AOM looks for brew at /opt/homebrew/bin/brew and /usr/local/bin/brew.") {
-                    Button("Check Again") { model.present(model.tab, refresh: true) }
+                    Button("Check Again") { model.prepare(model.tab, refresh: true) }
                     Button("Open brew.sh") { if let url = URL(string: "https://brew.sh") { NSWorkspace.shared.open(url) } }
                 }
             } else {
                 VStack(alignment: .leading, spacing: AOMSpace.x3) {
-                    Picker("List", selection: $model.tab) {
+                    Picker("List", selection: Binding(get: { model.tab }, set: { tab in
+                        model.prepare(tab, refresh: true)
+                    })) {
                         ForEach(HomebrewModel.Tab.allCases) { tab in Text(tabTitle(tab)).tag(tab) }
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
                     .onChange(of: model.tab) { _, tab in
-                        model.load(tab)
                         if tab == .search { searchFocused = true }
                     }
                     content
@@ -412,17 +427,17 @@ struct HomebrewSheet: View {
                         .aomCard(padding: 0)
                     }
                     output
-                    if !model.activity.isEmpty {
+                    if back == nil, !model.activity.isEmpty {
                         AOMLogSection("Activity", entries: model.activity, limit: 3, clear: { model.clearActivity() })
                     }
                 }
                 .padding(AOMSpace.x4)
             }
         }
-        .frame(minWidth: 720, idealWidth: 760, minHeight: 600, idealHeight: 680)
+        .frame(minWidth: back == nil ? 720 : 0, idealWidth: 760, minHeight: back == nil ? 600 : 0, idealHeight: 680)
         .background(AOMColor.canvas)
         .aomToast(model.toasts)
-        .onExitCommand { dismiss() }
+        .onExitCommand { if let back { back() } else { dismiss() } }
     }
 
     // MARK: Header
@@ -442,20 +457,23 @@ struct HomebrewSheet: View {
             }
             .layoutPriority(1)
             Spacer(minLength: AOMSpace.x3)
-            Group {
-                Button("Check Now") { model.checkOutdated() }
-                    .help("Lists outdated packages (brew outdated, without updating Homebrew first)")
-                Button("Update") { model.update() }
-                    .help("Fetches the newest Homebrew and package lists (brew update)")
-                Button("Clean Up…") { model.cleanUp() }
-                    .help("Shows how much brew cleanup -s frees, then asks")
-                Button("Doctor") { model.doctor() }
-                    .help("Runs brew doctor")
+            if let back {
+                Menu("Actions") { maintenance }
+                    .disabled(model.isBusy || model.brew == nil)
+                Button("Back", action: back)
+            } else {
+                maintenance.disabled(model.isBusy || model.brew == nil)
+                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction).buttonStyle(AOMPrimaryButtonStyle())
             }
-            .disabled(model.isBusy || model.brew == nil)
-            Button("Done") { dismiss() }
-                .keyboardShortcut(.defaultAction).buttonStyle(AOMPrimaryButtonStyle())
         }
+    }
+
+    @ViewBuilder private var maintenance: some View {
+        Button("Check Now") { model.checkOutdated() }
+            .help("Lists outdated packages without updating Homebrew first")
+        Button("Update") { model.update() }
+        Button("Clean Up…") { model.cleanUp() }
+        Button("Doctor") { model.doctor() }
     }
 
     private var summary: String {
@@ -669,7 +687,7 @@ struct HomebrewSheet: View {
                             }
                             .padding(AOMSpace.x2)
                         }
-                        .frame(height: 150)
+                        .frame(height: back == nil ? 150 : 76)
                         .background(AOMColor.field, in: RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous))
                         .overlay(RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous).strokeBorder(AOMColor.hairline))
                         .onChange(of: model.log.last?.id) { _, last in

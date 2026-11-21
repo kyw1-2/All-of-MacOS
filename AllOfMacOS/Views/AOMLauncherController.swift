@@ -207,9 +207,21 @@ final class AOMLauncherController: NSObject, NSWindowDelegate {
         if let clickMonitor { NSEvent.removeMonitor(clickMonitor); self.clickMonitor = nil }
     }
 
+    private var showingToolAlert = false
+
+    func withModalInteraction<T>(_ action: () -> T) -> T {
+        guard isVisible, panel?.isKeyWindow == true else { return action() }
+        showingToolAlert = true
+        defer {
+            showingToolAlert = false
+            if isVisible { panel?.makeKey() }
+        }
+        return action()
+    }
+
     func windowDidResignKey(_ notification: Notification) {
         // A sheet of the palette (Quicklinks, Link Rules) takes key on purpose.
-        guard isVisible, panel?.attachedSheet == nil, !PresetManager.isUIPreview else { return }
+        guard isVisible, !showingToolAlert, panel?.attachedSheet == nil, !PresetManager.isUIPreview else { return }
         dismiss(restoringFocus: false)
     }
 }

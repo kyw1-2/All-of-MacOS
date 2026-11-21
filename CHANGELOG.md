@@ -1,3 +1,10 @@
+## [7.2.0] - 2026-11-21
+
+- The launcher opens Homebrew updates, installed packages, services and searches in place. The default brew keyword searches packages locally in the launcher. Custom web quicklinks keep their configured URL.
+- Network Info, VPN/Tailscale, Spotlight filename search, folder-rule previews and the paste queue open in the same panel. Clipboard History can queue a result for Paste Next in Stack.
+- Open the model picker from root search with ⌘P, keep the question, then press Tab to ask. An unmodified Tab in the search editor submits the query, with a visible Ask AI button. Codex offers the models listed by its local CLI cache and passes the selected ID to the CLI.
+- Configure Automation collects action templates in one searchable list. Saved automations remain available in root search.
+
 ## [7.1.0] - 2026-11-21
 
 Fixes from an outside audit of 6.11/7.0, checked line by line against the code, and from Codex's audio review (`~/Documents/Codex/2026-11-21/new-chat/outputs/AOM-오디오-검수보고서.pdf`). What was adopted, rejected and why: `docs/review-7.1-audit.md`.

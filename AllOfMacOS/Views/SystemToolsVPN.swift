@@ -195,6 +195,7 @@ final class VPNModel: ObservableObject {
 /// Connect (which keeps its profiles to itself, so AOM only opens it).
 struct VPNSheet: View {
     @ObservedObject var model: VPNModel
+    var back: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -207,7 +208,8 @@ struct VPNSheet: View {
                 }
                 Spacer()
                 Button("VPN Settings…") { model.openVPNSettings() }
-                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction).buttonStyle(AOMPrimaryButtonStyle())
+                if let back { Button("Back", action: back) }
+                else { Button("Done") { dismiss() }.keyboardShortcut(.defaultAction).buttonStyle(AOMPrimaryButtonStyle()) }
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
@@ -218,13 +220,13 @@ struct VPNSheet: View {
             }
         }
         .padding(AOMSpace.x4)
-        .frame(minWidth: 600, idealWidth: 640, minHeight: 460, idealHeight: 540)
+        .frame(minWidth: back == nil ? 600 : 0, idealWidth: 640, minHeight: back == nil ? 460 : 0, idealHeight: 540)
         .background(AOMColor.canvas)
         .aomToast(model.toasts)
         .aomOnWindowVisibilityChange { visible in
             if visible { model.refreshForTiles(); model.startLive() } else { model.stopLive() }
         }
-        .onExitCommand { dismiss() }
+        .onExitCommand { if let back { back() } else { dismiss() } }
     }
 
     private var summary: String {

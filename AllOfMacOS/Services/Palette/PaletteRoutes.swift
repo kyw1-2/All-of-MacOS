@@ -15,6 +15,8 @@ import Darwin
 
 /// One screen the launcher pushes over the root search.
 enum PaletteRoute: Hashable {
+    case tool(LauncherTool)
+    case automationCatalog
     case killApps
     case uninstallApps
     case uninstallReview(URL)
@@ -36,6 +38,8 @@ enum PaletteRoute: Hashable {
 
     var title: String {
         switch self {
+        case .tool(let tool): return tool.title
+        case .automationCatalog: return "Configure Automation"
         case .killApps: return "Kill Apps"
         case .uninstallApps: return "Uninstall App"
         case .uninstallReview(let url): return "Uninstall \(url.deletingPathExtension().lastPathComponent)"
@@ -54,6 +58,8 @@ enum PaletteRoute: Hashable {
 
     var placeholder: String {
         switch self {
+        case .tool(let tool): return tool.title
+        case .automationCatalog: return "Find an automation action…"
         case .killApps: return "Search running apps…"
         case .uninstallApps: return "Search installed apps…"
         case .uninstallReview: return "Filter the items to remove…"
@@ -72,6 +78,8 @@ enum PaletteRoute: Hashable {
 
     var symbol: String {
         switch self {
+        case .tool(let tool): return tool.symbol
+        case .automationCatalog: return "bolt"
         case .killApps: return "xmark.octagon"
         case .uninstallApps, .uninstallReview: return "trash"
         case .soundDevices: return "hifispeaker.2"
