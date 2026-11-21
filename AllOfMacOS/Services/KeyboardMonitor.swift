@@ -638,11 +638,40 @@ class KeyboardMonitor: ObservableObject {
         let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
         let match = MainActor.assumeIsolated {
             TypedStringEngine.shared.observe(text: text, bundleID: bundleID,
-                                             registered: registeredTriggers, activationGroups: activationGroups)
+                                             registered: registeredTriggers, activationGroups: activationGroups,
+                                             generation: registrationGeneration)
         }
         guard let match, case .typedString(let spec) = match.trigger.input else { return false }
         let engine = TypedStringEngine.shared
         let trigger = match.trigger
+        // 7.3: a snippet with placeholders. A broken template expands to
+        // nothing (the abbreviation stays as typed); one with {arg:…}
+        // fields lets its last key through and asks in the launcher.
+        if spec.usesPlaceholders, !spec.replacement.isEmpty {
+            guard case .success(let tokens) = SnippetTemplate.parse(spec.replacement) else {
+                MainActor.assumeIsolated { engine.reset() }
+                return false
+            }
+            let names = SnippetTemplate.argumentNames(tokens)
+            let front = NSWorkspace.shared.frontmostApplication
+            if !names.isEmpty {
+                DispatchQueue.main.async {
+                    engine.reset()
+                    PaletteSnippetForm.askFromTyping(snippetID: trigger.id, names: names, erase: spec.abbreviation.count, target: front)
+                }
+                return false
+            }
+            DispatchQueue.global(qos: .userInitiated).async {
+                engine.erase(match.backspaces)
+                DispatchQueue.main.async {
+                    engine.reset()
+                    SnippetInserter.insert(SnippetTemplate.render(tokens), into: front) { _, note in
+                        if let note { GestureHUD.shared.show(title: "Snippet", detail: note) }
+                    }
+                }
+            }
+            return true
+        }
         DispatchQueue.global(qos: .userInitiated).async {
             engine.erase(match.backspaces)
             Task { @MainActor in engine.reset() }

@@ -27,6 +27,8 @@ struct AddTriggerSheet: View {
     @State private var keyboardMode = "shortcut"
     @State private var typedAbbreviation = ""
     @State private var typedReplacement = ""
+    /// 7.3: {clipboard}, {date}, {cursor}, {arg:name} in the replacement.
+    @State private var typedPlaceholders = false
     @State private var sequenceStrokes: [KeySequenceStroke] = []
     @State private var sequenceHoldEnabled = false
     @State private var sequenceHoldMs = 600
@@ -273,7 +275,11 @@ struct AddTriggerSheet: View {
         switch category {
         case .keyboard:
             if keyboardMode == "sequence" { return (sequenceHoldEnabled ? sequenceStrokes.count == 1 : sequenceStrokes.count >= 2) && sequenceStrokes.count <= 6 }
-            if keyboardMode == "typed" { return typedStringIsValid }
+            if keyboardMode == "typed" {
+                // A placeholder mistake blocks Add (its position is shown below the field).
+                if typedPlaceholders, case .failure = SnippetTemplate.parse(typedReplacement) { return false }
+                return typedStringIsValid
+            }
             return recordedShortcut != nil
         case .trackpad: return TriggerValidation.problem(for: .trackpadGesture(selectedGesture), requiredModifiers: trackpadModifiers) == nil
         case .normalMouse: return TriggerValidation.problem(for: mouseInput, requiredModifiers: mouseModifiers) == nil
@@ -708,9 +714,30 @@ struct AddTriggerSheet: View {
         VStack(alignment: .leading, spacing: AOMSpace.x2) {
             TextField("Abbreviation, e.g. ;email", text: $typedAbbreviation)
                 .textFieldStyle(.roundedBorder)
-            TextField("Replacement text (empty = run the trigger's actions)", text: $typedReplacement)
+            TextField("Replacement text (empty = run the trigger's actions)", text: $typedReplacement, axis: .vertical)
+                .lineLimit(1...6)
                 .textFieldStyle(.roundedBorder)
-            AOMEditorNote("Never expands in password fields.")
+            HStack(spacing: AOMSpace.x2) {
+                Toggle("Placeholders", isOn: $typedPlaceholders)
+                    .help("Read {clipboard}, {date}, {time}, {cursor} and {arg:name} in the text; {{ and }} type braces")
+                Menu("Insert") {
+                    ForEach([("Clipboard text", "{clipboard}"), ("Today (2026-11-21)", "{date}"), ("Date, your format", "{date:yyyy.MM.dd}"),
+                             ("Time (14:05)", "{time}"), ("Cursor here", "{cursor}"), ("Ask for a field", "{arg:name}")], id: \.1) { title, token in
+                        Button(title) { typedPlaceholders = true; typedReplacement += token }
+                    }
+                }
+                .fixedSize()
+            }
+            // 7.3: the snippet test — the same renderer as the expansion, nothing typed anywhere.
+            if typedPlaceholders, !typedReplacement.isEmpty {
+                let preview = PaletteSnippets.preview(text: typedReplacement, syntax: SnippetTemplate.currentSyntax)
+                Text(preview.hasPrefix("⚠︎") ? preview : "Types: " + preview)
+                    .font(AOMFont.caption)
+                    .foregroundStyle(preview.hasPrefix("⚠︎") ? AOMColor.dangerText : AOMColor.textSecondary)
+                    .lineLimit(4)
+                    .textSelection(.enabled)
+            }
+            AOMEditorNote(typedPlaceholders ? "Never expands in password fields. Fields ({arg:…}) are asked in the launcher; esc leaves your text as typed." : "Never expands in password fields.")
         }
     }
 
@@ -757,7 +784,8 @@ struct AddTriggerSheet: View {
                 input = .keySequence(sequenceStrokes)
             } else if keyboardMode == "typed" {
                 input = .typedString(TypedStringSpec(abbreviation: typedAbbreviation.trimmingCharacters(in: .whitespacesAndNewlines),
-                                                     replacement: typedReplacement))
+                                                     replacement: typedReplacement,
+                                                     syntax: typedPlaceholders ? SnippetTemplate.currentSyntax : nil))
             } else {
                 guard let shortcut = recordedShortcut else { return }
                 input = .keyboardShortcut(shortcut)

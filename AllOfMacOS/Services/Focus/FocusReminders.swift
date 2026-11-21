@@ -66,8 +66,11 @@ final class FocusReminderController {
         kind == .eyes ? Self.eyeInterval : TimeInterval(settings.settings.standMinutes) * 60
     }
 
+    /// 7.3: the Focus module switch.
+    var moduleOn = true
+
     func isEnabled(_ kind: FocusReminderKind) -> Bool {
-        kind == .eyes ? settings.settings.eyeBreaksEnabled : settings.settings.standBreaksEnabled
+        moduleOn && (kind == .eyes ? settings.settings.eyeBreaksEnabled : settings.settings.standBreaksEnabled)
     }
 
     /// Starts or stops each reminder to match the settings.

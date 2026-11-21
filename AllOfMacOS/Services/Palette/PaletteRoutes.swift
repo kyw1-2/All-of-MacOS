@@ -33,6 +33,8 @@ enum PaletteRoute: Hashable {
     case ai
     /// 7.0: the model picker (⌘P on Ask AI).
     case aiModels
+    /// 7.3: what the next question may read (@wiki, @files …).
+    case aiRecords
     /// The pending in-panel confirmation (one at a time).
     case confirm
     // 7.2 (Oracle report 05 and the Codex 7.2 review).
@@ -49,12 +51,16 @@ enum PaletteRoute: Hashable {
     case scriptOutput(String)
     /// The field takes a script's argument before it runs.
     case scriptArgument(String)
+    /// 7.3: the field takes a snippet's {arg:…} fields, one at a time.
+    case snippetArguments(UUID)
     case schedule
     case contacts
     /// LaunchBar's Instant Send: what to do with a row's text.
     case sendTo(PaletteSendPayload)
     /// Waiting for the key a row's hotkey becomes.
     case hotkey(itemID: String, title: String)
+    /// 7.3: press a key combination to see everything that uses it.
+    case hotkeyFinder
 
     var title: String {
         switch self {
@@ -72,6 +78,7 @@ enum PaletteRoute: Hashable {
         case .menuBarItems: return "Menu Bar Items"
         case .ai: return "Ask AI"
         case .aiModels: return "Choose Model"
+        case .aiRecords: return "Records for the Next Question"
         case .confirm: return "Confirm"
         case .folder(let url): return url.path == "/" ? "Macintosh HD" : url.lastPathComponent
         case .rulePreview: return "Rule Preview"
@@ -81,10 +88,12 @@ enum PaletteRoute: Hashable {
         case .scripts: return "Script Commands"
         case .scriptOutput: return "Output"
         case .scriptArgument: return "Run Script"
+        case .snippetArguments: return "Fill In Snippet"
         case .schedule: return "My Schedule"
         case .contacts: return "Contacts"
         case .sendTo: return "Send To"
         case .hotkey: return "Set Hotkey"
+        case .hotkeyFinder: return "Find a Shortcut"
         }
     }
 
@@ -104,6 +113,7 @@ enum PaletteRoute: Hashable {
         case .menuBarItems: return "Search menu bar items, even those behind the notch…"
         case .ai: return "Ask anything…"
         case .aiModels: return "Search models…"
+        case .aiRecords: return "Filter sources — ↩ adds or removes one"
         case .confirm: return "↑↓ to choose, ↩ to confirm, esc to go back"
         case .folder: return "Filter this folder…"
         case .rulePreview: return "Filter the files…"
@@ -113,10 +123,12 @@ enum PaletteRoute: Hashable {
         case .scripts: return "Search script commands…"
         case .scriptOutput: return "Filter the output…"
         case .scriptArgument: return "Type the argument, then ↩"
+        case .snippetArguments: return "Type the field, then ↩ (esc leaves the text as it was)"
         case .schedule: return "Search the next seven days…"
         case .contacts: return "Search names, companies, addresses or numbers…"
         case .sendTo: return "Where should it go?"
         case .hotkey: return "Press the new shortcut (esc cancels)"
+        case .hotkeyFinder: return "Press a shortcut to see what uses it (esc goes back)"
         }
     }
 
@@ -135,23 +147,24 @@ enum PaletteRoute: Hashable {
         case .menuBarItems: return "menubar.rectangle"
         case .ai: return "sparkles"
         case .aiModels: return "cpu"
+        case .aiRecords: return "tray.full"
         case .confirm: return "exclamationmark.triangle"
         case .folder: return "folder"
         case .rulePreview: return "folder.badge.gearshape"
         case .emoji: return "face.smiling"
-        case .snippets, .newSnippet: return "text.badge.plus"
+        case .snippets, .newSnippet, .snippetArguments: return "text.badge.plus"
         case .scripts, .scriptOutput, .scriptArgument: return "terminal"
         case .schedule: return "calendar"
         case .contacts: return "person.crop.circle"
         case .sendTo: return "paperplane"
-        case .hotkey: return "keyboard"
+        case .hotkey, .hotkeyFinder: return "keyboard"
         }
     }
 
     /// Typing filters this screen's rows (a confirmation has two fixed rows).
     var isSearchable: Bool {
         switch self {
-        case .confirm, .hotkey: return false
+        case .confirm, .hotkey, .hotkeyFinder: return false
         default: return true
         }
     }

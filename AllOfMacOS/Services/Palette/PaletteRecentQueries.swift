@@ -43,6 +43,16 @@ struct PaletteRecentQueries: Codable, Equatable {
     }
 
     mutating func clear() { entries.removeAll() }
+
+    /// 7.3 (7.2.1 audit B15): drops what is past a week, so an expired search
+    /// doesn't stay in the stored preferences until the next one is recorded.
+    @discardableResult
+    mutating func pruneExpired(now: Date = Date()) -> Bool {
+        let kept = entries.filter { now.timeIntervalSince($0.date) < Self.maxAge }
+        guard kept.count != entries.count else { return false }
+        entries = kept
+        return true
+    }
 }
 
 @MainActor
@@ -63,6 +73,7 @@ final class PaletteRecentQueryStore {
         if let data = self.defaults?.data(forKey: Self.key),
            let saved = try? JSONDecoder().decode(PaletteRecentQueries.self, from: data) {
             value = saved
+            if value.pruneExpired() { save() }
         } else if PresetManager.isUIPreview {
             value.record("homepod")
             value.record("brew outdated")

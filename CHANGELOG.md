@@ -1,3 +1,40 @@
+## [7.3.0] - 2026-11-21
+
+The Codex review of 7.2.3 (`AOM-7.2.3-통합검수와-개선보고서`, five bundles P0–P2) and the DeepSeek design v2 it reviewed (`AOM-7.2.2-통합설계-v2`, Oracle report 06, with the Ghidra/REA evidence on Input Source Pro, Yoink, Bunch and Espanso). Each Codex finding was checked against the 7.2.3 code first; where the two reports disagree, the Codex correction is followed. What was taken, changed and left: `docs/design-7.3.md`.
+
+### Files — nothing is replaced or lost
+- **Batch Rename Undo puts back only the files it renamed.** Undo checked paths only, so after a renamed file was put away and a new file took its name, Undo renamed the new file (reproduced). Each rename now records the file's volume and inode; Undo leaves a different file alone, refuses a name that is taken again, and lists what it couldn't put back with Show in Finder. An edit in place still goes back. Renames use `RENAME_EXCL`, so a name taken between the preview and the move fails instead of replacing that file.
+- **Image conversion never overwrites.** PNG, JPEG and HEIC were written straight to "Photo-png.png" over an existing file (reproduced). Every format is written to a temporary file and renamed to the first free name ("Photo-png 2.png"), so two conversions at once keep both.
+- **An unreadable Drop Shelf or AI chat list is kept.** `shelf.json` and `chats.json` that couldn't be decoded started empty and were saved over. Like Focus since 7.2.3, they are set aside as `*.unreadable-<date>.json`, one that can't be read blocks saving, and the shelf and AI Chat show a notice.
+- **Recent file activity.** The Files page lists this session's shelf moves and copies, received files, renames and conversions, with each failure and why, and Undo while it still applies.
+
+### Ask AI — a question reads only what it names
+- **No records unless a question names them.** 7.2 gave every API model all four record tools by default, and a search without sources read every source, the SSH config included. Now `@wiki`, `@memories`, `@docs` (`@mac` is all three), `@claude`, `@codex`, `@chats`, `@shell`, `@ssh` (config and known_hosts only, never keys), `@files` (a folder you choose, or `@~/path`) and `@clip` (the clipboard text, attached once) decide what one question may read; ⌘⇧M opens Records for the Next Question and reuses the last choice. The scope is fixed when the question is sent and is the same for the prompt, the tool schemas (each tool once, its source list cut to what was allowed) and every tool round; the executor checks each call again and never widens an empty or disjoint list to everything.
+- **Where it goes, said before and after.** The Local Proxy counts as leaving the Mac (its Haiku route goes to DeepSeek); Ollama counts as on-device only on a loopback address with a local model. Under each answer a line says where the question went, what it was allowed, what was read, the clipboard and how many earlier turns went with it.
+- **Switching provider holds the conversation back.** Earlier turns go to a newly chosen provider only after Include Earlier Turns.
+- Settings › AI: "Only what a question mentions" or "Never"; the 7.2 switch turned off stays off. On-device models may read @mac without a mention if you turn that on.
+- The record search stops at its time limit while listing too; Spotlight results are read as they come and the newest 40 kept (a recent file after the first 5,000 was missed); a stopped search says so. The log keeps tool names only, no queries or paths.
+
+### Launcher
+- **Folders are read whole, off the main thread.** A folder of 2,400 files lost 400 (the first 2,000 were kept, then sorted). Every item is listed and sorted in the background, a late answer for a folder you left is dropped, 400 rows draw at a time with Show More, typing searches all of them, and a missing folder, a refused one and a silent network volume each say so.
+- **Snippet placeholders.** A snippet saved with placeholders can use `{clipboard}`, `{date}`, `{date:yyyy.MM.dd}`, `{time}`, `{cursor}` and `{arg:name}` (`{{`/`}}` for braces); snippets saved before stay literal. Short text is typed; a short line after `{cursor}` is typed and the caret walked back; longer text is pasted and the clipboard put back unless something else was copied meanwhile (a clipboard that can't be restored whole is never pasted over). Fields are asked in the launcher; from a typed abbreviation, Esc leaves your text as typed. The editor previews the result and points at a mistake.
+- **Find a Shortcut** shows everything that uses a key combination — the launcher, launcher hotkeys, AOM shortcuts, automations with the apps they're limited to, and macOS Mission Control and Spaces keys — with the way to change each.
+- **Folder favorites:** save a folder and its filter, open it from the search; a moved folder says so and can be chosen again.
+- **Scenes** run from the search ("Scene: Coding").
+- Script Commands run in their own folder (B14); a command cancelled before it starts never runs (B19); the week's schedule says how many events weren't listed (B17); a failed Contacts read says so (B18); expired recent searches are pruned (B15); Wi-Fi and DNS are read off the main thread; a script's trust hash is kept until the file changes.
+
+### New
+- **Input source badge.** A small 한 or A beside the text cursor — or the pointer where an app gives no caret — for a moment when the input source changes, by a rule or your own 한/영 key. No Screen Recording; never in password fields, on the lock screen or for the launcher's own switch. Settings › General. The automation trigger and the badge share one input source observer, and the per-app rule no longer re-applies over a key you pressed.
+- **Scenes** (Window Tiling › Scenes): open apps and wait for their windows → arrange them with a saved layout → sound output (found by UID, then kind and name), appearance, Keep Awake → a Focus session → quit apps (politely, last). Preview shows what is already so and what can't run now; each step reports done, already, skipped or failed; Cancel stops before the next step; Run Failed Steps runs only those.
+- **Module switches** (Settings › General › Modules): Files, Folder Rules, Text Actions, Focus, Mic Mute, Input Sources, Screen Ruler and Click Hints turn off without a restart — their observers, monitors, timers and panels stop, and every way in says the module is off. The launcher is always on. Focus can't be turned off during a session; turning Mic Mute off never changes the microphone.
+
+### Drop Shelf
+- A mixed drop (Finder files and an image from Safari) keeps every file; promised files are counted in ("Receiving 2 of 5…") and all of them selected at the end. All selected files drag out, not the first 64. One mouse monitor serves every row instead of one per row; moves update and save the shelf once. New option: hide after dragging files out.
+
+### Efficiency and release
+- Batch Rename's preview makes no date formatter unless `{date}` is used (92 → 29 ms for 1,000 names in the Codex measurement); typed-string matching prepares its abbreviations once per change instead of on every key; Focus logs are encoded off the main thread; Large Files keeps only the top results while scanning; command output without newlines is capped.
+- The annotation extensions are signed once, after their version is set; a tests-only main push runs the test workflow (B21); the local proxy counts as up only when it answers like claude-code-proxy (B23).
+
 ## [7.2.3] - 2026-11-21
 
 The P1/P2 bugs from the integrated audit of 7.2.1 that 7.2.2 left out (B01, B06, B08, B09, B10), each reproduced against the 7.2.2 code first. Notes: `docs/design-7.2-launcher.md` § 7.2.3.

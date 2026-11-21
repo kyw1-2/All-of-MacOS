@@ -15,6 +15,16 @@ enum PaletteSnippets {
         let text: String
         let name: String
         let isEnabled: Bool
+        /// 7.3: placeholders on (TypedStringSpec.syntax).
+        var syntax: Int? = nil
+
+        var usesPlaceholders: Bool { syntax == SnippetTemplate.currentSyntax }
+
+        /// The {arg:…} fields it asks for, in order.
+        var argumentNames: [String] {
+            guard usesPlaceholders, case .success(let tokens) = SnippetTemplate.parse(text) else { return [] }
+            return SnippetTemplate.argumentNames(tokens)
+        }
     }
 
     static let namePrefix = "Snippet: "
@@ -25,7 +35,7 @@ enum PaletteSnippets {
             guard case .typedString(let spec) = trigger.input, !spec.replacement.isEmpty else { return nil }
             return Snippet(id: trigger.id, abbreviation: spec.abbreviation, text: spec.replacement,
                            name: trigger.name.hasPrefix(namePrefix) ? String(trigger.name.dropFirst(namePrefix.count)) : trigger.name,
-                           isEnabled: trigger.isEnabled)
+                           isEnabled: trigger.isEnabled, syntax: spec.syntax)
         }
         .sorted { $0.abbreviation.localizedStandardCompare($1.abbreviation) == .orderedAscending }
     }
@@ -45,9 +55,33 @@ enum PaletteSnippets {
     }
 
     /// A typed-string trigger that types `text` after `abbreviation`.
-    static func trigger(abbreviation: String, text: String) -> Trigger {
+    static func trigger(abbreviation: String, text: String, placeholders: Bool = false) -> Trigger {
         let keyword = abbreviation.trimmingCharacters(in: .whitespaces)
         let firstLine = text.split(separator: "\n").first.map { String($0.prefix(40)) } ?? keyword
-        return Trigger(name: namePrefix + firstLine, input: .typedString(TypedStringSpec(abbreviation: keyword, replacement: text)))
+        return Trigger(name: namePrefix + firstLine, input: .typedString(TypedStringSpec(abbreviation: keyword, replacement: text,
+                                                                                         syntax: placeholders ? SnippetTemplate.currentSyntax : nil)))
+    }
+
+    /// 7.3: the snippet test — what it would insert now, or what is wrong
+    /// with the template and where.
+    static func preview(_ snippet: Snippet, arguments: [String: String] = [:]) -> String {
+        preview(text: snippet.text, syntax: snippet.syntax, arguments: arguments)
+    }
+
+    /// Missing fields show as ‹name›, the clipboard as [clipboard], the cursor as ▏.
+    static func preview(text: String, syntax: Int?, arguments: [String: String] = [:], now: Date = Date()) -> String {
+        var filled = arguments
+        if syntax == SnippetTemplate.currentSyntax, case .success(let tokens) = SnippetTemplate.parse(text) {
+            for name in SnippetTemplate.argumentNames(tokens) where (filled[name] ?? "").isEmpty { filled[name] = "‹\(name)›" }
+        }
+        switch SnippetTemplate.render(text: text, syntax: syntax,
+                                      context: .init(now: now, clipboard: { "[clipboard]" }, arguments: filled)) {
+        case .success(let render):
+            var shown = render.text
+            if let after = render.charactersAfterCursor { shown.insert("▏", at: shown.index(shown.endIndex, offsetBy: -after)) }
+            return shown
+        case .failure(let error):
+            return "⚠︎ \(error.message) (at character \(error.offset + 1))"
+        }
     }
 }

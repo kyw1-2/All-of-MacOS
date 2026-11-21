@@ -458,6 +458,9 @@ struct QuickCommandPalette: View {
         if isSearching {
             items += applicationItems()
             items += snippetRootItems()
+            items += sceneRootItems()
+            items += finderRootItems()
+            items += folderFavoriteRows()
             items += scriptRootItems()
             items += contactRootItems()
             items += eventSearchItems()
@@ -1084,7 +1087,13 @@ struct QuickCommandPalette: View {
                 case .tool(let tool) where tool.takesQuery: items = toolItems(tool)
                 case .emoji: items = emojiItems()
                 case .contacts: items = contactItems()
-                case .hotkey, .newSnippet, .scriptArgument: items = routeItems(route)
+                case .hotkey, .hotkeyFinder, .newSnippet, .scriptArgument, .snippetArguments: items = routeItems(route)
+                // 7.3: loading, error and "Show More" rows stay while typing.
+                case .folder(let url):
+                    let rows = folderItems(url)
+                    let fixed: Set<String> = ["folder.loading", "folder.error"]
+                    items = rows.contains { fixed.contains($0.id) } ? rows
+                        : PaletteSearch.filtered(rows.filter { $0.id != "folder.more" }, query: query) + rows.filter { $0.id == "folder.more" && query.isEmpty }
                 default: items = PaletteSearch.filtered(routeItems(route), query: query)
                 }
             } else {
@@ -1170,7 +1179,8 @@ struct QuickCommandPalette: View {
                 if !term.isEmpty { brew.whenIdle { if brew.searchText == term, brew.tab == .search { brew.search() } } }
             }
         case .tool, .automationCatalog, .folder, .rulePreview, .emoji, .snippets, .newSnippet, .scripts, .scriptOutput,
-             .scriptArgument, .schedule, .contacts, .sendTo, .hotkey: break
+             .scriptArgument, .snippetArguments, .schedule, .contacts, .sendTo, .hotkey: break
+        case .hotkeyFinder: PaletteHotkeyFinder.shared.shortcut = nil
         case .killApps: screens.watchApps(true)
         case .uninstallReview(let app): screens.beginUninstall(app)
         case .soundDevices: screens.loadSound()
@@ -1181,7 +1191,7 @@ struct QuickCommandPalette: View {
         case .ai:
             ai.prewarm()
             Task { await AOMAIConfig.probeLocalProxy() }
-        case .uninstallApps, .clipboard, .windowLayouts, .keepAwake, .system, .aiModels, .confirm: break
+        case .uninstallApps, .clipboard, .windowLayouts, .keepAwake, .system, .aiModels, .aiRecords, .confirm: break
         }
     }
 
@@ -1292,6 +1302,112 @@ struct QuickCommandPalette: View {
     /// The Ask AI screen: with a conversation, one row carrying its actions
     /// (the transcript is drawn instead of the list); without, the AI
     /// commands, recent chats, the model picker and AI Chat.
+    /// 7.3: the rows that say what the next question shares — its records
+    /// (typed @ mentions and the Records screen's choices), where it goes,
+    /// and earlier turns held back after a switch of provider.
+    private func aiScopeRows() -> [PaletteItem] {
+        var rows: [PaletteItem] = []
+        let parsed = AOMAIRecordScope.parse(trimmed, lastFolders: Array(ai.recentFolders.prefix(1)))
+        let scope = parsed.scope.union(ai.pendingScope)
+        let egress = ai.egress
+        let effective = AOMAIRecordsMode.effective(scope, egress: egress, mode: .current, onDeviceReadsMac: AOMAIRecordsMode.onDeviceReadsMac)
+        let reads = effective.summary == "Nothing" ? (scope.attachesClipboard ? "Clipboard text only" : "No records")
+            : "Reads " + effective.summary + (scope.attachesClipboard ? ", clipboard text" : "")
+        let destination: String
+        switch egress {
+        case .onDevice: destination = "Stays on this Mac"
+        case .loopbackProxy: destination = "Leaves this Mac via the Local Proxy"
+        case .external(let host): destination = "Sent to \(host)"
+        case .agent: destination = "\(ai.model.provider.title) reads with its own access"
+        }
+        var subtitle = effective.isEmpty && !scope.attachesClipboard
+            ? "\(destination) · type @wiki @mac @files @ssh @clip, or ↩"
+            : destination
+        if AOMAIRecordsMode.current == .never, !scope.isEmpty {
+            subtitle = "Records are off in Settings › AI, so nothing is read"
+        } else if !effective.isEmpty, !ai.model.provider.takesRecordTools {
+            subtitle = ai.model.provider.isAgent ? "\(ai.model.provider.title) reads with its own read-only access instead"
+                : "\(ai.model.provider.title) can't read records; only @clip goes with it"
+        }
+        var records = screenRow("ai.records", reads, subtitle,
+                                icon: effective.isEmpty ? "tray" : "tray.full", group: "Next question",
+                                primary: PaletteAction(title: "Choose Records…", symbol: "tray.full", effect: .push(.aiRecords)) {},
+                                secondaries: [
+                                    PaletteAction(title: "Use Last Question's Records", symbol: "arrow.uturn.backward", effect: .stay) { ai.reuseLastScope() },
+                                    PaletteAction(title: "Clear Records", symbol: "xmark.circle", effect: .stay) { ai.clearPendingScope() },
+                                ])
+        records.shortcut = "⌘⇧M"
+        rows.append(records)
+        if ai.heldTurns > 0 {
+            rows.append(screenRow("ai.heldturns", "\(ai.heldTurns) earlier turn\(ai.heldTurns == 1 ? "" : "s") stay on this Mac",
+                                  "You switched to \(ai.model.provider.title); they go with the next question only if you include them",
+                                  icon: "lock.rectangle.stack", group: "Next question",
+                                  primary: PaletteAction(title: "Include Earlier Turns", symbol: "arrow.up.forward", effect: .stay) { ai.includeEarlierTurns() },
+                                  secondaries: [PaletteAction(title: "New Chat", symbol: "square.and.pencil", effect: .stay) { ai.newChat() }]))
+        }
+        return rows
+    }
+
+    /// 7.3: the Records screen — ↩ adds or removes a source for the next
+    /// question; @mac's three are listed first, the ones that hold other
+    /// AIs' chats, shell history, SSH or a folder need a choice of their own.
+    private func aiRecordItems() -> [PaletteItem] {
+        var rows: [PaletteItem] = []
+        let pending = ai.pendingScope
+        // @mac's three first, then the ones that need a choice of their own.
+        let ordered = AOMAIRecordSource.allCases.filter { $0 != .files && !$0.isSensitive } + AOMAIRecordSource.allCases.filter { $0 != .files && $0.isSensitive }
+        for source in ordered {
+            let on = pending.sources.contains(source)
+            var row = screenRow("airec.\(source.rawValue)", source.title, "\(source.mention) · \(source.detail)", icon: source.symbol,
+                                group: source.isSensitive ? "Ask each time" : "@mac",
+                                primary: PaletteAction(title: on ? "Remove" : "Add", symbol: on ? "minus.circle" : "plus.circle", effect: .stay) {
+                                    ai.toggle(source)
+                                })
+            row.accessory = on ? "✓ Added" : nil
+            row.keywords = source.mention
+            rows.append(row)
+        }
+        for folder in pending.folders {
+            var row = screenRow("airec.folder.\(folder)", (folder as NSString).abbreviatingWithTildeInPath, "@files · read-only, this folder and its subfolders",
+                                icon: "folder", group: "Folders",
+                                primary: PaletteAction(title: "Remove", symbol: "minus.circle", effect: .stay) {
+                                    ai.pendingScope.folders.removeAll { $0 == folder }
+                                    if ai.pendingScope.folders.isEmpty { ai.pendingScope.sources.remove(.files) }
+                                })
+            row.accessory = "✓ Added"
+            rows.append(row)
+        }
+        for folder in ai.recentFolders.prefix(5) where !pending.folders.contains(folder) {
+            rows.append(screenRow("airec.recent.\(folder)", (folder as NSString).abbreviatingWithTildeInPath, "@files · chosen before",
+                                  icon: "folder", group: "Folders",
+                                  primary: PaletteAction(title: "Add", symbol: "plus.circle", effect: .stay) { ai.addFolder(URL(fileURLWithPath: folder)) }))
+        }
+        rows.append(screenRow("airec.choosefolder", "Choose a Folder…", "@files · only what is inside it may be read", icon: "folder.badge.plus",
+                              group: "Folders", primary: PaletteAction(title: "Choose…", effect: .stay) { chooseAIFolder() }))
+        if !pending.isEmpty || pending.attachesClipboard {
+            rows.append(screenRow("airec.clear", "Clear All", "The next question reads nothing", icon: "xmark.circle", group: "Done",
+                                  primary: PaletteAction(title: "Clear", effect: .stay) { ai.clearPendingScope() }))
+        }
+        rows.append(screenRow("airec.done", "Done", pending.summary == "Nothing" && !pending.attachesClipboard ? "Nothing chosen" : "Next question reads \(pending.summary)",
+                              icon: "checkmark.circle", group: "Done", primary: PaletteAction(title: "Done", effect: .stay) { pop() }))
+        return rows
+    }
+
+    private func chooseAIFolder() {
+        guard !PresetManager.isUIPreview else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Allow"
+        panel.message = "Ask AI may read this folder (read-only) for the next question."
+        AOMOverlayActivation.activateForOverlay()
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            MainActor.assumeIsolated { ai.addFolder(url) }
+        }
+    }
+
     private func aiItems() -> [PaletteItem] {
         if !ai.messages.isEmpty {
             let pasteTitle = frontAppForAI.map { "Paste to \($0.localizedName ?? "App")" } ?? "Copy Answer"
@@ -1316,7 +1432,7 @@ struct QuickCommandPalette: View {
                                     : PaletteAction(title: pasteTitle, symbol: "doc.on.clipboard") { pasteAnswer() },
                                 secondaries: secondaries, secondaryLimit: .max)
             answer.sendText = ai.isRunning ? nil : ai.lastAnswer
-            return [answer]
+            return [answer] + (ai.isRunning ? [] : aiScopeRows())
         }
         var items: [PaletteItem] = []
         if isSearching {
@@ -1326,6 +1442,7 @@ struct QuickCommandPalette: View {
             ask.accessory = "↩"
             items.append(ask)
         }
+        items += aiScopeRows()
         items += PaletteAICommand.all.map(aiCommandItem)
         for record in AOMAIChatHistory.shared.records.prefix(4) {
             var row = screenRow("aichat.\(record.id.uuidString)", record.title,
@@ -1422,6 +1539,7 @@ struct QuickCommandPalette: View {
         case .menuBarItems: return menuBarItemRows()
         case .ai: return aiItems()
         case .aiModels: return aiModelItems()
+        case .aiRecords: return aiRecordItems()
         case .confirm: return confirmationItems()
         case .folder(let url): return folderItems(url)
         case .rulePreview(let id): return rulePreviewItems(id)
@@ -1431,10 +1549,12 @@ struct QuickCommandPalette: View {
         case .scripts: return scriptItems()
         case .scriptOutput: return scriptOutputItems()
         case .scriptArgument(let id): return scriptArgumentItems(id)
+        case .snippetArguments(let id): return snippetArgumentItems(id)
         case .schedule: return scheduleItems()
         case .contacts: return contactItems()
         case .sendTo(let payload): return sendToItems(payload)
         case .hotkey(let itemID, let title): return hotkeyItems(itemID: itemID, title: title)
+        case .hotkeyFinder: return hotkeyFinderItems()
         }
     }
 
@@ -2074,7 +2194,7 @@ struct QuickCommandPalette: View {
 
     /// Pure: what the AI rows depend on (not the streamed text).
     static func aiSignature(_ chat: PaletteAIChat) -> String {
-        "\(chat.messages.count)|\(chat.isRunning)|\(chat.lastAnswer == nil)|\(chat.model.key)|\(chat.chatID)"
+        "\(chat.messages.count)|\(chat.isRunning)|\(chat.lastAnswer == nil)|\(chat.model.key)|\(chat.chatID)|\(chat.pendingScope.summary)|\(chat.historyStart)|\(chat.recentFolders.count)"
     }
 
     /// 7.0: screens whose rows have something to show beside them.

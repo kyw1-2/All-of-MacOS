@@ -404,7 +404,13 @@ final class FileToolsModel: ObservableObject {
                 do {
                     let output = try self.service.convertImage(url: url, to: format)
                     self.succeed("Saved \(output.lastPathComponent)")
-                } catch { self.fail("Image Not Converted", error.localizedDescription) }
+                    FilesActivityLog.shared.record("Converted \(url.lastPathComponent) to \(output.lastPathComponent)", tool: "Convert Image",
+                                                   files: [output], failures: [])
+                } catch {
+                    self.fail("Image Not Converted", error.localizedDescription)
+                    FilesActivityLog.shared.record("Couldn't convert \(url.lastPathComponent) to \(format.rawValue.uppercased())", tool: "Convert Image",
+                                                   files: [], failures: [.init(url: url, reason: error.localizedDescription)])
+                }
             })
         }
         popUp(menu)
@@ -456,10 +462,24 @@ final class FileToolsModel: ObservableObject {
             let done = try BatchRename.apply(rows)
             let count = done.moves.count
             guard count > 0 else { succeed("No name changed"); return }
+            FilesActivityLog.shared.record("Renamed \(count) file\(count == 1 ? "" : "s")", tool: "Batch Rename",
+                                           files: done.moves.map(\.to), failures: [])
             toasts.show("Renamed \(count) file\(count == 1 ? "" : "s")", tone: .success, actionTitle: "Undo") { [weak self] in
-                let failed = BatchRename.undo(done)
-                if failed == 0 { self?.succeed("Names put back") }
-                else { self?.fail("Not All Names Put Back", "\(failed) file\(failed == 1 ? " was" : "s were") moved or renamed since.") }
+                // 7.3: only the files that are still the renamed ones go back;
+                // the rest are named with where they are now.
+                let back = BatchRename.undoResult(done)
+                FilesActivityLog.shared.record("Put back \(back.done.count) of \(count) names", tool: "Batch Rename",
+                                               files: back.done.map(\.to), failures: back.failures)
+                if back.failures.isEmpty { self?.succeed("Names put back") }
+                else {
+                    let shown = back.failures.prefix(3).map { "\($0.reason) (\(($0.url.deletingLastPathComponent().path as NSString).abbreviatingWithTildeInPath))" }
+                    let more = back.failures.count > 3 ? " … and \(back.failures.count - 3) more" : ""
+                    let urls = back.failures.map(\.url)
+                    self?.toasts.show("\(back.done.count) of \(count) names put back: " + shown.joined(separator: "; ") + more + ".",
+                                      tone: .danger, seconds: 12, actionTitle: "Show in Finder") {
+                        NSWorkspace.shared.activateFileViewerSelecting(urls)
+                    }
+                }
             }
         } catch { fail("Files Not Renamed", error.localizedDescription) }
     }

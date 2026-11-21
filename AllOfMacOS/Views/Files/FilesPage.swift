@@ -57,6 +57,7 @@ struct FilesPage: View {
             }
             FilesShelfSection(settings: settings, shelf: shelf, toast: toast, openShortcutSettings: openShortcutSettings,
                               quickLook: quickLook)
+            FilesActivitySection(log: FilesActivityLog.shared)
             FilesRecentSection(recent: recent, toast: toast, quickLook: quickLook)
             diskImageSection
         }

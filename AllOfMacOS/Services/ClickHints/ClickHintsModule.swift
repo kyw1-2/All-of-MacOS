@@ -27,6 +27,7 @@ enum ClickHintsModule {
     /// Shows hints over the front window, or takes them down if they are up
     /// (the shortcut toggles).
     static func showHints() {
+        guard AOMModuleSwitches.shared.allows(.clickHints) else { return }
         if let session = ClickHintsSession.active {
             session.finish()
             return

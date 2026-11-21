@@ -235,9 +235,17 @@ enum CleanupTools {
             if size >= minimumBytes {
                 found.append(CleanupCandidate(url: url, size: size, note: url.deletingLastPathComponent().path
                     .replacingOccurrences(of: FileManager.default.homeDirectoryForCurrentUser.path, with: "~")))
+                // 7.3 (Codex 7.2.3 report): only the largest `limit` are kept
+                // while scanning, not every big file of the disk.
+                if found.count >= limit * 2 { found = Array(found.sorted(by: largestFirst).prefix(limit)) }
             }
         }
-        return Array(found.sorted { $0.size > $1.size }.prefix(limit))
+        return Array(found.sorted(by: largestFirst).prefix(limit))
+    }
+
+    /// Largest first; equal sizes by path, so the list is the same every time.
+    static func largestFirst(_ a: CleanupCandidate, _ b: CleanupCandidate) -> Bool {
+        a.size != b.size ? a.size > b.size : a.url.path < b.url.path
     }
 
     // MARK: - Old downloads

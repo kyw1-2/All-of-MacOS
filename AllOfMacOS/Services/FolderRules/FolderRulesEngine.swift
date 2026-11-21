@@ -119,8 +119,14 @@ final class FolderRulesEngine: ObservableObject {
         schedulePass(nil, after: 3)
     }
 
-    /// Active: the master switch is on, AOM isn't paused, and a folder has a rule that can run.
-    var isActive: Bool { config.isEnabled && gateIsOpen() && !activeRules.isEmpty }
+    /// 7.3: the module switch (Settings › Modules); off stops watching and sweeping.
+    var moduleOn = true {
+        didSet { guard moduleOn != oldValue else { return }; updateActivity(); if moduleOn { schedulePass(nil, after: 1) } }
+    }
+
+    /// Active: the module and the master switch are on, AOM isn't paused,
+    /// and a folder has a rule that can run.
+    var isActive: Bool { moduleOn && config.isEnabled && gateIsOpen() && !activeRules.isEmpty }
 
     var activeRules: [FolderRule] { config.rules.filter { $0.isEnabled && $0.problems.isEmpty } }
 

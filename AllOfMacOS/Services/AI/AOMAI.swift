@@ -485,6 +485,8 @@ enum AOMAIPiece: Equatable {
     case thinking
     /// The answer stopped early, with why ("max tokens", "declined").
     case notice(String)
+    /// 7.3: a tool call read these (the answer's receipt).
+    case used([String])
 }
 
 struct AOMAIError: LocalizedError, Equatable {
@@ -621,7 +623,11 @@ enum AOMAIClient {
     }
 
     @MainActor
-    static func stream(_ ref: AOMAIModelRef, system: String, turns: [AOMAITurn]) -> AsyncThrowingStream<AOMAIPiece, Error> {
+    static func stream(_ ref: AOMAIModelRef, system: String, turns: [AOMAITurn],
+                       scope: AOMAIRecordScope = .none) -> AsyncThrowingStream<AOMAIPiece, Error> {
+        // 7.3: no tools and no word about them unless the question named records.
+        let toolPrompt = AOMAILocalTools.promptLines(for: scope)
+        let scopedSystem = toolPrompt.isEmpty ? system : system + "\n" + toolPrompt.joined(separator: "\n")
         switch ref.provider {
         case .apple:
             return AOMAppleIntelligence.stream(system: system, turns: turns)
@@ -644,8 +650,8 @@ enum AOMAIClient {
             if !betas.isEmpty { request.setValue(betas.joined(separator: ","), forHTTPHeaderField: "anthropic-beta") }
             // 7.2.1: AOM's read-only local tools, and the local router started on demand.
             var toolBody = body
-            if AOMAILocalTools.isEnabled { toolBody["system"] = system + "\n" + AOMAILocalTools.promptLines.joined(separator: "\n") }
-            return anthropicToolStream(request, body: toolBody, ensureProxy: provider == .localProxy ? base : nil)
+            toolBody["system"] = scopedSystem
+            return anthropicToolStream(request, body: toolBody, ensureProxy: provider == .localProxy ? base : nil, scope: scope)
         case .openAI, .deepSeek, .ollama:
             let provider = ref.provider
             let key = AOMAIKeychain.key(for: provider)
@@ -658,8 +664,7 @@ enum AOMAIClient {
             if let key { request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }
             request.setValue("application/json", forHTTPHeaderField: "content-type")
             request.setValue("text/event-stream", forHTTPHeaderField: "accept")
-            let prompt = AOMAILocalTools.isEnabled ? system + "\n" + AOMAILocalTools.promptLines.joined(separator: "\n") : system
-            return openAIToolStream(request, body: openAIBody(model: ref.model, system: prompt, turns: turns))
+            return openAIToolStream(request, body: openAIBody(model: ref.model, system: scopedSystem, turns: turns), scope: scope)
         case .claudeCode, .codex, .deepSeekHarness:
             return failing("Agents answer through their CLI.")
         }
@@ -931,7 +936,7 @@ extension AOMAIClient {
     /// Runs a tool-calling conversation: stream a turn, run the calls it
     /// asks for, send the results, until it answers (8 rounds at most; the
     /// last one may not call tools). Without tools enabled it is one turn.
-    private static func toolStream(base: URLRequest, ensureProxy: String?,
+    private static func toolStream(base: URLRequest, ensureProxy: String?, scope: AOMAIRecordScope,
                                    turn: @escaping (URLRequest, @escaping (AOMAIPiece) -> Void) async throws -> ToolTurn,
                                    request: @escaping (_ round: Int, _ withTools: Bool) -> URLRequest,
                                    append: @escaping (ToolTurn, [(ToolCall, AOMAIToolResult)]) -> Void) -> AsyncThrowingStream<AOMAIPiece, Error> {
@@ -942,7 +947,7 @@ extension AOMAIClient {
                         let url = URL(string: ensureProxy)
                         throw AOMAIError(message: "Couldn't reach \(url?.host ?? "the local proxy")." + AOMLocalProxy.unreachableHint(host: url?.host, port: url?.port))
                     }
-                    var withTools = AOMAILocalTools.isEnabled
+                    var withTools = !scope.toolNames.isEmpty
                     var activity: [String] = []
                     for round in 0..<maxToolRounds {
                         let current: ToolTurn
@@ -966,8 +971,10 @@ extension AOMAIClient {
                             // What is running now, while it runs (7.2.1 showed only "Thinking…").
                             continuation.yield(.notice((activity.suffix(2) + [AOMAILocalTools.describe(call.name, arguments: call.arguments)])
                                 .joined(separator: " · ")))
-                            let result = await AOMAILocalTools.run(call.name, arguments: call.arguments)
-                            GestureLog.shared.logFromAnyThread("Ask AI tool \(call.name): \(result.summary)", level: .action)
+                            let result = await AOMAILocalTools.run(call.name, arguments: call.arguments, scope: scope)
+                            // 7.3: the log keeps the tool and outcome, not queries, paths or text.
+                            GestureLog.shared.logFromAnyThread("Ask AI tool \(call.name): \(result.isError ? "refused or failed" : "ok")", level: .action)
+                            if !result.used.isEmpty { continuation.yield(.used(result.used)) }
                             activity.append(result.summary)
                             continuation.yield(.notice(activity.suffix(3).joined(separator: " · ")))
                             results.append((call, result))
@@ -991,13 +998,15 @@ extension AOMAIClient {
 
     // MARK: Anthropic Messages
 
-    static func anthropicToolStream(_ base: URLRequest, body: [String: Any], ensureProxy: String?) -> AsyncThrowingStream<AOMAIPiece, Error> {
+    static func anthropicToolStream(_ base: URLRequest, body: [String: Any], ensureProxy: String?,
+                                    scope: AOMAIRecordScope = .none) -> AsyncThrowingStream<AOMAIPiece, Error> {
         let box = MessageBox(messages: body["messages"] as? [[String: Any]] ?? [])
-        return toolStream(base: base, ensureProxy: ensureProxy, turn: anthropicTurn, request: { round, withTools in
+        let schemas = AOMAILocalTools.anthropicSchemas(AOMAILocalTools.tools(for: scope))
+        return toolStream(base: base, ensureProxy: ensureProxy, scope: scope, turn: anthropicTurn, request: { round, withTools in
             var payload = body
             payload["messages"] = box.messages
             if withTools {
-                payload["tools"] = AOMAILocalTools.anthropicSchemas
+                payload["tools"] = schemas
                 if round == maxToolRounds - 1 { payload["tool_choice"] = ["type": "none"] }
             }
             var request = base
@@ -1077,13 +1086,14 @@ extension AOMAIClient {
 
     // MARK: OpenAI-compatible chat
 
-    static func openAIToolStream(_ base: URLRequest, body: [String: Any]) -> AsyncThrowingStream<AOMAIPiece, Error> {
+    static func openAIToolStream(_ base: URLRequest, body: [String: Any], scope: AOMAIRecordScope = .none) -> AsyncThrowingStream<AOMAIPiece, Error> {
         let box = MessageBox(messages: body["messages"] as? [[String: Any]] ?? [])
-        return toolStream(base: base, ensureProxy: nil, turn: openAITurn, request: { round, withTools in
+        let schemas = AOMAILocalTools.openAISchemas(AOMAILocalTools.tools(for: scope))
+        return toolStream(base: base, ensureProxy: nil, scope: scope, turn: openAITurn, request: { round, withTools in
             var payload = body
             payload["messages"] = box.messages
             if withTools {
-                payload["tools"] = AOMAILocalTools.openAISchemas
+                payload["tools"] = schemas
                 if round == maxToolRounds - 1 { payload["tool_choice"] = "none" }
             }
             var request = base

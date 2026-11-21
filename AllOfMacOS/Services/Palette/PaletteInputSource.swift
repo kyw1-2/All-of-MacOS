@@ -40,6 +40,8 @@ enum PaletteInputSource {
     /// something else (Korean, Japanese …). Remembers what to restore.
     static func switchToEnglish() {
         guard isEnabled, !PresetManager.isUIPreview else { return }
+        // 7.3: the badge doesn't show the launcher's own switch, or its restore.
+        InputSourceBadge.suppressedUntil = Date().addingTimeInterval(0.6)
         let current = TISCopyCurrentKeyboardInputSource().takeRetainedValue()
         guard needsSwitch(currentID: id(of: current), currentIsASCII: isASCIICapable(current)),
               let ascii = TISCopyCurrentASCIICapableKeyboardLayoutInputSource()?.takeRetainedValue(),
@@ -57,6 +59,7 @@ enum PaletteInputSource {
     /// Gives the previous source back if the switch is still in effect.
     static func restore() {
         defer { previous = nil; selected = nil }
+        if previous != nil { InputSourceBadge.suppressedUntil = Date().addingTimeInterval(0.6) }
         guard let previous, let selected else { return }
         let now = TISCopyCurrentKeyboardInputSource().takeRetainedValue()
         guard id(of: now) == id(of: selected) else { return }

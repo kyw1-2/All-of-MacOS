@@ -8,11 +8,18 @@ enum TextActionsModule {
     /// Called once at launch (never in UI previews or unit tests). Installs
     /// the selection monitor only while the master switch is on.
     static func start() {
+        TextActionsController.shared.moduleOn = true
         TextActionsController.shared.start()
+    }
+
+    /// 7.3: the module switch — the selection monitors come off.
+    static func stop() {
+        TextActionsController.shared.moduleOn = false
     }
 
     /// Shows the action bar for the current selection (the shortcut).
     static func showForCurrentSelection() {
+        guard AOMModuleSwitches.shared.allows(.textActions) else { return }
         TextActionsController.shared.showForCurrentSelection()
     }
 

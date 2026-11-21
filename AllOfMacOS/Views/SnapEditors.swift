@@ -23,7 +23,7 @@ private enum SnapEditorMetrics {
 
 /// The header the tiling sheets share (the Settings sheet pattern): the
 /// title on the left in Headline, Done on the right, a hairline under it.
-private struct SnapSheetHeader: View {
+struct SnapSheetHeader: View {
     let title: String
     let done: () -> Void
 

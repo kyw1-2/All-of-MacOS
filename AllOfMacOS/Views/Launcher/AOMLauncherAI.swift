@@ -459,19 +459,28 @@ struct AOMAITranscriptView: View {
                     .font(.system(size: 17))
                     .foregroundStyle(AOMCraftColor.inkTertiary)
                     .accessibilityHidden(true)
-                Text(message.text)
-                    .font(.system(size: fontSize, weight: .semibold))
-                    .foregroundStyle(AOMCraftColor.ink)
-                    .lineLimit(6)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(message.text)
+                        .font(.system(size: fontSize, weight: .semibold))
+                        .foregroundStyle(AOMCraftColor.ink)
+                        .lineLimit(6)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                    // 7.3: what this question was allowed to read.
+                    if let scope = message.scopeSummary {
+                        Label(scope, systemImage: "tray.full")
+                            .font(.system(size: 11))
+                            .foregroundStyle(AOMCraftColor.inkSecondary)
+                            .lineLimit(1).truncationMode(.middle)
+                    }
+                }
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
             .background(AOMCraftColor.well, in: RoundedRectangle(cornerRadius: AOMCraftRadius.row, style: .continuous))
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("You: \(message.text)")
+            .accessibilityLabel("You: \(message.text)" + (message.scopeSummary.map { ". Records: \($0)" } ?? ""))
         case .assistant:
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 6) {
@@ -508,6 +517,9 @@ struct AOMAITranscriptView: View {
                     Label(notice, systemImage: "info.circle")
                         .font(.system(size: 11.5))
                         .foregroundStyle(AOMCraftColor.inkSecondary)
+                }
+                if let receipt = message.receipt, !isStreaming(message) || !receipt.used.isEmpty {
+                    AOMAIReceiptLine(receipt: receipt)
                 }
             }
             .padding(.leading, 2)
@@ -612,5 +624,42 @@ struct AOMAIHomeHeader: View {
         case .ollama: return "Start Ollama, then fetch its models in Settings › AI."
         case .claudeCode, .codex, .deepSeekHarness: return "\(provider.title) isn't installed on this Mac. ⌘P picks another model."
         }
+    }
+}
+
+/// 7.3 (Codex 7.2.3 report, "AI 자료 영수증"): under an answer, where the
+/// question went, what it was allowed to read and what was read. A
+/// symbol and words, never colour alone, say that it left this Mac.
+struct AOMAIReceiptLine: View {
+    let receipt: AOMAIReceipt
+    @State private var expanded = false
+
+    var body: some View {
+        Button { expanded.toggle() } label: {
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                Image(systemName: receipt.leavesMac ? "arrow.up.forward.circle" : "lock.circle")
+                    .accessibilityHidden(true)
+                Text(expanded ? receipt.line : short)
+                    .lineLimit(expanded ? nil : 1)
+                    .truncationMode(.tail)
+                    .fixedSize(horizontal: false, vertical: expanded)
+                    .multilineTextAlignment(.leading)
+            }
+            .font(.system(size: 11))
+            .foregroundStyle(AOMCraftColor.inkTertiary)
+        }
+        .buttonStyle(.plain)
+        .help(receipt.line)
+        .accessibilityLabel(receipt.line)
+        .accessibilityHint(expanded ? "Shows less" : "Shows what was shared")
+    }
+
+    private var short: String {
+        var parts = [receipt.destination]
+        if receipt.allowed == "Nothing" { parts.append("No records") }
+        else { parts.append(receipt.used.isEmpty ? "Nothing read" : "Read \(receipt.used.count) source\(receipt.used.count == 1 ? "" : "s")") }
+        if receipt.clipboardAttached { parts.append("Clipboard") }
+        if receipt.earlierTurns > 0 { parts.append("+\(receipt.earlierTurns) earlier") }
+        return parts.joined(separator: " · ")
     }
 }

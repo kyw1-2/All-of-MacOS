@@ -295,15 +295,18 @@ final class MicMuteController: ObservableObject {
     // MARK: - Listeners and monitors (only while needed)
 
     /// Installs exactly what the current settings need and removes the rest.
+    /// 7.3: the module switch.
+    var moduleOn = true { didSet { if moduleOn != oldValue { configure() } } }
+
     func configure() {
         guard started else { return }
         if tracker.key != pushToTalkKey {
             if let release = tracker.reset() { handle(release) }
             tracker = PushToTalkTracker(key: pushToTalkKey)
         }
-        if pushToTalkEnabled { installKeyMonitors() } else { removeKeyMonitors() }
-        if autoMuteEnabled && !autoMuteApps.isEmpty { installLaunchObserver() } else { removeLaunchObserver() }
-        if showsMenuBarIndicator || pushToTalkEnabled || autoMuteEnabled { installAudioListeners() } else { removeAudioListeners() }
+        if moduleOn && pushToTalkEnabled { installKeyMonitors() } else { removeKeyMonitors() }
+        if moduleOn && autoMuteEnabled && !autoMuteApps.isEmpty { installLaunchObserver() } else { removeLaunchObserver() }
+        if moduleOn && (showsMenuBarIndicator || pushToTalkEnabled || autoMuteEnabled) { installAudioListeners() } else { removeAudioListeners() }
         updateIndicator()
     }
 

@@ -10,8 +10,14 @@ enum FolderRulesModule {
     /// Called once at launch (never in UI previews or unit tests).
     static func start() {
         let engine = FolderRulesEngine.shared
+        engine.moduleOn = true
         engine.start()
         FolderRulesApprovalPanel.shared.observe(engine)
+    }
+
+    /// 7.3: the module switch — no folder stream, no sweep timer, no passes.
+    static func stop() {
+        FolderRulesEngine.shared.moduleOn = false
     }
 
     /// This module's items in the status menu's Productivity section.

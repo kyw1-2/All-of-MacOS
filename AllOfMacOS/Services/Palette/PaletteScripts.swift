@@ -97,8 +97,33 @@ enum PaletteScripts {
 
     static let trustKey = "AOMScriptCommandsTrusted"
 
-    static func isTrusted(_ script: PaletteScript, defaults: UserDefaults = .standard) -> Bool {
-        guard let print = fingerprint(script.url) else { return false }
+    /// 7.3 (Codex 7.2.3 report): the launcher hashed every script's whole
+    /// file each time it built its rows. The hash is kept per path, size and
+    /// modification date, so an unchanged script isn't read again; running
+    /// still checks it afresh (`isTrusted(_:fresh: true)`).
+    private nonisolated(unsafe) static var fingerprintCache: [String: (stamp: String, print: String)] = [:]
+    private static let cacheLock = NSLock()
+
+    /// Inode, size and modification time in nanoseconds, from stat(2) — URL
+    /// resource values are cached on the URL and would miss an edit.
+    static func stamp(_ url: URL) -> String? {
+        var status = stat()
+        guard stat(url.path, &status) == 0 else { return nil }
+        return "\(status.st_ino):\(status.st_size):\(status.st_mtimespec.tv_sec).\(status.st_mtimespec.tv_nsec)"
+    }
+
+    static func cachedFingerprint(_ url: URL) -> String? {
+        guard let stamp = stamp(url) else { return nil }
+        cacheLock.lock()
+        if let hit = fingerprintCache[url.path], hit.stamp == stamp { cacheLock.unlock(); return hit.print }
+        cacheLock.unlock()
+        guard let print = fingerprint(url) else { return nil }
+        cacheLock.lock(); fingerprintCache[url.path] = (stamp, print); cacheLock.unlock()
+        return print
+    }
+
+    static func isTrusted(_ script: PaletteScript, defaults: UserDefaults = .standard, fresh: Bool = false) -> Bool {
+        guard let print = fresh ? fingerprint(script.url) : cachedFingerprint(script.url) else { return false }
         return (defaults.dictionary(forKey: trustKey) as? [String: String])?[script.url.path] == print
     }
 
@@ -144,7 +169,9 @@ enum PaletteScripts {
         environment["PATH"] = "/opt/homebrew/bin:/usr/local/bin:" + (environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin")
         environment["AOM_SCRIPT_COMMAND"] = "1"
         let arguments = start.arguments + (argument.map { [$0] } ?? [])
-        return StreamingCommand(start.executable, arguments, environment: environment, timeout: 120)
+        // 7.3 (7.2.1 audit B14): "runs in its folder" — it now does.
+        return StreamingCommand(start.executable, arguments, environment: environment, timeout: 120,
+                                currentDirectory: script.url.deletingLastPathComponent())
     }
 
     static func outcome(_ result: StreamingCommand.Result) -> Outcome {

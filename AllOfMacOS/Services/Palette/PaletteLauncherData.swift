@@ -87,28 +87,81 @@ final class PaletteLauncherData: ObservableObject {
 
     // MARK: Browse
 
-    @Published private(set) var folder: (url: URL, items: [PaletteFileHit], error: String?)?
+    /// A folder being browsed. 7.3 (Codex 7.2.3 report, reproduced): 7.2.3
+    /// listed the folder on the main actor, kept the first 2,000 entries in
+    /// the file system's order and only then sorted them, so a folder of
+    /// 2,400 files lost 400 — searching couldn't find them. The listing now
+    /// runs in the background, every entry is kept and sorted, a late
+    /// answer for a folder left since is dropped, and the screen draws the
+    /// first `shown` rows while typing searches them all.
+    struct Folder: Equatable {
+        var url: URL
+        var items: [PaletteFileHit] = []
+        var error: String?
+        var loading = true
+        var shown = PaletteLauncherData.folderPage
+
+        static func == (a: Folder, b: Folder) -> Bool {
+            a.url == b.url && a.items.count == b.items.count && a.error == b.error && a.loading == b.loading && a.shown == b.shown
+        }
+    }
+
+    nonisolated static let folderPage = 400
+
+    @Published private(set) var folder: Folder?
+    private var folderTicket = 0
 
     /// A folder's visible items, folders first, then by name.
     func browse(_ url: URL) {
-        let listed = Self.listing(of: url)
-        folder = (url, listed.items, listed.error)
+        folderTicket &+= 1
+        let ticket = folderTicket
+        folder = Folder(url: url)
+        Task { [weak self] in
+            let listed = await Task.detached(priority: .userInitiated) { Self.listing(of: url) }.value
+            guard let self, self.folderTicket == ticket, self.folder?.url == url else { return }
+            self.folder = Folder(url: url, items: listed.items, error: listed.error, loading: false)
+        }
+    }
+
+    /// Draws the next page of rows.
+    func showMoreOfFolder() {
+        guard var current = folder else { return }
+        current.shown += Self.folderPage
+        folder = current
     }
 
     nonisolated static func listing(of url: URL) -> (items: [PaletteFileHit], error: String?) {
+        let keys: [URLResourceKey] = [.isDirectoryKey, .isPackageKey, .contentModificationDateKey]
         do {
-            let urls = try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: [.isDirectoryKey, .isPackageKey, .contentModificationDateKey],
-                                                                   options: [.skipsHiddenFiles])
-            let items = urls.prefix(2_000).map { item -> PaletteFileHit in
-                let values = try? item.resourceValues(forKeys: [.isDirectoryKey, .isPackageKey, .contentModificationDateKey])
+            let urls = try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles])
+            let items = urls.map { item -> PaletteFileHit in
+                let values = try? item.resourceValues(forKeys: Set(keys))
                 return PaletteFileHit(url: item, date: values?.contentModificationDate,
                                       isFolder: values?.isDirectory == true && values?.isPackage != true)
             }
             return (sortedForBrowsing(items), nil)
         } catch {
-            return ([], (error as NSError).code == NSFileReadNoPermissionError
-                ? "macOS didn't let AOM read this folder. Allow it in System Settings › Privacy & Security › Files and Folders."
-                : error.localizedDescription)
+            let code = (error as NSError).code
+            if code == NSFileReadNoPermissionError {
+                return ([], "macOS didn't let AOM read this folder. Allow it in System Settings › Privacy & Security › Files and Folders.")
+            }
+            if code == NSFileReadNoSuchFileError || code == NSFileNoSuchFileError {
+                return ([], "This folder isn't there any more (moved, renamed or its disk was ejected).")
+            }
+            let local = (try? url.resourceValues(forKeys: [.volumeIsLocalKey]))?.volumeIsLocal
+            if local == false { return ([], "The network volume didn't answer: \(error.localizedDescription)") }
+            return ([], error.localizedDescription)
+        }
+    }
+
+    /// Pure: the hits whose names hold every word of `query` (a first cut
+    /// before the launcher's ranking, for folders too big to rank whole).
+    nonisolated static func folderMatches(_ items: [PaletteFileHit], query: String) -> [PaletteFileHit] {
+        let words = query.lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
+        guard !words.isEmpty else { return items }
+        return items.filter { hit in
+            let name = hit.name.lowercased()
+            return words.allSatisfy { name.contains($0) }
         }
     }
 
@@ -139,9 +192,9 @@ final class PaletteLauncherData: ObservableObject {
         networkTicket &+= 1
         let ticket = networkTicket
         let address = SystemStatus.preferredAddress(SystemStatus.ipv4Addresses())
-        var snapshot = Network(local: address?.address, interface: address?.interface, checkingPublic: true,
-                               wifi: NetworkTools.wifiDetails()?.lines ?? [], dns: NetworkTools.dnsServers())
+        var snapshot = Network(local: address?.address, interface: address?.interface, checkingPublic: true)
         if PresetManager.isUIPreview {
+            snapshot.wifi = NetworkTools.wifiDetails()?.lines ?? []
             snapshot.checkingPublic = false
             snapshot.publicIP = "203.0.113.24"
             network = snapshot
@@ -149,10 +202,19 @@ final class PaletteLauncherData: ObservableObject {
         }
         network = snapshot
         Task { [weak self] in
+            // 7.3 (Codex 7.2.3 report): Wi-Fi details and scutil's DNS list
+            // were read on the main actor while the screen opened.
+            let (wifi, dns) = await Task.detached(priority: .userInitiated) {
+                (NetworkTools.wifiDetails()?.lines ?? [], NetworkTools.dnsServers())
+            }.value
+            guard let self, self.networkTicket == ticket else { return }
+            snapshot.wifi = wifi
+            snapshot.dns = dns
+            self.network = snapshot
             var finished = snapshot
             do { finished.publicIP = try await NetworkTools.publicIP() } catch { finished.publicError = error.localizedDescription }
             finished.checkingPublic = false
-            guard let self, self.networkTicket == ticket else { return }
+            guard self.networkTicket == ticket else { return }
             self.network = finished
         }
     }
@@ -286,5 +348,60 @@ enum AOMLargeType {
             let longest = max(1, text.split(separator: "\n").map(\.count).max() ?? text.count)
             return min(220, max(28, size.width / CGFloat(longest) * 1.6))
         }
+    }
+}
+
+/// 7.3 (Codex 7.2.3 report, recommended feature 5; 7.2.1 audit N05): a
+/// folder and the filter typed in it, saved under a name and opened again
+/// from the launcher's root search.
+struct PaletteFolderFavorite: Codable, Equatable, Identifiable {
+    var id = UUID()
+    var name: String
+    var path: String
+    var query: String
+
+    var url: URL { URL(fileURLWithPath: path) }
+    var exists: Bool {
+        var isDirectory: ObjCBool = false
+        return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
+    }
+}
+
+@MainActor
+final class PaletteFolderFavorites: ObservableObject {
+    static let shared = PaletteFolderFavorites()
+    static let key = "AOMLauncherFolderFavorites.v1"
+
+    @Published private(set) var items: [PaletteFolderFavorite] = []
+    private let defaults: UserDefaults?
+
+    init(defaults: UserDefaults? = nil) {
+        self.defaults = defaults ?? ((PresetManager.isRunningTests || PresetManager.isUIPreview) ? nil : .standard)
+        if let data = self.defaults?.data(forKey: Self.key), let saved = try? JSONDecoder().decode([PaletteFolderFavorite].self, from: data) {
+            items = saved
+        }
+    }
+
+    func add(_ url: URL, query: String) {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let base = url.path == "/" ? "Macintosh HD" : url.lastPathComponent
+        let name = trimmed.isEmpty ? base : "\(base) · \(trimmed)"
+        items.removeAll { $0.path == url.path && $0.query == trimmed }
+        items.insert(PaletteFolderFavorite(name: name, path: url.standardizedFileURL.path, query: trimmed), at: 0)
+        if items.count > 30 { items.removeLast(items.count - 30) }
+        save()
+    }
+
+    func remove(_ id: UUID) { items.removeAll { $0.id == id }; save() }
+
+    func relocate(_ id: UUID, to url: URL) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        items[index].path = url.standardizedFileURL.path
+        save()
+    }
+
+    private func save() {
+        guard let defaults, let data = try? JSONEncoder().encode(items) else { return }
+        defaults.set(data, forKey: Self.key)
     }
 }

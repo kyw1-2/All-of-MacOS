@@ -189,7 +189,12 @@ final class FilesShelfPanelController: NSObject {
             model.show("Couldn't receive the files because \(FilesFileActions.reason(error))", tone: .danger)
             return !added.isEmpty
         }
-        model.progress = "Receiving…"
+        // 7.3: the first promise to arrive cleared "Receiving…" and selected
+        // only its file. The row now counts them in, and when the last one is
+        // done every file of the drop is selected and failures are summed up.
+        let total = promises.reduce(0) { $0 + max(1, $1.fileNames.count) }
+        model.progress = total == 1 ? "Receiving…" : "Receiving 0 of \(total)…"
+        let batch = FilesReceiveBatch(total: total, alreadyAdded: added.map(\.id))
         let queue = OperationQueue()
         queue.qualityOfService = .userInitiated
         for promise in promises {
@@ -197,13 +202,24 @@ final class FilesShelfPanelController: NSObject {
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {
                         let controller = FilesShelfPanelController.shared
-                        controller.model.progress = nil
                         if let error {
-                            controller.model.show("Couldn't receive a file because \(FilesFileActions.reason(error))", tone: .danger)
+                            batch.failures.append(.init(url: url, reason: FilesFileActions.reason(error)))
                         } else {
-                            let items = controller.store.add([url], received: true)
-                            controller.model.selection = Set(items.map(\.id))
+                            batch.received.append(contentsOf: controller.store.add([url], received: true).map(\.id))
                         }
+                        batch.finished += 1
+                        guard batch.finished >= batch.total else {
+                            controller.model.progress = "Receiving \(batch.finished) of \(batch.total)…"
+                            return
+                        }
+                        controller.model.progress = nil
+                        controller.model.selection = Set(batch.alreadyAdded + batch.received)
+                        if let failure = batch.failures.first {
+                            let others = batch.failures.count > 1 ? " (and \(batch.failures.count - 1) more)" : ""
+                            controller.model.show("Received \(batch.received.count) of \(batch.total). Couldn't receive “\(failure.url.lastPathComponent)”\(others) because \(failure.reason)", tone: .danger)
+                        }
+                        FilesActivityLog.shared.record("Received \(batch.received.count) of \(batch.total) promised files", tool: "Drop Shelf",
+                                                       files: controller.store.items(Set(batch.received)).map(\.url), failures: batch.failures)
                     }
                 }
             }
@@ -281,15 +297,23 @@ final class FilesShelfPanelController: NSObject {
                 model.selection = Set(copies.map(\.id))
                 let (text, tone) = Self.transferMessage(result, move: false, total: items.count, folderName: folderName)
                 model.show(text, tone: tone)
+                FilesActivityLog.shared.record(text, tool: "Drop Shelf", files: result.done.map(\.to), failures: result.failures)
                 return
             }
             var moves: [ShelfMove] = []
+            var relocations: [(UUID, URL)] = []
+            // 7.3: items looked up in a map and saved once (7.2.3 searched and
+            // saved shelf.json once per file).
+            let byPath = Dictionary(items.map { (FilesPath.key($0.path), $0) }, uniquingKeysWith: { first, _ in first })
             for done in result.done {
-                guard let item = items.first(where: { FilesPath.key($0.path) == FilesPath.key(done.from.path) }) else { continue }
-                store.relocate(item.id, to: done.to)
+                guard let item = byPath[FilesPath.key(done.from.path)] else { continue }
+                relocations.append((item.id, done.to))
                 if done.from != done.to { moves.append(ShelfMove(itemID: item.id, move: done)) }
             }
+            store.relocate(relocations)
             let (text, tone) = Self.transferMessage(result, move: true, total: items.count, folderName: folderName)
+            FilesActivityLog.shared.record(text, tool: "Drop Shelf", files: result.done.map(\.to), failures: result.failures,
+                                           undo: moves.isEmpty ? nil : { [weak self] in self?.undoMove(moves) })
             // 7.2.3 (audit B10): a failure no longer drops the Undo of the
             // files that did move.
             guard !moves.isEmpty || result.failures.isEmpty else {
@@ -319,11 +343,10 @@ final class FilesShelfPanelController: NSObject {
     private func undoMove(_ moves: [ShelfMove]) {
         Task {
             let result = await FilesFileActions.moveBack(moves.map(\.move))
-            for done in result.done {
-                if let entry = moves.first(where: { FilesPath.key($0.move.to.path) == FilesPath.key(done.from.path) }) {
-                    store.relocate(entry.itemID, to: done.to)
-                }
-            }
+            let byPath = Dictionary(moves.map { (FilesPath.key($0.move.to.path), $0) }, uniquingKeysWith: { first, _ in first })
+            store.relocate(result.done.compactMap { done in byPath[FilesPath.key(done.from.path)].map { ($0.itemID, done.to) } })
+            FilesActivityLog.shared.record("Moved \(Self.count(result.done.count)) back", tool: "Drop Shelf",
+                                           files: result.done.map(\.to), failures: result.failures)
             if let failure = result.failures.first {
                 // The shelf item keeps naming the file where it really is.
                 let entry = moves.first { FilesPath.key($0.move.to.path) == FilesPath.key(failure.url.path) }
@@ -436,6 +459,14 @@ final class FilesShelfPanelController: NSObject {
 
     /// The URLs a drag from `item` carries: the selection when the item is
     /// part of it, else the item alone.
+    /// 7.3 (Yoink's "hide after dragging out", off unless chosen in Files
+    /// settings): the shelf goes once its files were dropped somewhere,
+    /// never while it is receiving, moving or undoing.
+    func dragEnded(delivered: Bool) {
+        guard delivered, FilesSettings.shared.hideShelfAfterDragOut, model.progress == nil else { return }
+        hide()
+    }
+
     func dragURLs(from item: FilesShelfItem) -> [URL] {
         if model.selection.contains(item.id), model.selection.count > 1 {
             return store.items(model.selection).filter(\.exists).map(\.url)
@@ -496,11 +527,17 @@ final class FilesShelfDropView: NSView {
         onTargeted?(false)
         // Drags that start on the shelf itself don't come back onto it.
         if let source = sender.draggingSource as? NSView, source.window === window { return false }
-        let pasteboard = sender.draggingPasteboard
-        let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+        // 7.3 (Codex 7.2.3 report): one file URL in the drag made 7.2.3 skip
+        // every promise in it, so a mixed drop (Finder files and an image
+        // from Safari) lost the promised ones. Each dragged item is read on
+        // its own — as a file URL when it has one, else as a promise — so an
+        // item that offers both is taken once.
+        var urls: [URL] = []
         var promises: [NSFilePromiseReceiver] = []
-        if urls.isEmpty {
-            promises = pasteboard.readObjects(forClasses: [NSFilePromiseReceiver.self], options: nil) as? [NSFilePromiseReceiver] ?? []
+        sender.enumerateDraggingItems(options: [], for: nil, classes: [NSURL.self, NSFilePromiseReceiver.self],
+                                      searchOptions: [.urlReadingFileURLsOnly: true]) { item, _, _ in
+            if let url = item.item as? URL { urls.append(url) }
+            else if let promise = item.item as? NSFilePromiseReceiver { promises.append(promise) }
         }
         return onDrop?(urls, promises) ?? false
     }
@@ -524,6 +561,13 @@ struct FilesShelfView: View {
         VStack(spacing: 0) {
             header
             AOMDivider()
+            // 7.3: a shelf.json that couldn't be read is kept, never replaced.
+            if let problem = store.problem {
+                AOMNotice(problem.blocksSaving ? .error : .warning, problem.title, detail: problem.detail) {
+                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([problem.file]) }
+                }
+                .padding(AOMSpace.x2)
+            }
             content
             if let progress = model.progress { progressRow(progress) }
             else if let message = model.message { messageRow(message) }
@@ -640,7 +684,7 @@ struct FilesShelfView: View {
         }
         .aomHoverHighlight(radius: AOMRadius.control, enabled: !selected)
         .contentShape(Rectangle())
-        .background { FilesFileDragSource(urls: { controller.dragURLs(from: item) }) }
+        .background { FilesFileDragSource(urls: { controller.dragURLs(from: item) }, onEnd: { controller.dragEnded(delivered: $0) }) }
         .onTapGesture {
             // One tap handler: a second click of a double-click opens, so a
             // single click selects at once instead of waiting.
@@ -756,5 +800,20 @@ struct FilesShelfView: View {
         }
         .padding(.horizontal, AOMSpace.x2)
         .frame(height: 52)
+    }
+}
+
+/// The promised files of one drop, counted in as they arrive (7.3).
+@MainActor
+final class FilesReceiveBatch {
+    let total: Int
+    let alreadyAdded: [UUID]
+    var finished = 0
+    var received: [UUID] = []
+    var failures: [FilesTransfer.Failure] = []
+
+    init(total: Int, alreadyAdded: [UUID]) {
+        self.total = total
+        self.alreadyAdded = alreadyAdded
     }
 }

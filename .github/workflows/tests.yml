@@ -17,9 +17,14 @@ concurrency:
 
 jobs:
   test-and-package:
-    # After trusted signing is enabled, main pushes use the signed workflow instead.
+    # After trusted signing is enabled, main pushes that change the app use the
+    # signed workflow instead (it runs the suite before it publishes). 7.3
+    # (7.2.1 audit B21): a main push that changes only the tests matched
+    # neither workflow, so it ran no tests at all; this job now runs for it.
     # PRs and explicit CI requests stay ad-hoc and never receive signing secrets.
-    if: github.event_name != 'push' || vars.AOM_SIGNING_READY != 'true'
+    if: >-
+      github.event_name != 'push' || vars.AOM_SIGNING_READY != 'true' ||
+      (startsWith(github.event.head_commit.message, 'test') || contains(github.event.head_commit.message, '[tests]'))
     runs-on: ${{ startsWith(github.ref, 'refs/heads/release/') && 'macos-14' || 'xcode-27' }}
     timeout-minutes: 55
     steps:

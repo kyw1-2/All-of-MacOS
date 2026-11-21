@@ -34,6 +34,7 @@ final class FilesSettings: ObservableObject {
         static let shake = "AOMFilesShelfShake"
         static let shiftWhileDragging = "AOMFilesShelfShift"
         static let sensitivity = "AOMFilesShakeSensitivity"
+        static let hideAfterDragOut = "AOMFilesShelfHideAfterDragOut"
     }
 
     /// The Open and Save dialog helper (off until turned on).
@@ -53,6 +54,8 @@ final class FilesSettings: ObservableObject {
     @Published var shakeOpensShelf: Bool { didSet { store(shakeOpensShelf, Key.shake) } }
     /// Pressing Shift while dragging files also opens it.
     @Published var shiftOpensShelf: Bool { didSet { store(shiftOpensShelf, Key.shiftWhileDragging) } }
+    /// 7.3: the shelf hides once its files were dropped somewhere (off until turned on).
+    @Published var hideShelfAfterDragOut: Bool { didSet { store(hideShelfAfterDragOut, Key.hideAfterDragOut) } }
     @Published var sensitivity: FilesShakeSensitivity {
         didSet { defaults.set(sensitivity.rawValue, forKey: Key.sensitivity); changed() }
     }
@@ -76,6 +79,7 @@ final class FilesSettings: ObservableObject {
         excludedApps = defaults.stringArray(forKey: Key.excludedApps) ?? []
         shakeOpensShelf = flag(Key.shake, false)
         shiftOpensShelf = flag(Key.shiftWhileDragging, false)
+        hideShelfAfterDragOut = flag(Key.hideAfterDragOut, false)
         sensitivity = defaults.string(forKey: Key.sensitivity).flatMap(FilesShakeSensitivity.init(rawValue:)) ?? .medium
     }
 

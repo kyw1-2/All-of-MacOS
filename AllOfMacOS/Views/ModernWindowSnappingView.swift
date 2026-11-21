@@ -18,6 +18,8 @@ struct ModernWindowSnappingView: View {
     @State private var showingSnapZones = false
     @State private var showingProfiles = false
     @State private var showingWindowLayouts = false
+    /// 7.3: work scenes.
+    @State private var showingScenes = false
     @State private var showsAdvanced = true
     @AppStorage(TitleBarWindowSnap.enabledKey) private var trackpadSnapOn = false
     @AppStorage(TitleBarWindowSnap.hapticKey) private var trackpadSnapHaptic = true
@@ -195,6 +197,9 @@ struct ModernWindowSnappingView: View {
         }
         .sheet(isPresented: $showingProfiles) { SnapProfilesEditor().environmentObject(appState) }
         .sheet(isPresented: $showingWindowLayouts) { WindowLayoutsEditor() }
+        .sheet(isPresented: $showingScenes) { ScenesSheet() }
+        // 7.3: `--aom-preview-scenes` opens the Scenes sheet in a UI preview.
+        .onAppear { if PresetManager.isUIPreview, CommandLine.arguments.contains("--aom-preview-scenes") { showingScenes = true } }
         // Returning to AOM refreshes it too (below), so a quick return to
         // this page keeps the readiness read a few seconds ago.
         .aomPageLifecycle(minimumInterval: 5, onActivate: refreshReadiness)
@@ -272,6 +277,13 @@ struct ModernWindowSnappingView: View {
                 symbol: "macwindow.on.rectangle"
             ) {
                 showingWindowLayouts = true
+            }
+            quickZoneButton(
+                title: "Scenes",
+                subtitle: SceneStore.shared.scenes.isEmpty ? "Apps, windows, sound, focus" : "\(SceneStore.shared.scenes.count) scene\(SceneStore.shared.scenes.count == 1 ? "" : "s")",
+                symbol: "theatermasks"
+            ) {
+                showingScenes = true
             }
             quickZoneButton(
                 title: "Window Switcher",

@@ -122,6 +122,62 @@ final class PaletteHotkeyStore: ObservableObject {
         registerAll()
     }
 
+    /// 7.3 (Codex 7.2.3 report, recommended feature 4): every place a key
+    /// combination is used — the launcher, launcher rows, AOM's own
+    /// shortcuts, automations (with the apps they are limited to) and the
+    /// macOS Mission Control and Spaces keys AOM reads.
+    struct Usage: Equatable, Identifiable {
+        enum Kind: Equatable { case launcher, launcherRow(itemID: String), aomShortcut, automation(UUID), macOS }
+        var kind: Kind
+        var title: String
+        /// "Every app", "Only in Safari", "In the Coding group".
+        var scope: String
+        var isEnabled = true
+        var id: String { "\(kind)|\(title)" }
+    }
+
+    func usages(of shortcut: KeyboardShortcut, triggers: [Trigger], groups: [ActivationGroup] = []) -> [Usage] {
+        var found: [Usage] = []
+        if let launcher = PaletteHotkeyRules.launcherShortcut(), PaletteHotkeyRules.same(launcher, shortcut) {
+            found.append(Usage(kind: .launcher, title: "Opens the launcher", scope: "Every app"))
+        }
+        for binding in bindings where PaletteHotkeyRules.same(binding.shortcut, shortcut) {
+            found.append(Usage(kind: .launcherRow(itemID: binding.itemID), title: "Launcher: \(binding.title)", scope: "Every app"))
+        }
+        if let action = CaptureShortcuts.shared.matchingAction(keyCode: shortcut.keyCode, modifiers: shortcut.modifiers) {
+            found.append(Usage(kind: .aomShortcut, title: action.displayName, scope: "Every app · Settings › Shortcuts"))
+        }
+        for trigger in triggers {
+            guard case .keyboardShortcut(let key) = trigger.input, PaletteHotkeyRules.same(key, shortcut) else { continue }
+            let scope: String
+            if let bundleID = trigger.appBundleID, !bundleID.isEmpty {
+                let name = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID).map { FileManager.default.displayName(atPath: $0.path) } ?? bundleID
+                scope = "Only in \(name.replacingOccurrences(of: ".app", with: ""))"
+            } else if let group = trigger.activationGroupID, let named = groups.first(where: { $0.id == group }) {
+                scope = "In the “\(named.name)” app group"
+            } else {
+                scope = "Every app"
+            }
+            found.append(Usage(kind: .automation(trigger.id), title: "Automation: \(trigger.displayName)", scope: scope, isEnabled: trigger.isEnabled))
+        }
+        let table = SymbolicHotKeys.load()
+        let names: [(Int, String)] = [(SymbolicHotKeys.missionControl, "Mission Control"), (SymbolicHotKeys.appWindows, "Application windows"),
+                                      (SymbolicHotKeys.showDesktop, "Show Desktop"), (SymbolicHotKeys.spaceLeft, "Move left a space"),
+                                      (SymbolicHotKeys.spaceRight, "Move right a space")] + (1...9).map { (SymbolicHotKeys.desktop($0), "Switch to Desktop \($0)") }
+        for (id, name) in names {
+            guard let key = SymbolicHotKeys.hotKey(id: id, in: table), key.isEnabled, key.keyCode == shortcut.keyCode else { continue }
+            var flags: NSEvent.ModifierFlags = []
+            if key.flags.contains(.maskCommand) { flags.insert(.command) }
+            if key.flags.contains(.maskAlternate) { flags.insert(.option) }
+            if key.flags.contains(.maskControl) { flags.insert(.control) }
+            if key.flags.contains(.maskShift) { flags.insert(.shift) }
+            if flags == shortcut.modifiers.intersection(PaletteHotkeyRules.mask) {
+                found.append(Usage(kind: .macOS, title: "macOS: \(name)", scope: "Every app · System Settings › Keyboard › Shortcuts"))
+            }
+        }
+        return found
+    }
+
     /// Who holds `shortcut` inside AOM already, by name.
     func owner(of shortcut: KeyboardShortcut, excluding itemID: String? = nil, triggers: [Trigger] = []) -> String? {
         if let launcher = PaletteHotkeyRules.launcherShortcut(), PaletteHotkeyRules.same(launcher, shortcut) {
@@ -238,4 +294,11 @@ final class PaletteHotkeyStore: ObservableObject {
             GestureLog.shared.logFromAnyThread("Launcher hotkey handler not installed (\(result))", level: .error)
         }
     }
+}
+
+/// 7.3: the shortcut last pressed on Find a Shortcut.
+@MainActor
+final class PaletteHotkeyFinder: ObservableObject {
+    static let shared = PaletteHotkeyFinder()
+    @Published var shortcut: KeyboardShortcut?
 }

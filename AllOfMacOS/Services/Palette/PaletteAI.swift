@@ -195,6 +195,19 @@ final class PaletteAIChat: ObservableObject {
         var notice: String? = nil
         /// Reasoning before the first word.
         var thinking = false
+        /// 7.3: a question's records ("LLM Wiki, ~/Projects") and the
+        /// clipboard text it carries; an answer's receipt.
+        var scopeSummary: String? = nil
+        /// The records this question was allowed (Ask Again uses the same).
+        var scope: AOMAIRecordScope? = nil
+        var attachment: String? = nil
+        var receipt: AOMAIReceipt? = nil
+
+        /// What goes to the model: the question and its attachment.
+        var sentText: String {
+            guard let attachment else { return text }
+            return text + "\n\nClipboard text the user attached:\n```\n" + attachment + "\n```"
+        }
     }
 
     @Published private(set) var messages: [Message] = []
@@ -205,9 +218,55 @@ final class PaletteAIChat: ObservableObject {
             guard oldValue != model else { return }
             AOMAIConfig.selectedModel = model
             if oldValue.provider != model.provider || oldValue.provider.isAgent { agentSession.stop() }
+            // 7.3 (Codex 7.2.3 report): a conversation doesn't follow the
+            // person to another provider unasked. Turns before the switch
+            // stay on this Mac until "Include Earlier Turns".
+            if oldValue.provider != model.provider, messages.contains(where: { $0.role == .user }) {
+                historyStart = messages.count
+            }
         }
     }
     @Published private(set) var chatID = UUID()
+    /// 7.3: turns before this index aren't sent (a switch to another provider).
+    @Published private(set) var historyStart = 0
+    /// 7.3: records chosen for the next question (the Records screen); they
+    /// go with that question only.
+    @Published var pendingScope = AOMAIRecordScope.none
+    /// The last question's records (⌘⇧M uses them again).
+    @Published private(set) var lastScope = AOMAIRecordScope.none
+    /// Folders chosen for @files before, offered again.
+    @Published var recentFolders: [String] = UserDefaults.standard.stringArray(forKey: "AOMAIRecentFolders") ?? [] {
+        didSet { UserDefaults.standard.set(Array(recentFolders.prefix(8)), forKey: "AOMAIRecentFolders") }
+    }
+
+    /// Earlier turns held back since the switch to this provider.
+    var heldTurns: Int { messages.prefix(historyStart).filter { $0.role != .error && !$0.text.isEmpty }.count }
+
+    func includeEarlierTurns() { historyStart = 0 }
+
+    func reuseLastScope() { pendingScope = pendingScope.union(lastScope) }
+
+    func clearPendingScope() { pendingScope = .none }
+
+    func toggle(_ source: AOMAIRecordSource) {
+        if pendingScope.sources.contains(source) {
+            pendingScope.sources.remove(source)
+            if source == .files { pendingScope.folders = [] }
+        } else {
+            pendingScope.sources.insert(source)
+        }
+    }
+
+    func addFolder(_ url: URL) {
+        let path = url.standardizedFileURL.path
+        pendingScope.sources.insert(.files)
+        if !pendingScope.folders.contains(path) { pendingScope.folders.append(path) }
+        recentFolders.removeAll { $0 == path }
+        recentFolders.insert(path, at: 0)
+    }
+
+    /// Where the current model sends a question.
+    var egress: AOMAIEgress { model.provider.egress(model: model.model, baseURL: AOMAIConfig.baseURL(for: model.provider)) }
 
     /// 6.9 API kept for the agent paths and the tests.
     var provider: PaletteAIProvider { model.provider == .codex ? .codex : model.provider == .deepSeekHarness ? .dsh : .claude }
@@ -256,6 +315,7 @@ final class PaletteAIChat: ObservableObject {
         messages = []
         sessions = [:]
         chatID = UUID()
+        historyStart = 0
         agentSession.stop()
     }
 
@@ -265,7 +325,10 @@ final class PaletteAIChat: ObservableObject {
         AOMAIChatHistory.shared.save(self)
         agentSession.stop()
         chatID = record.id
-        messages = record.messages.map { Message(role: $0.role == "user" ? .user : .assistant, text: $0.text, model: $0.model) }
+        messages = record.messages.map {
+            Message(role: $0.role == "user" ? .user : .assistant, text: $0.text, model: $0.model, receipt: $0.receipt)
+        }
+        historyStart = 0
         sessions = [:]
         lastActivity = Date()
         if let ref = record.model.flatMap(AOMAIModelRef.init(key:)) { model = ref }
@@ -293,11 +356,34 @@ final class PaletteAIChat: ObservableObject {
             messages = []
             sessions = [:]
             chatID = UUID()
+            historyStart = 0
             agentSession.stop()
         }
         lastActivity = Date()
-        messages.append(Message(role: .user, text: text))
-        answer()
+        // 7.3: the question's @ mentions and the Records screen's choices
+        // make its scope, fixed now; the choices go with this question only.
+        let parsed = AOMAIRecordScope.parse(text, lastFolders: recentFolders.prefix(1).map { $0 })
+        var scope = parsed.scope.union(pendingScope)
+        pendingScope = .none
+        if !scope.isEmpty || scope.attachesClipboard { lastScope = scope }
+        var message = Message(role: .user, text: parsed.question.isEmpty ? text : parsed.question)
+        var note: String?
+        if scope.attachesClipboard {
+            switch AOMAIRecordScope.clipboardText() {
+            case .success(let clip): message.attachment = clip
+            case .failure(let error): note = error.message
+            }
+            scope.sources.remove(.clip)
+        }
+        if scope.sources.contains(.files), scope.folders.isEmpty {
+            scope.sources.remove(.files)
+            note = [note, "@files needs a folder: choose one in Records or write @~/path"].compactMap { $0 }.joined(separator: " · ")
+        }
+        message.scope = scope
+        let summary = scope.summary
+        message.scopeSummary = summary == "Nothing" ? (message.attachment == nil ? nil : "Clipboard") : summary + (message.attachment == nil ? "" : ", Clipboard")
+        messages.append(message)
+        answer(scope: scope, note: note)
     }
 
     /// ⌘R: the last question again (the old answer is replaced).
@@ -306,13 +392,34 @@ final class PaletteAIChat: ObservableObject {
         while let last = messages.last, last.role != .user { messages.removeLast() }
         // An agent remembers the turn it answered; it gets the question as new.
         if agent != nil { agentSession.stop(); sessions = [:] }
-        answer()
+        answer(scope: messages.last(where: { $0.role == .user })?.scope ?? .none, note: nil)
     }
 
-    private func answer() {
-        guard let question = messages.last(where: { $0.role == .user })?.text else { return }
+    /// The turns that may go with the question: from `historyStart` on.
+    private var sendableEarlier: ArraySlice<Message> {
+        let start = min(historyStart, max(0, messages.count - 2))
+        return messages[start..<max(start, messages.count - 2)]
+    }
+
+    private func answer(scope asked: AOMAIRecordScope, note: String?) {
+        guard let questionMessage = messages.last(where: { $0.role == .user }) else { return }
+        let question = questionMessage.sentText
         let ref = model
-        messages.append(Message(role: .assistant, text: "", model: ref.title))
+        let egress = self.egress
+        let scope = AOMAIRecordsMode.effective(asked, egress: egress, mode: .current, onDeviceReadsMac: AOMAIRecordsMode.onDeviceReadsMac)
+        var receipt = AOMAIReceipt(destination: egress.label(ref.provider), leavesMac: egress.leavesMac, allowed: scope.summary,
+                                   clipboardAttached: questionMessage.attachment != nil, note: note)
+        if !scope.isEmpty, !ref.provider.takesRecordTools {
+            receipt.note = [note, ref.provider.isAgent ? "\(ref.provider.title) reads with its own read-only access, not AOM's records" :
+                                "\(ref.provider.title) can't read records; only attached clipboard text goes with it"].compactMap { $0 }.joined(separator: " · ")
+            receipt.allowed = "Nothing"
+        }
+        if AOMAIRecordsMode.current == .never, !asked.isEmpty {
+            receipt.note = [receipt.note, "Records are off in Settings › AI"].compactMap { $0 }.joined(separator: " · ")
+        }
+        messages.append(Message(role: .assistant, text: "", model: ref.title, receipt: receipt))
+        // Counted with the answer in place: everything before the question.
+        messages[messages.count - 1].receipt?.earlierTurns = sendableEarlier.filter { $0.role != .error && !$0.text.isEmpty }.count
         isRunning = true
         if let agent {
             guard let executable = agent.executable else {
@@ -323,13 +430,13 @@ final class PaletteAIChat: ObservableObject {
             if agent == .claude {
                 // Without a session to resume (Ask Again, a chat opened from
                 // history) the earlier turns go with the question.
-                let sent = session == nil ? Self.withHistory(question, messages.dropLast(2)) : question
+                let sent = session == nil ? Self.withHistory(question, sendableEarlier) : question
                 agentSession.start(executable: executable, model: ref.model, system: systemPrompt, resume: session)
                 agentSession.send(sent)
             } else if agent == .dsh {
                 // dsh keeps its own session; a new one gets the earlier turns.
                 let session = sessions[.dsh]
-                let sent = session == nil ? Self.withHistory(question, messages.dropLast(2)) : question
+                let sent = session == nil ? Self.withHistory(question, sendableEarlier) : question
                 setNotice("Starting DeepSeek Harness…")
                 Task { [weak self] in
                     do {
@@ -344,19 +451,20 @@ final class PaletteAIChat: ObservableObject {
                 }
             } else {
                 // Codex has no warm session here: earlier turns go with the question.
-                let sent = Self.withHistory(question, messages.dropLast(2))
+                let sent = Self.withHistory(question, sendableEarlier)
                 run(executable, arguments: agent.arguments(prompt: sent, session: nil, model: ref.model), agent: .codex)
             }
             return
         }
-        let turns = messages.dropLast().compactMap { message -> AOMAITurn? in
+        let turns = (Array(sendableEarlier) + [questionMessage]).compactMap { message -> AOMAITurn? in
             switch message.role {
-            case .user: return AOMAITurn(role: .user, text: message.text)
+            case .user: return AOMAITurn(role: .user, text: message.sentText)
             case .assistant: return message.text.isEmpty ? nil : AOMAITurn(role: .assistant, text: message.text)
             case .error: return nil
             }
         }
-        let stream = AOMAIClient.stream(ref, system: systemPrompt, turns: Self.alternating(turns))
+        let stream = AOMAIClient.stream(ref, system: systemPrompt, turns: Self.alternating(turns),
+                                        scope: ref.provider.takesRecordTools ? scope : .none)
         task = Task { [weak self] in
             do {
                 for try await piece in stream {
@@ -366,6 +474,7 @@ final class PaletteAIChat: ObservableObject {
                     case .snapshot(let full): self.flush(); self.setAnswer(full)
                     case .thinking: self.setThinking(true)
                     case .notice(let notice): self.flush(); self.setNotice(notice)
+                    case .used(let items): self.addUsed(items)
                     }
                 }
                 self?.finishNative(error: nil)
@@ -434,6 +543,21 @@ final class PaletteAIChat: ObservableObject {
     private func setThinking(_ on: Bool) {
         guard let index = messages.indices.last, messages[index].role == .assistant, messages[index].text.isEmpty else { return }
         if messages[index].thinking != on { messages[index].thinking = on }
+    }
+
+    /// "LLM Wiki" read twice reads "LLM Wiki ×2" in the receipt.
+    private func addUsed(_ items: [String]) {
+        guard let index = messages.indices.last, messages[index].role == .assistant else { return }
+        var used = messages[index].receipt?.used ?? []
+        for item in items {
+            if let at = used.firstIndex(where: { $0 == item || $0.hasPrefix(item + " ×") }) {
+                let count = used[at] == item ? 1 : (used[at].components(separatedBy: " ×").last.flatMap(Int.init) ?? 1)
+                used[at] = "\(item) ×\(count + 1)"
+            } else {
+                used.append(item)
+            }
+        }
+        messages[index].receipt?.used = Array(used.prefix(12))
     }
 
     private func setNotice(_ notice: String) {
@@ -735,7 +859,7 @@ final class AOMAIChatHistory: ObservableObject {
     static let shared = AOMAIChatHistory()
 
     struct Record: Codable, Identifiable, Equatable {
-        struct Turn: Codable, Equatable { let role: String; let text: String; var model: String? }
+        struct Turn: Codable, Equatable { let role: String; let text: String; var model: String?; var receipt: AOMAIReceipt? = nil }
         let id: UUID
         var title: String
         var date: Date
@@ -755,15 +879,22 @@ final class AOMAIChatHistory: ObservableObject {
     convenience init() { self.init(url: Self.defaultURL) }
 
     /// `url` nil keeps the history in memory (tests, previews).
+    /// 7.3: chats.json couldn't be read; see `AOMCheckedFile`.
+    @Published private(set) var problem: FocusDataProblem?
+    private var blocksSaving = false
+
     init(url: URL?) {
         writer = url.map { AOMLatestWriter(url: $0) }
-        if let url, let data = try? Data(contentsOf: url),
-           let decoded = try? JSONDecoder().decode([Record].self, from: data) { records = decoded }
+        guard let url else { return }
+        let loaded = AOMCheckedFile.load(url, owner: "Ask AI") { try JSONDecoder().decode([Record].self, from: $0) }
+        records = loaded.value ?? []
+        problem = loaded.problem("Your AI chats")
+        blocksSaving = problem?.blocksSaving == true
     }
 
     func save(_ chat: PaletteAIChat) {
         let turns = chat.messages.filter { $0.role != .error && !$0.text.isEmpty }
-            .map { Record.Turn(role: $0.role == .user ? "user" : "assistant", text: $0.text, model: $0.model) }
+            .map { Record.Turn(role: $0.role == .user ? "user" : "assistant", text: $0.sentText, model: $0.model, receipt: $0.receipt) }
         guard turns.contains(where: { $0.role == "assistant" }) else { return }
         save(Record(id: chat.chatID, title: chat.title, date: Date(), model: chat.model.key, messages: turns))
     }
@@ -785,7 +916,7 @@ final class AOMAIChatHistory: ObservableObject {
     /// last and bring back a chat deleted after it. Writes now go through
     /// one serial writer, and one superseded before it starts is dropped.
     private func write() {
-        guard let writer else { return }
+        guard let writer, !blocksSaving else { return }
         let snapshot = records
         writer.write { try JSONEncoder().encode(snapshot) }
     }

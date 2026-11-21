@@ -11,11 +11,20 @@ enum MicMuteModule {
     /// only what the saved settings need (key monitor for push-to-talk, the
     /// launch observer for auto-mute, device listeners for the indicator).
     static func start() {
+        MicMuteController.shared.moduleOn = true
         MicMuteController.shared.start()
+    }
+
+    /// 7.3: the module switch — push-to-talk's key monitors, the auto-mute
+    /// launch observer and the device listeners come off. The microphone
+    /// stays as it is: turning the module off never unmutes or mutes it.
+    static func stop() {
+        MicMuteController.shared.moduleOn = false
     }
 
     /// Mutes or unmutes the default microphone and shows the HUD.
     static func toggleMute() {
+        guard AOMModuleSwitches.shared.allows(.micMute) else { return }
         MicMuteController.shared.toggle()
     }
 

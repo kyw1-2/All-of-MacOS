@@ -37,8 +37,24 @@ final class TypedStringEngine {
 
     /// Feeds one typed character. Returns a match when the buffer now ends
     /// with a registered abbreviation and the final key should be swallowed.
+    /// 7.3 (Codex 7.2.3 report): the typed strings with their lowercased
+    /// abbreviations, made once per registration instead of on every key.
+    private var prepared: (generation: UUID?, entries: [(trigger: Trigger, abbreviation: String, last: Character)]) = (nil, [])
+
+    private func entries(_ registered: [Trigger], generation: UUID?) -> [(trigger: Trigger, abbreviation: String, last: Character)] {
+        if let generation, prepared.generation == generation { return prepared.entries }
+        let entries = registered.compactMap { trigger -> (trigger: Trigger, abbreviation: String, last: Character)? in
+            guard case .typedString(let spec) = trigger.input else { return nil }
+            let abbreviation = spec.abbreviation.lowercased()
+            guard abbreviation.count >= 2, let last = abbreviation.last else { return nil }
+            return (trigger, abbreviation, last)
+        }
+        if let generation { prepared = (generation, entries) }
+        return entries
+    }
+
     func observe(text: String, bundleID: String,
-                 registered: [Trigger], activationGroups: [ActivationGroup]) -> Match? {
+                 registered: [Trigger], activationGroups: [ActivationGroup], generation: UUID? = nil) -> Match? {
         guard text.count == 1, let character = text.first, character.isPrintableCharacter else {
             reset(); return nil
         }
@@ -46,13 +62,11 @@ final class TypedStringEngine {
         if buffer.last?.bundleID != bundleID || now - (buffer.last?.at ?? 0) > Self.gapSeconds { reset() }
         buffer.append(Entry(text: text, at: now, bundleID: bundleID))
         if buffer.count > 64 { buffer.removeFirst(buffer.count - 64) }
+        let lastTyped = Character(text.lowercased())
+        let possible = entries(registered, generation: generation).filter { $0.last == lastTyped }
+        guard !possible.isEmpty else { return nil }
         let typed = buffer.map(\.text).joined().lowercased()
-        let candidates = registered.filter {
-            guard case .typedString(let spec) = $0.input else { return false }
-            let abbreviation = spec.abbreviation.lowercased()
-            return abbreviation.count >= 2 && typed.count >= abbreviation.count
-                && typed.hasSuffix(abbreviation)
-        }
+        let candidates = possible.filter { typed.count >= $0.abbreviation.count && typed.hasSuffix($0.abbreviation) }.map(\.trigger)
         guard let winner = TriggerResolver.resolve(candidates, payload: true, frontBundleID: bundleID,
             payloadOf: { _ in true }, appBundleIDOf: { $0.appBundleID },
             groups: activationGroups, activationGroupIDOf: { $0.activationGroupID }).max(by: {

@@ -28,6 +28,8 @@ final class PaletteSchedule: ObservableObject {
 
     @Published private(set) var events: [Event]?
     @Published private(set) var lastError: String?
+    /// 7.3 (7.2.1 audit B17): how many events the week holds when more than are listed.
+    @Published private(set) var totalCount = 0
     /// When the list was read (the empty launcher reads it again after five minutes).
     private(set) var loadedAt: Date?
     private let store = EKEventStore()
@@ -59,10 +61,12 @@ final class PaletteSchedule: ObservableObject {
         let store = self.store
         Task.detached(priority: .userInitiated) {
             let predicate = store.predicateForEvents(withStart: start, end: end, calendars: nil)
-            let found = store.events(matching: predicate)
+            let all = store.events(matching: predicate)
                 .filter { $0.status != .canceled }
                 .sorted { $0.startDate < $1.startDate }
-                .prefix(200)
+            let total = all.count
+            let found = all
+                .prefix(500)
                 .map { event in
                     Event(id: event.eventIdentifier ?? UUID().uuidString, title: event.title ?? "Untitled",
                           start: event.startDate, end: event.endDate, isAllDay: event.isAllDay,
@@ -72,6 +76,7 @@ final class PaletteSchedule: ObservableObject {
             await MainActor.run { [weak self] in
                 guard let self, self.ticket == current else { return }
                 self.events = Array(found)
+                self.totalCount = total
                 self.loadedAt = Date()
             }
         }
@@ -149,6 +154,10 @@ final class PaletteContacts: ObservableObject {
     }
 
     @Published private(set) var people: [Person]?
+    /// 7.3 (7.2.1 audit B18): reading Contacts failed (and why), instead of an empty list.
+    @Published private(set) var lastError: String?
+    /// The address book holds more than the 5,000 read.
+    @Published private(set) var truncated = false
     private let store = CNContactStore()
     private var loading = false
 
@@ -180,19 +189,24 @@ final class PaletteContacts: ObservableObject {
                                            CNContactEmailAddressesKey as CNKeyDescriptor,
                                            CNContactPhoneNumbersKey as CNKeyDescriptor]
             var found: [Person] = []
+            var failure: String?
+            var more = false
             let request = CNContactFetchRequest(keysToFetch: keys)
             request.sortOrder = .userDefault
-            try? store.enumerateContacts(with: request) { contact, stop in
+            do { try store.enumerateContacts(with: request) { contact, stop in
                 let name = CNContactFormatter.string(from: contact, style: .fullName) ?? ""
                 let organization = contact.organizationName.isEmpty ? nil : contact.organizationName
                 guard !name.isEmpty || organization != nil else { return }
                 found.append(Person(id: contact.identifier, name: name.isEmpty ? organization ?? "" : name, organization: name.isEmpty ? nil : organization,
                                     emails: contact.emailAddresses.map { $0.value as String },
                                     phones: contact.phoneNumbers.map { $0.value.stringValue }))
-                if found.count >= 5_000 { stop.pointee = true }
-            }
+                if found.count >= 5_000 { more = true; stop.pointee = true }
+            } } catch { failure = error.localizedDescription }
+            let result = found, problem = failure, truncated = more
             await MainActor.run { [weak self] in
-                self?.people = found
+                self?.people = result
+                self?.lastError = problem
+                self?.truncated = truncated
                 self?.loading = false
             }
         }

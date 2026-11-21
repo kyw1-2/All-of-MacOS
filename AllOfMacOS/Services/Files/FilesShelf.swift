@@ -31,13 +31,20 @@ final class FilesShelfStore: ObservableObject {
     static let shared = FilesShelfStore(fileURL: FilesStorage.shelfFile)
 
     @Published private(set) var items: [FilesShelfItem]
+    /// 7.3: shelf.json couldn't be read — kept aside (the shelf starts empty)
+    /// or, when it couldn't be moved, nothing is saved over it.
+    @Published private(set) var problem: FocusDataProblem?
     let fileURL: URL
     private let now: () -> Date
+    private var blocksSaving = false
 
     init(fileURL: URL, now: @escaping () -> Date = Date.init) {
         self.fileURL = fileURL
         self.now = now
-        self.items = Self.load(from: fileURL)
+        let loaded = Self.loadChecked(from: fileURL)
+        self.items = loaded.value ?? []
+        self.problem = loaded.problem("Your Drop Shelf")
+        self.blocksSaving = problem?.blocksSaving == true
     }
 
     /// Adds files at the top in the order given. A file already on the shelf
@@ -47,13 +54,16 @@ final class FilesShelfStore: ObservableObject {
         var result: [FilesShelfItem] = []
         var fresh: [FilesShelfItem] = []
         let date = now()
+        // 7.3: one map instead of a search of the shelf per added file.
+        var known = Dictionary(items.map { (FilesPath.key($0.path), $0) }, uniquingKeysWith: { first, _ in first })
         for url in urls where url.isFileURL {
             let key = FilesPath.key(url.path)
-            if let existing = items.first(where: { FilesPath.key($0.path) == key }) ?? fresh.first(where: { $0.path == key }) {
+            if let existing = known[key] {
                 result.append(existing)
                 continue
             }
             let item = FilesShelfItem(path: key, added: date, received: received)
+            known[key] = item
             fresh.append(item)
             result.append(item)
         }
@@ -85,22 +95,40 @@ final class FilesShelfStore: ObservableObject {
     }
 
     /// The item now lives at `url` (after Move To or its Undo).
-    func relocate(_ id: UUID, to url: URL) {
-        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
-        items[index].path = FilesPath.key(url.path)
+    func relocate(_ id: UUID, to url: URL) { relocate([(id, url)]) }
+
+    /// Several items moved: one change and one save for all of them (7.3).
+    func relocate(_ moves: [(UUID, URL)]) {
+        guard !moves.isEmpty else { return }
+        let index = Dictionary(items.enumerated().map { ($0.element.id, $0.offset) }, uniquingKeysWith: { first, _ in first })
+        var updated = items
+        var changed = false
+        for (id, url) in moves {
+            guard let position = index[id] else { continue }
+            updated[position].path = FilesPath.key(url.path)
+            changed = true
+        }
+        guard changed else { return }
+        items = updated
         save()
     }
 
     func items(_ ids: Set<UUID>) -> [FilesShelfItem] { items.filter { ids.contains($0.id) } }
 
-    static func load(from url: URL) -> [FilesShelfItem] {
-        guard let data = try? Data(contentsOf: url) else { return [] }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return (try? decoder.decode([FilesShelfItem].self, from: data)) ?? []
+    static func load(from url: URL) -> [FilesShelfItem] { loadChecked(from: url).value ?? [] }
+
+    static func loadChecked(from url: URL) -> FocusStorage.Loaded<[FilesShelfItem]> {
+        AOMCheckedFile.load(url, owner: "the Drop Shelf") { data in
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            return try decoder.decode([FilesShelfItem].self, from: data)
+        }
     }
 
+    func dismissProblem() { if problem?.blocksSaving == false { problem = nil } }
+
     private func save() {
+        guard !blocksSaving else { return }
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]

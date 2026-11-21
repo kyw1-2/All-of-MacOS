@@ -12,7 +12,6 @@ xcrun swiftc -O -emit-library -parse-as-library -application-extension \
   "$root/AllOfMacOS/Services/AnnotationProject.swift" \
   -framework Quartz -o "$preview/MacOS/AOMAnnotationPreview"
 cp "$root/Extensions/AnnotationPreview/Info.plist" "$preview/Info.plist"
-codesign --force --sign "$sign_identity" --entitlements "$root/Extensions/AnnotationPreview/Preview.entitlements" "$preview/.."
 
 thumbnail="$contents/PlugIns/AOMAnnotationThumbnail.appex/Contents"
 mkdir -p "$thumbnail/MacOS"
@@ -23,7 +22,6 @@ xcrun swiftc -O -emit-library -parse-as-library -application-extension \
   "$root/AllOfMacOS/Services/AnnotationProject.swift" \
   -framework QuickLookThumbnailing -o "$thumbnail/MacOS/AOMAnnotationThumbnail"
 cp "$root/Extensions/AnnotationThumbnail/Info.plist" "$thumbnail/Info.plist"
-codesign --force --sign "$sign_identity" --entitlements "$root/Extensions/AnnotationThumbnail/Extension.entitlements" "$thumbnail/.."
 
 share="$contents/PlugIns/AOMAnnotationShare.appex/Contents"
 mkdir -p "$share/MacOS"
@@ -33,9 +31,10 @@ xcrun swiftc -O -emit-library -parse-as-library -application-extension \
   "$root/AllOfMacOS/Services/AOMSharedImageStaging.swift" \
   -o "$share/MacOS/AOMAnnotationShare"
 cp "$root/Extensions/AnnotationShare/Info.plist" "$share/Info.plist"
-codesign --force --sign "$sign_identity" --entitlements "$root/Extensions/AnnotationShare/Extension.entitlements" "$share/.."
 
-# Keep every extension's version aligned with its containing application.
+# Keep every extension's version aligned with its containing application,
+# then sign each once (7.3, Codex 7.2.3 report: each was signed, edited and
+# signed again).
 for extension in "$contents"/PlugIns/*.appex; do
   for key in CFBundleShortVersionString CFBundleVersion; do
     value=$(/usr/libexec/PlistBuddy -c "Print :$key" "$contents/Info.plist")

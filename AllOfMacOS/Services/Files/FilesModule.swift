@@ -20,6 +20,7 @@ enum FilesModule {
     static func start() {
         guard !started else { return }
         started = true
+        FilesDialogHelper.shared.suspended = false
         let settings = FilesSettings.shared
         settings.didChange
             .debounce(for: .milliseconds(80), scheduler: DispatchQueue.main)
@@ -45,8 +46,35 @@ enum FilesModule {
         if settings.defaults.bool(forKey: downloadsReadKey) { FilesRecentModel.shared.refresh() }
     }
 
+    /// 7.3 (module switch, the Codex report's pilot): everything start()
+    /// set up goes — settings and permission observers, the dialog helper,
+    /// the shake monitor and its callback (a late shake can't reopen the
+    /// shelf), the shelf panel. The saved options stay for the next start.
+    static func stop() {
+        guard started else { return }
+        started = false
+        cancellables.removeAll()
+        observers.forEach(NotificationCenter.default.removeObserver)
+        observers.removeAll()
+        FilesShakeMonitor.shared.onShake = nil
+        FilesShakeMonitor.shared.stop()
+        FilesDialogHelper.shared.suspended = true
+        FilesDialogHelper.shared.refresh()
+        FilesDialogHelper.shared.onChange = nil
+        FilesRecentModel.shared.onChange = nil
+        FilesShelfPanelController.shared.hide()
+        AOMModuleStatusBoard.files.setOn = nil
+        let status = AOMModuleStatusBoard.files
+        status.isOn = false
+        status.detail = "Turned off in Settings › Modules"
+        status.attention = nil
+    }
+
+    static var isStarted: Bool { started }
+
     /// Shows the Drop Shelf beside the pointer (hotkey, menus, Workspace).
     static func showShelf() {
+        guard AOMModuleSwitches.shared.allows(.files) else { return }
         FilesShelfPanelController.shared.show()
     }
 
@@ -75,6 +103,7 @@ enum FilesModule {
 
     /// Starts and stops the parts the settings turn on.
     static func applySettings() {
+        guard started else { return }
         let settings = FilesSettings.shared
         FilesDialogHelper.shared.refresh()
         if PresetManager.isUIPreview || PresetManager.isRunningTests {

@@ -56,7 +56,7 @@ enum FocusStorage {
             case .missing, .loaded: return nil
             case .setAside(let aside):
                 return FocusDataProblem(title: "\(what) couldn't be read", file: aside, blocksSaving: false,
-                                        detail: "It was kept as \(aside.lastPathComponent) in the Focus data folder, and Focus started a new one.")
+                                        detail: "It was kept as \(aside.lastPathComponent) in the same folder, and a new one was started.")
             case .blocked(let file, let reason):
                 return FocusDataProblem(title: "\(what) can't be saved", file: file, blocksSaving: true, detail: reason)
             }
@@ -70,40 +70,24 @@ enum FocusStorage {
     /// can't be read at all blocks saving.
     static func loadChecked<T: Decodable>(_ type: T.Type, named name: String, in directory: URL,
                                           now: Date = Date()) -> Loaded<T> {
-        let url = directory.appendingPathComponent(name)
-        let files = FileManager.default
-        guard files.fileExists(atPath: url.path) else { return .missing }
-        guard let data = try? Data(contentsOf: url) else {
-            return .blocked(url, "\(name) is there but couldn't be read, so Focus won't save over it. Check its permissions, then reopen All of MacOS.")
-        }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .secondsSince1970
-        if let value = try? decoder.decode(T.self, from: data) { return .loaded(value) }
-        let stamp = ISO8601DateFormatter().string(from: now).replacingOccurrences(of: ":", with: "-")
-        let base = (name as NSString).deletingPathExtension
-        var aside = directory.appendingPathComponent("\(base).unreadable-\(stamp).json")
-        var copy = 2
-        while files.fileExists(atPath: aside.path) {
-            aside = directory.appendingPathComponent("\(base).unreadable-\(stamp) \(copy).json")
-            copy += 1
-        }
-        do {
-            try files.moveItem(at: url, to: aside)
-            NSLog("[AOM] Focus couldn't read %@; kept it as %@", name, aside.lastPathComponent)
-            return .setAside(aside)
-        } catch {
-            return .blocked(url, "\(name) couldn't be read or set aside, so Focus won't save over it.")
+        AOMCheckedFile.load(directory.appendingPathComponent(name), owner: "Focus", now: now) { data in
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .secondsSince1970
+            return try decoder.decode(T.self, from: data)
         }
     }
 
     /// Encodes on the caller's thread and writes atomically on a utility queue.
+    /// 7.3 (Codex 7.2.3 report): the snapshot is encoded on the queue too,
+    /// in the order the saves came, so a long history no longer holds the
+    /// main thread while it is encoded.
     static func save<T: Encodable>(_ value: T, named name: String, in directory: URL) {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .secondsSince1970
-        encoder.outputFormatting = [.sortedKeys]
-        guard let data = try? encoder.encode(value) else { return }
         let url = directory.appendingPathComponent(name)
         queue.async {
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .secondsSince1970
+            encoder.outputFormatting = [.sortedKeys]
+            guard let data = try? encoder.encode(value) else { return }
             do {
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
                 try data.write(to: url, options: .atomic)
@@ -125,4 +109,39 @@ struct FocusDataProblem: Equatable {
     var file: URL
     var blocksSaving: Bool
     var detail: String
+}
+
+/// 7.3 (Codex 7.2.3 audit): the Focus rule from 7.2.3 for every file of
+/// records AOM keeps — the Drop Shelf's shelf.json and Ask AI's chats.json
+/// started empty when they couldn't be decoded, and the next save replaced
+/// the damaged copy. A file that can't be decoded is kept as
+/// "<name>.unreadable-<date>.<ext>" before anything is saved; one that
+/// can't be read at all blocks saving.
+enum AOMCheckedFile {
+    static func load<T>(_ url: URL, owner: String, now: Date = Date(), decode: (Data) throws -> T) -> FocusStorage.Loaded<T> {
+        let files = FileManager.default
+        let name = url.lastPathComponent
+        guard files.fileExists(atPath: url.path) else { return .missing }
+        guard let data = try? Data(contentsOf: url) else {
+            return .blocked(url, "\(name) is there but couldn't be read, so \(owner) won't save over it. Check its permissions, then reopen All of MacOS.")
+        }
+        if let value = try? decode(data) { return .loaded(value) }
+        let directory = url.deletingLastPathComponent()
+        let stamp = ISO8601DateFormatter().string(from: now).replacingOccurrences(of: ":", with: "-")
+        let base = (name as NSString).deletingPathExtension
+        let ext = (name as NSString).pathExtension.isEmpty ? "json" : (name as NSString).pathExtension
+        var aside = directory.appendingPathComponent("\(base).unreadable-\(stamp).\(ext)")
+        var copy = 2
+        while files.fileExists(atPath: aside.path) {
+            aside = directory.appendingPathComponent("\(base).unreadable-\(stamp) \(copy).\(ext)")
+            copy += 1
+        }
+        do {
+            try files.moveItem(at: url, to: aside)
+            NSLog("[AOM] %@ couldn't read %@; kept it as %@", owner, name, aside.lastPathComponent)
+            return .setAside(aside)
+        } catch {
+            return .blocked(url, "\(name) couldn't be read or set aside, so \(owner) won't save over it.")
+        }
+    }
 }

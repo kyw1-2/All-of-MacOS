@@ -44,6 +44,11 @@ final class StreamingCommand: @unchecked Sendable {
     let arguments: [String]
     let environment: [String: String]?
     let timeout: TimeInterval
+    /// 7.3 (7.2.1 audit B14): where the command runs (a script's own folder).
+    let currentDirectory: URL?
+    /// The longest unfinished line kept for `onLine` before it is passed on
+    /// as it is (7.3: output without newlines grew without limit).
+    static let partialLineLimit = 64 * 1024
     /// The most output kept per stream for parsing; the live log keeps its own tail.
     static let storedLimit = 16 * 1024 * 1024
 
@@ -56,12 +61,16 @@ final class StreamingCommand: @unchecked Sendable {
     private var didCancel = false
     private var started = false
     private var finished = false
+    /// 7.3 (7.2.1 audit B19): Cancel before the process started was lost.
+    private var cancelledBeforeStart = false
 
-    init(_ executable: URL, _ arguments: [String], environment: [String: String]? = nil, timeout: TimeInterval) {
+    init(_ executable: URL, _ arguments: [String], environment: [String: String]? = nil, timeout: TimeInterval,
+         currentDirectory: URL? = nil) {
         self.executable = executable
         self.arguments = arguments
         self.environment = environment
         self.timeout = timeout
+        self.currentDirectory = currentDirectory
     }
 
     var isRunning: Bool { locked { started && !finished } }
@@ -78,6 +87,9 @@ final class StreamingCommand: @unchecked Sendable {
     func run(onLine: (@Sendable (Stream, String) -> Void)? = nil) async throws -> Result {
         guard FileManager.default.isExecutableFile(atPath: executable.path) else {
             throw Failure.notExecutable(executable.path)
+        }
+        if locked({ cancelledBeforeStart }) || Task.isCancelled {
+            return Result(status: -1, stdout: "", stderr: "", timedOut: false, cancelled: true)
         }
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Result, Error>) in
@@ -97,6 +109,11 @@ final class StreamingCommand: @unchecked Sendable {
         process.executableURL = executable
         process.arguments = arguments
         if let environment { process.environment = environment }
+        if let currentDirectory { process.currentDirectoryURL = currentDirectory }
+        if locked({ cancelledBeforeStart }) {
+            completion(Result(status: -1, stdout: "", stderr: "", timedOut: false, cancelled: true))
+            return
+        }
         process.standardOutput = out
         process.standardError = err
         process.standardInput = FileHandle.nullDevice
@@ -159,7 +176,8 @@ final class StreamingCommand: @unchecked Sendable {
     /// more than once and before or after the process ends.
     func cancel() {
         let running: Bool = locked {
-            guard started, !finished else { return false }
+            guard started else { cancelledBeforeStart = true; didCancel = true; return false }
+            guard !finished else { return false }
             didCancel = true
             return true
         }
@@ -191,6 +209,10 @@ final class StreamingCommand: @unchecked Sendable {
             var buffer = partial[stream, default: Data()]
             buffer.append(data)
             lines = Self.takeLines(from: &buffer)
+            if buffer.count > Self.partialLineLimit {
+                lines.append(String(decoding: buffer, as: UTF8.self))
+                buffer.removeAll(keepingCapacity: false)
+            }
             partial[stream] = buffer
         }
         lines.forEach { onLine?(stream, $0) }

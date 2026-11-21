@@ -16,6 +16,7 @@ enum ScreenRulerModule {
     /// Starts measuring on every display, or ends the session already on
     /// screen (the hotkey toggles).
     static func measure() {
+        guard AOMModuleSwitches.shared.allows(.screenRuler) else { return }
         if let active = ScreenRulerOverlayController.active {
             active.finish()
             return

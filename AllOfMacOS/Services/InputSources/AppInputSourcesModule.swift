@@ -125,6 +125,8 @@ final class AppInputSources: ObservableObject {
         }
     }
 
+    func stop() { end() }
+
     private func end() {
         if let observer { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
         observer = nil
@@ -151,11 +153,15 @@ final class AppInputSources: ObservableObject {
         lastSwitch = (app?.localizedName ?? bundleID ?? "", chosen.name)
         // macOS can restore a document's own source right after activation
         // (Keyboard › "Automatically switch to a document's input source");
-        // check once more a moment later, only if the same app is in front.
+        // check once more a moment later, only if the same app is in front —
+        // and (7.3, Codex 7.2.3 report) not when the person pressed a key in
+        // between: a 한/영 switch of their own wins over the rule.
+        let switchedAt = Date()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             MainActor.assumeIsolated {
                 guard let self, self.isRunning, self.activeBundleID == bundleID, self.mayAct(in: bundleID),
-                      InputSources.currentID() != target else { return }
+                      InputSources.currentID() != target,
+                      !AppInputSourcesPolicy.typedSince(switchedAt) else { return }
                 _ = InputSources.select(target)
             }
         }
@@ -173,5 +179,24 @@ final class AppInputSources: ObservableObject {
 /// `AppInputSourcesModule.start()` to `AOMProductivityModules.start()`).
 @MainActor
 enum AppInputSourcesModule {
-    static func start() { AppInputSources.shared.refresh() }
+    static func start() {
+        AppInputSources.shared.refresh()
+        InputSourceBadge.shared.refresh()
+    }
+
+    /// 7.3: the module switch turns both off.
+    static func stop() {
+        AppInputSources.shared.stop()
+        InputSourceBadge.shared.stop()
+    }
+}
+
+extension AppInputSourcesPolicy {
+    /// A key (or a modifier, Caps Lock included) went down after `date`.
+    static func typedSince(_ date: Date) -> Bool {
+        let elapsed = Date().timeIntervalSince(date)
+        let key = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .keyDown)
+        let flags = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .flagsChanged)
+        return min(key, flags) < elapsed
+    }
 }

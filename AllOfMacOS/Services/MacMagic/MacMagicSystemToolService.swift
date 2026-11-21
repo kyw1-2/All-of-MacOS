@@ -338,38 +338,66 @@ final class MacMagicSystemToolService {
     enum ImageFormat: String, CaseIterable { case png, jpeg, heic, webp }
 
     /// Converts an image file to another format, returning the new file URL.
+    ///
+    /// 7.3 (Codex 7.2.3 audit, reproduced; 7.2.1 B03): PNG, JPEG and HEIC
+    /// were written straight to "Photo-png.png", replacing a file already
+    /// there. Every format is now written to a hidden temporary file next
+    /// to the image and then renamed to a free name with RENAME_EXCL
+    /// ("Photo-png 2.png" when taken), so an existing file — or the result
+    /// of a second conversion running at the same time — is never replaced.
     func convertImage(url: URL, to format: ImageFormat, quality: Double = 0.85) throws -> URL {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
             throw CocoaError(.fileReadUnknown)
         }
+        let folder = url.deletingLastPathComponent()
+        let base = url.deletingPathExtension().lastPathComponent
+        let temporary = folder.appendingPathComponent(".aom-convert-\(UUID().uuidString).tmp")
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let preferredName: String
+        let ext: String
         if format == .webp {
             guard let bytes = WebPEncoder.encode(image: image, quality: quality) else {
                 throw CocoaError(.fileWriteUnknown)
             }
-            let destination = url.deletingPathExtension().appendingPathExtension("webp")
-            guard destination.standardizedFileURL != url.standardizedFileURL else {
-                throw CocoaError(.fileWriteFileExists)
+            try bytes.write(to: temporary, options: .withoutOverwriting)
+            preferredName = base
+            ext = "webp"
+        } else {
+            let type: UTType
+            switch format {
+            case .png: type = .png
+            case .jpeg: type = .jpeg
+            case .heic: type = .heic
+            case .webp: throw CocoaError(.fileWriteUnknown) // handled by the bundled encoder above
             }
-            try bytes.write(to: destination, options: .withoutOverwriting)
-            return destination
+            guard let destination = CGImageDestinationCreateWithURL(temporary as CFURL, type.identifier as CFString, 1, nil) else {
+                throw CocoaError(.fileWriteUnknown)
+            }
+            let options: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: quality]
+            CGImageDestinationAddImage(destination, image, options as CFDictionary)
+            guard CGImageDestinationFinalize(destination) else { throw CocoaError(.fileWriteUnknown) }
+            preferredName = "\(base)-\(format.rawValue)"
+            ext = type.preferredFilenameExtension ?? format.rawValue
         }
-        let type: UTType
-        switch format {
-        case .png: type = .png
-        case .jpeg: type = .jpeg
-        case .heic: type = .heic
-        case .webp: throw CocoaError(.fileWriteUnknown) // handled by the bundled encoder above
+        return try Self.commitExclusive(temporary, in: folder, base: preferredName, ext: ext, avoiding: url)
+    }
+
+    /// Renames a finished temporary file to "base.ext", "base 2.ext" … — the
+    /// first name free at the moment of the rename (never `avoiding`, the source).
+    static func commitExclusive(_ temporary: URL, in folder: URL, base: String, ext: String, avoiding source: URL? = nil) throws -> URL {
+        for number in 1...999 {
+            let name = number == 1 ? "\(base).\(ext)" : "\(base) \(number).\(ext)"
+            let candidate = folder.appendingPathComponent(name)
+            if let source, BatchRename.key(candidate) == BatchRename.key(source) { continue }
+            if renamex_np(temporary.path, candidate.path, UInt32(RENAME_EXCL)) == 0 { return candidate }
+            let code = errno
+            guard code == EEXIST else {
+                throw NSError(domain: NSPOSIXErrorDomain, code: Int(code),
+                              userInfo: [NSLocalizedDescriptionKey: String(cString: strerror(code))])
+            }
         }
-        let base = url.deletingPathExtension().lastPathComponent
-        let destinationURL = url.deletingLastPathComponent().appendingPathComponent("\(base)-\(format.rawValue).\(type.preferredFilenameExtension ?? format.rawValue)")
-        guard let destination = CGImageDestinationCreateWithURL(destinationURL as CFURL, type.identifier as CFString, 1, nil) else {
-            throw CocoaError(.fileWriteUnknown)
-        }
-        let options: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: quality]
-        CGImageDestinationAddImage(destination, image, options as CFDictionary)
-        guard CGImageDestinationFinalize(destination) else { throw CocoaError(.fileWriteUnknown) }
-        return destinationURL
+        throw CocoaError(.fileWriteFileExists)
     }
 
     /// Generates a QR code image for the text at the given scale.

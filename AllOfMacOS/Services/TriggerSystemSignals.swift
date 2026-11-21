@@ -311,6 +311,7 @@ final class LiveSystemSignalProvider: SystemSignalProvider {
     private var gamepadMonitor: GamepadInputMonitor?
     private var workspaceTokens: [NSObjectProtocol] = []
     private var distributedTokens: [NSObjectProtocol] = []
+    private var inputSourceToken: UUID?
     private var defaultsToken: NSObjectProtocol?
     private var batterySource: CFRunLoopSource?
     private var wifiDelegate: WiFiDelegate?
@@ -368,6 +369,10 @@ final class LiveSystemSignalProvider: SystemSignalProvider {
         let workspace = NSWorkspace.shared.notificationCenter
         workspaceTokens.forEach(workspace.removeObserver); workspaceTokens.removeAll()
         distributedTokens.forEach(DistributedNotificationCenter.default().removeObserver); distributedTokens.removeAll()
+        if let token = inputSourceToken {
+            MainActor.assumeIsolated { InputSourceChangeHub.shared.unsubscribe(token) }
+            inputSourceToken = nil
+        }
         if let defaultsToken { NotificationCenter.default.removeObserver(defaultsToken); self.defaultsToken = nil }
         if let batterySource { CFRunLoopRemoveSource(CFRunLoopGetMain(), batterySource, .defaultMode); self.batterySource = nil }
         if let wifiDelegate { CWWiFiClient.shared().delegate = nil; try? CWWiFiClient.shared().stopMonitoringAllEvents(); _ = wifiDelegate; self.wifiDelegate = nil }
@@ -420,10 +425,13 @@ final class LiveSystemSignalProvider: SystemSignalProvider {
         distributedTokens.append(center.addObserver(forName: NSNotification.Name("com.apple.screensaver.didstop"), object: nil, queue: .main) { [weak self] _ in self?.send(.screensaver(started: false)) })
     }
 
+    /// 7.3: through the hub the input source badge shares, so one observer
+    /// serves both (Codex 7.2.3 report).
     private func observeInputSource() {
-        distributedTokens.append(DistributedNotificationCenter.default().addObserver(
-            forName: NSNotification.Name("com.apple.Carbon.TISNotifySelectedKeyboardInputSourceChanged"), object: nil, queue: .main) { [weak self] _ in
-                self?.send(.inputSourceChanged) })
+        let token = MainActor.assumeIsolated {
+            InputSourceChangeHub.shared.subscribe { [weak self] in self?.send(.inputSourceChanged) }
+        }
+        inputSourceToken = token
     }
 
     // MARK: Battery

@@ -98,7 +98,9 @@ final class FocusIdleAppsController: ObservableObject {
     var rules: [FocusIdleRule] { lists.lists.idleRules }
     var hasRules: Bool { !rules.isEmpty }
     /// The feature is on and at least one rule can act.
-    var shouldRun: Bool { settings.settings.idleAppsEnabled && rules.contains { $0.isEnabled && $0.hidesOrQuits } }
+    /// 7.3: the Focus module switch.
+    var moduleOn = true
+    var shouldRun: Bool { moduleOn && settings.settings.idleAppsEnabled && rules.contains { $0.isEnabled && $0.hidesOrQuits } }
 
     // MARK: Lifecycle
 

@@ -20,6 +20,15 @@ extension QuickCommandPalette {
     /// The launcher's own keys (PaletteNavigationKeys); true when used.
     func handleKey(_ event: NSEvent, items: [PaletteItem], selected: PaletteItem?) -> Bool {
         let mods = event.modifierFlags.intersection([.shift, .command, .control, .option, .function])
+        // 7.3: Find a Shortcut — any key combination is looked up, nothing is set.
+        if navigation.current == .hotkeyFinder {
+            if event.keyCode == 53, mods.isEmpty { if !event.isARepeat { pop() }; return true }
+            if !event.isARepeat, [54, 55, 56, 58, 59, 60, 61, 62, 63].contains(event.keyCode) == false {
+                PaletteHotkeyFinder.shared.shortcut = KeyboardShortcut(keyCode: event.keyCode, modifiers: mods)
+                sourcesChanged()
+            }
+            return true
+        }
         // Recording a hotkey: the next key is the hotkey, whatever it is.
         if case .hotkey(let itemID, let title) = navigation.current {
             if event.keyCode == 53, mods.isEmpty { if !event.isARepeat { pop() }; return true }
@@ -38,6 +47,13 @@ extension QuickCommandPalette {
             if navigation.current == .clipboard { cycleClipboardFilter(backwards: backwards); return true }
             if case .tool(.brew(let tab, _))? = navigation.current { cycleBrewTab(from: tab, backwards: backwards); return true }
             return false
+        }
+        // 7.3: ⌘⇧M the last question's records again, ⌘⇧0 none (Ask AI).
+        if navigation.current == .ai || navigation.current == .aiRecords, mods == [.command, .shift], [46, 29].contains(event.keyCode) {
+            guard !event.isARepeat else { return true }
+            if event.keyCode == 46 { ai.reuseLastScope(); screens.show("Records: \(ai.pendingScope.summary)") }
+            else { ai.clearPendingScope(); screens.show("Records cleared") }
+            return true
         }
         // ⌥↩: Send To (LaunchBar's Instant Send).
         if [36, 76].contains(event.keyCode), mods == .option, !showsActions, let selected, selected.sendText != nil {
@@ -207,6 +223,8 @@ extension QuickCommandPalette {
 
     func leave72(_ route: PaletteRoute) {
         switch route {
+        // 7.3: going back from the form leaves the typed text as it was.
+        case .snippetArguments: PaletteSnippetForm.shared.cancel()
         case .tool(.brew):
             let stillBrew = navigation.frames.contains { if case .tool(.brew) = $0.route { return true }; return false }
             if !stillBrew { brew.launcherConfirm = nil }
@@ -712,8 +730,40 @@ extension QuickCommandPalette {
                                    icon: "arrow.turn.left.up", group: nil,
                                    primary: PaletteAction(title: "Go Up", effect: .stay) { pop(); push(.folder(parent)) }))
         }
-        for hit in data.folder?.items ?? [] {
+        guard let folder = data.folder, folder.url == url else { return items }
+        if folder.loading {
+            items.append(screenRow("folder.loading", "Reading \(url.lastPathComponent)…", "Large and network folders take a moment",
+                                   icon: "hourglass", group: nil, primary: PaletteAction(title: "Wait", effect: .stay) {}))
+            return items
+        }
+        if let error = folder.error {
+            items.append(screenRow("folder.error", "Couldn't Read This Folder", error, icon: "exclamationmark.triangle", group: nil,
+                                   primary: PaletteAction(title: "Try Again", effect: .stay) { data.browse(url) }))
+            return items
+        }
+        let search = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        // 7.3: typing searches every item; the list without a search draws a page at a time.
+        let candidates = search.isEmpty ? Array(folder.items.prefix(folder.shown))
+            : folder.items.count > 2_000 ? PaletteLauncherData.folderMatches(folder.items, query: search) : folder.items
+        for hit in candidates.prefix(search.isEmpty ? .max : 2_000) {
             items.append(fileRow(hit, group: hit.isFolder ? "Folders" : "Files"))
+        }
+        // 7.3: this folder (and the filter typed) as a launcher favorite.
+        var favorite = screenRow("folder.favorite", search.isEmpty ? "Save Folder as Favorite" : "Save Folder and “\(search)” as Favorite",
+                                 "Opens again from the launcher's search", icon: "star", group: "Folder",
+                                 primary: PaletteAction(title: "Save Favorite", symbol: "star", effect: .stay) {
+                                     PaletteFolderFavorites.shared.add(url, query: search)
+                                     screens.show("Saved — search for “\(url.lastPathComponent)” to open it")
+                                 })
+        favorite.placement = .fallback
+        items.append(favorite)
+        if search.isEmpty, folder.items.count > folder.shown {
+            var more = screenRow("folder.more", "Show \(min(PaletteLauncherData.folderPage, folder.items.count - folder.shown)) More",
+                                 "\(folder.items.count - folder.shown) of \(folder.items.count) not shown yet — typing searches all of them",
+                                 icon: "ellipsis.circle", group: "\(folder.items.count) items",
+                                 primary: PaletteAction(title: "Show More", effect: .stay) { data.showMoreOfFolder() })
+            more.placement = .fallback
+            items.append(more)
         }
         return items
     }
@@ -785,12 +835,22 @@ extension QuickCommandPalette {
     var snippets: [PaletteSnippets.Snippet] { PaletteSnippets.snippets(in: appState.currentPreset.triggers) }
 
     func snippetRow(_ snippet: PaletteSnippets.Snippet, group: String?, section: Section = .snippets) -> PaletteItem {
-        let preview = snippet.text.replacingOccurrences(of: "\n", with: " ⏎ ")
+        // 7.3: a snippet with placeholders shows what it would insert now
+        // (the snippet test), or what is wrong with it.
+        let preview = (snippet.usesPlaceholders ? PaletteSnippets.preview(snippet) : snippet.text).replacingOccurrences(of: "\n", with: " ⏎ ")
+        let names = snippet.argumentNames
+        let primary = !names.isEmpty
+            ? PaletteAction(title: "Fill In…", symbol: "keyboard", effect: .stay) {
+                PaletteSnippetForm.shared.begin(.init(snippetID: snippet.id, names: names))
+                push(.snippetArguments(snippet.id))
+            }
+            : PaletteAction(title: "Type Snippet", symbol: "keyboard") {
+                if snippet.usesPlaceholders { insertSnippet(snippet, arguments: [:], erase: 0, targetPID: nil) }
+                else { insertIntoFrontApp(snippet.text, announce: snippet.abbreviation) }
+            }
         var row = screenRow("snippet.\(snippet.id.uuidString)", snippet.name, preview, icon: "text.badge.plus", group: group,
                             section: section,
-                            primary: PaletteAction(title: "Type Snippet", symbol: "keyboard") {
-                                insertIntoFrontApp(snippet.text, announce: snippet.abbreviation)
-                            },
+                            primary: primary,
                             secondaries: [
                                 PaletteAction(title: "Copy Text", symbol: "doc.on.doc") { copyToClipboard(snippet.text, announce: snippet.abbreviation) },
                                 PaletteAction(title: "Edit in Automation", symbol: "pencil") { editTrigger(snippet.id) },
@@ -801,6 +861,68 @@ extension QuickCommandPalette {
         row.keywords = snippet.text
         row.sendText = snippet.text
         return row
+    }
+
+    /// 7.3: one row per field; ↩ takes the field's text and goes to the
+    /// next, the last one inserts the snippet.
+    func snippetArgumentItems(_ id: UUID) -> [PaletteItem] {
+        guard let snippet = snippets.first(where: { $0.id == id }), let request = PaletteSnippetForm.shared.request,
+              request.snippetID == id, let name = request.currentName else {
+            return [screenRow("snippetarg.gone", "This snippet isn't there any more", "Go back with esc", icon: "exclamationmark.triangle",
+                              group: nil, primary: PaletteAction(title: "Back", effect: .stay) { pop() }, dimmed: true)]
+        }
+        let value = query
+        let isLast = request.index == request.names.count - 1
+        var values = request.values
+        values[name] = value
+        let preview = PaletteSnippets.preview(snippet, arguments: values).replacingOccurrences(of: "\n", with: " ⏎ ")
+        let step = "\(request.index + 1) of \(request.names.count)"
+        let action = isLast
+            ? PaletteAction(title: "Insert", symbol: "keyboard") {
+                _ = PaletteSnippetForm.shared.submit(value)
+                if let done = PaletteSnippetForm.shared.finish() {
+                    insertSnippet(snippet, arguments: done.values, erase: done.erase, targetPID: done.targetPID)
+                }
+            }
+            : PaletteAction(title: "Next Field", symbol: "arrow.right", effect: .stay) {
+                _ = PaletteSnippetForm.shared.submit(value)
+                query = ""
+                sourcesChanged()
+            }
+        var row = screenRow("snippetarg.\(request.index)", "\(name): \(value.isEmpty ? "…" : value)", preview, icon: "character.cursor.ibeam",
+                            group: "\(snippet.abbreviation) · field \(step)", primary: action)
+        row.accessory = isLast ? "↩ Insert" : "↩ Next"
+        return [row]
+    }
+
+    /// Renders and inserts a snippet with placeholders. From a typed
+    /// abbreviation (`erase` > 0) the abbreviation is erased first, and only
+    /// in the app it was typed in.
+    func insertSnippet(_ snippet: PaletteSnippets.Snippet, arguments: [String: String], erase: Int, targetPID: pid_t?) {
+        guard case .success(let render) = SnippetTemplate.render(text: snippet.text, syntax: snippet.syntax,
+                                                                 context: .init(arguments: arguments)) else {
+            screens.show("This snippet's text has a mistake — fix it in Automation")
+            return
+        }
+        let delay = host == .launcher ? 0.15 : 0
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            let front = NSWorkspace.shared.frontmostApplication
+            if let targetPID, front?.processIdentifier != targetPID {
+                GestureHUD.shared.show(title: "Snippet Not Inserted", detail: "The app you typed in isn't in front any more; the text is as you left it.")
+                return
+            }
+            if erase > 0 { TypedStringEngine.shared.erase(erase) }
+            SnippetInserter.insert(render, into: front) { inserted, note in
+                if !inserted {
+                    let board = NSPasteboard.general
+                    board.clearContents()
+                    board.setString(render.text, forType: .string)
+                    GestureHUD.shared.show(title: "Snippet Copied", detail: (note ?? "Couldn't insert it") + " — press ⌘V.")
+                } else if let note {
+                    GestureHUD.shared.show(title: "Snippet", detail: note)
+                }
+            }
+        }
     }
 
     func snippetItems() -> [PaletteItem] {
@@ -820,8 +942,111 @@ extension QuickCommandPalette {
         return items
     }
 
+    /// 7.3: Find a Shortcut's rows — each use of the key pressed, where it
+    /// applies, and the way to change it.
+    func hotkeyFinderItems() -> [PaletteItem] {
+        guard let shortcut = PaletteHotkeyFinder.shared.shortcut else {
+            return [screenRow("hkfind.wait", "Press a key combination", "Such as ⌘⇧M or ⌃⌥←; AOM only looks it up", icon: "keyboard",
+                              group: nil, primary: PaletteAction(title: "Waiting", effect: .stay) {}, dimmed: true)]
+        }
+        let usages = hotkeys.usages(of: shortcut, triggers: appState.currentPreset.triggers, groups: appState.currentPreset.activationGroups)
+        let group = "\(shortcut.displayString) · \(usages.isEmpty ? "free" : "\(usages.count) use\(usages.count == 1 ? "" : "s")")"
+        guard !usages.isEmpty else {
+            return [screenRow("hkfind.free", "Nothing in AOM or Mission Control uses \(shortcut.displayString)", "Other apps may still use it inside their own windows",
+                              icon: "checkmark.circle", group: group, primary: PaletteAction(title: "OK", effect: .stay) {})]
+        }
+        return usages.map { usage in
+            let action: PaletteAction
+            switch usage.kind {
+            case .launcher: action = PaletteAction(title: "Change in Settings", effect: .stay) { AOMModuleSwitches.openSettings() }
+            case .launcherRow(let itemID): action = PaletteAction(title: "Change Hotkey", effect: .push(.hotkey(itemID: itemID, title: usage.title))) {}
+            case .aomShortcut: action = PaletteAction(title: "Open Shortcuts Settings", effect: .stay) { AOMModuleSwitches.openSettings() }
+            case .automation(let id): action = PaletteAction(title: "Edit Automation", symbol: "pencil") { editTrigger(id) }
+            case .macOS:
+                action = PaletteAction(title: "Open Keyboard Shortcuts") {
+                    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension")!)
+                }
+            }
+            return screenRow("hkfind.\(usage.id)", usage.title, usage.scope + (usage.isEnabled ? "" : " · turned off"),
+                             icon: usage.kind == .macOS ? "apple.logo" : "keyboard", group: group, primary: action, dimmed: !usage.isEnabled)
+        }
+    }
+
+    /// 7.3: saved folder favorites; one whose folder moved or can't be read
+    /// says so and lets the folder be chosen again.
+    func folderFavoriteRows() -> [PaletteItem] {
+        PaletteFolderFavorites.shared.items.map { favorite in
+            guard favorite.exists else {
+                return screenRow("favfolder.\(favorite.id.uuidString)", "Folder: \(favorite.name)",
+                                 "\((favorite.path as NSString).abbreviatingWithTildeInPath) isn't there any more — ↩ chooses it again",
+                                 icon: "folder.badge.questionmark", group: nil,
+                                 primary: PaletteAction(title: "Choose Again…", effect: .stay) { relocateFavorite(favorite) },
+                                 secondaries: [PaletteAction(title: "Remove Favorite", symbol: "trash", effect: .stay, isDestructive: true) {
+                                     PaletteFolderFavorites.shared.remove(favorite.id)
+                                 }])
+            }
+            var row = screenRow("favfolder.\(favorite.id.uuidString)", "Folder: \(favorite.name)",
+                                (favorite.path as NSString).abbreviatingWithTildeInPath + (favorite.query.isEmpty ? "" : " · filter “\(favorite.query)”"),
+                                icon: "star.square.on.square", group: nil,
+                                primary: PaletteAction(title: "Open", effect: .stay) {
+                                    push(.folder(favorite.url))
+                                    query = favorite.query
+                                },
+                                secondaries: [PaletteAction(title: "Remove Favorite", symbol: "trash", effect: .stay, isDestructive: true) {
+                                    PaletteFolderFavorites.shared.remove(favorite.id)
+                                }])
+            row.keywords = "folder favorite 폴더 즐겨찾기 " + favorite.path
+            return row
+        }
+    }
+
+    private func relocateFavorite(_ favorite: PaletteFolderFavorite) {
+        guard !PresetManager.isUIPreview else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.prompt = "Use Folder"
+        panel.message = "Where is “\(favorite.name)” now?"
+        AOMOverlayActivation.activateForOverlay()
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            MainActor.assumeIsolated { PaletteFolderFavorites.shared.relocate(favorite.id, to: url) }
+        }
+    }
+
+    /// 7.3: Find a Shortcut from the root search.
+    func finderRootItems() -> [PaletteItem] {
+        var row = screenRow("finder.shortcut", "Find a Shortcut…", "Press a key combination to see what in AOM and macOS uses it",
+                            icon: "keyboard.badge.eye", group: nil,
+                            primary: PaletteAction(title: "Find", effect: .push(.hotkeyFinder)) {})
+        row.aliases = ["shortcut", "hotkey", "단축키", "키 충돌", "conflict"]
+        row.keywords = "shortcut hotkey keyboard conflict 단축키 충돌 사용처"
+        return [row]
+    }
+
+    /// 7.3: scenes in the root search — ↩ runs one, ⌘↩ shows its plan in Window Tiling.
+    func sceneRootItems() -> [PaletteItem] {
+        SceneStore.shared.scenes.map { scene in
+            var row = screenRow("scene.\(scene.id.uuidString)", "Scene: \(scene.name)",
+                                ScenePlanner.steps(scene).map(\.title).joined(separator: " → "), icon: "theatermasks", group: nil,
+                                primary: PaletteAction(title: "Run Scene", symbol: "play.fill") { SceneRunner.shared.run(scene) },
+                                secondaries: [PaletteAction(title: "Edit Scenes…", symbol: "pencil") {
+                                    appState.selectedMainTab = .snapping
+                                    showAOM()
+                                }])
+            row.keywords = "scene 씬 작업 모드 workspace " + scene.name
+            row.aliases = [scene.name.lowercased()]
+            return row
+        }
+    }
+
     func snippetRootItems() -> [PaletteItem] {
         snippets.filter(\.isEnabled).map { snippetRow($0, group: nil) }
+    }
+
+    /// A snippet made from the clipboard stays literal text (code with braces).
+    private func fromClipboard(_ text: String) -> Bool {
+        NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines) == text
     }
 
     func newSnippetItems(_ text: String) -> [PaletteItem] {
@@ -837,7 +1062,8 @@ extension QuickCommandPalette {
         return [screenRow("snippet.new.save", "Save Snippet “\(keyword)”", "Typing \(keyword) in any app types the text",
                           icon: "checkmark.circle.fill", group: nil,
                           primary: PaletteAction(title: "Save", symbol: "checkmark", effect: .stay) {
-                              appState.addTrigger(PaletteSnippets.trigger(abbreviation: keyword, text: text))
+                              appState.addTrigger(PaletteSnippets.trigger(abbreviation: keyword, text: text,
+                                                                          placeholders: !text.isEmpty && SnippetTemplate.hasPlaceholders(text) && !fromClipboard(text)))
                               pop()
                               screens.show("Saved — type \(keyword) anywhere to expand it")
                           })]
@@ -916,7 +1142,8 @@ extension QuickCommandPalette {
             if navigation.current != .scriptArgument(script.id) { push(.scriptArgument(script.id)) }
             return
         }
-        guard PaletteScripts.isTrusted(script), !script.needsConfirmation else {
+        // Checked against the file as it is right now, not the cached hash.
+        guard PaletteScripts.isTrusted(script, fresh: true), !script.needsConfirmation else {
             confirm(PaletteConfirmation(title: "Run “\(script.title)”?",
                                         message: "\((script.url.path as NSString).abbreviatingWithTildeInPath) runs as you, with access to your files and the network. AOM asks again if the script changes.",
                                         confirmTitle: "Run Script", symbol: "terminal.fill", destructive: false) {
@@ -1048,8 +1275,17 @@ extension QuickCommandPalette {
             return [privacyRow("schedule.settings", "Calendars")]
         case .granted:
             let now = Date()
-            return (schedule.events ?? []).filter { $0.end > now || $0.isAllDay && Calendar.current.isDate($0.start, inSameDayAs: now) }
+            var rows = (schedule.events ?? []).filter { $0.end > now || $0.isAllDay && Calendar.current.isDate($0.start, inSameDayAs: now) }
                 .map { eventRow($0, group: PaletteSchedule.dayTitle($0.start, now: now), section: .commands, now: now) }
+            // 7.3 (7.2.1 audit B17): say when the week holds more than is listed.
+            if let listed = schedule.events?.count, schedule.totalCount > listed {
+                var more = screenRow("schedule.more", "\(schedule.totalCount - listed) more events this week", "Open Calendar to see them all",
+                                     icon: "calendar.badge.plus", group: "More",
+                                     primary: PaletteAction(title: "Open Calendar") { NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Calendar.app")) })
+                more.placement = .fallback
+                rows.append(more)
+            }
+            return rows
         }
     }
 
@@ -1099,8 +1335,22 @@ extension QuickCommandPalette {
         case .denied:
             return [privacyRow("contacts.settings", "Contacts")]
         case .granted:
-            guard let people = contacts.people else { return [] }
-            return PaletteContacts.matching(trimmed, in: people, limit: 120).map { contactRow($0, group: nil, section: .commands) }
+            // 7.3 (7.2.1 audit B18): a failed read says so instead of showing nobody.
+            if let error = contacts.lastError {
+                return [screenRow("contacts.error", "Couldn't Read Contacts", error, icon: "exclamationmark.triangle", group: nil,
+                                  primary: PaletteAction(title: "Try Again", effect: .stay) { contacts.reset(); contacts.load() })]
+            }
+            guard let people = contacts.people else {
+                return [screenRow("contacts.loading", "Reading Contacts…", "A large address book takes a moment", icon: "hourglass",
+                                  group: nil, primary: PaletteAction(title: "Wait", effect: .stay) {}, dimmed: true)]
+            }
+            var rows = PaletteContacts.matching(trimmed, in: people, limit: 120).map { contactRow($0, group: nil, section: .commands) }
+            if contacts.truncated, !trimmed.isEmpty, rows.isEmpty {
+                rows.append(screenRow("contacts.truncated", "Not in the first 5,000 contacts", "Search in Contacts for the rest",
+                                      icon: "person.crop.circle.badge.questionmark", group: nil,
+                                      primary: PaletteAction(title: "Open Contacts") { NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Contacts.app")) }))
+            }
+            return rows
         }
     }
 
@@ -1398,6 +1648,9 @@ extension QuickCommandPalette {
         case "sendTo": return .sendTo(PaletteSendPayload(text: argument.isEmpty ? "https://example.com/report" : argument, title: "Preview"))
         case "hotkey": return .hotkey(itemID: "capture.area", title: "Capture Area")
         case "newSnippet": return .newSnippet(argument.isEmpty ? "Best regards,\nYongwoo" : argument)
+        // 7.3
+        case "aiRecords": return .aiRecords
+        case "hotkeyFinder": return .hotkeyFinder
         default: return nil
         }
     }

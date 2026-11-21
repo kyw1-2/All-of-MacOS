@@ -16,20 +16,41 @@ struct AOMAIToolResult: Equatable {
     /// One line for the transcript ("Searched records for “oracle ssh” · 9 matches").
     var summary: String
     var isError = false
+    /// 7.3: what the call read, for the answer's receipt ("LLM Wiki", "~/x/notes.md").
+    var used: [String] = []
 }
 
 enum AOMAILocalTools {
     static let enabledKey = "AOMAILocalTools"
 
-    /// On unless turned off in Settings › AI.
+    /// 7.2's switch; since 7.3 `AOMAIRecordsMode` (off here means "never").
     static var isEnabled: Bool {
-        get { UserDefaults.standard.object(forKey: enabledKey) as? Bool ?? true }
-        set { UserDefaults.standard.set(newValue, forKey: enabledKey) }
+        get { AOMAIRecordsMode.current != .never }
+        set { AOMAIRecordsMode.current = newValue ? .mentions : .never }
     }
 
     enum Source: String, CaseIterable {
         case wiki, memories, claude_sessions, codex_sessions, aom_chats, shell_history, agent_docs
+        /// 7.3: ~/.ssh/config and known_hosts, only with @ssh (7.2 searched
+        /// the SSH config as an "agent doc" whenever the model named no source).
+        case ssh_config
+
+        var title: String {
+            switch self {
+            case .wiki: return AOMAIRecordSource.wiki.title
+            case .memories: return AOMAIRecordSource.memories.title
+            case .claude_sessions: return AOMAIRecordSource.claude.title
+            case .codex_sessions: return AOMAIRecordSource.codex.title
+            case .aom_chats: return AOMAIRecordSource.chats.title
+            case .shell_history: return AOMAIRecordSource.shell.title
+            case .agent_docs: return AOMAIRecordSource.docs.title
+            case .ssh_config: return AOMAIRecordSource.ssh.title
+            }
+        }
     }
+
+    /// The agent instruction files @docs reads (no SSH file among them since 7.3).
+    static let agentDocNames = ["AGENTS.md", "CLAUDE.md", ".claude/CLAUDE.md", ".codex/AGENTS.md", ".codex/config.toml"]
 
     struct Tool {
         let name: String
@@ -65,22 +86,63 @@ enum AOMAILocalTools {
              required: ["name"]),
     ]
 
-    static var anthropicSchemas: [[String: Any]] {
+    /// 7.3: the tools of one scope — each name once, search_records' source
+    /// list cut to the allowed sources, the file tools described with the
+    /// folders they may use. An empty scope has no tools.
+    static func tools(for scope: AOMAIRecordScope) -> [Tool] {
+        let names = scope.toolNames
+        let allowed = scope.searchSources
+        let folders = scope.folders.map { ($0 as NSString).abbreviatingWithTildeInPath }.joined(separator: ", ")
+        return tools.filter { names.contains($0.name) }.map { tool in
+            switch tool.name {
+            case "search_records":
+                var properties = tool.properties
+                properties["sources"] = ["type": "array", "items": ["type": "string", "enum": allowed.map(\.rawValue)],
+                                         "description": "Where to look, among: \(allowed.map(\.rawValue).joined(separator: ", ")); all of these when omitted."]
+                return Tool(name: tool.name,
+                            description: "Search the records the user allowed for this question (\(allowed.map(\.title).joined(separator: ", "))) by keywords. Returns matching lines with file paths, newest first.",
+                            properties: properties, required: tool.required)
+            case "read_file":
+                let reach = [allowed.isEmpty ? nil : "files search_records found", folders.isEmpty ? nil : "files in \(folders)"]
+                    .compactMap { $0 }.joined(separator: " and ")
+                return Tool(name: tool.name, description: "Read a text file with line numbers: \(reach). Secrets are hidden.",
+                            properties: tool.properties, required: tool.required)
+            case "list_directory":
+                return Tool(name: tool.name, description: "List a folder inside \(folders): names, kinds, sizes and dates.",
+                            properties: tool.properties, required: tool.required)
+            case "find_files":
+                return Tool(name: tool.name, description: "Find files whose name contains a text inside \(folders) (Spotlight). Newest first.",
+                            properties: tool.properties, required: tool.required)
+            default:
+                return tool
+            }
+        }
+    }
+
+    static func anthropicSchemas(_ tools: [Tool]) -> [[String: Any]] {
         tools.map { ["name": $0.name, "description": $0.description,
                      "input_schema": ["type": "object", "properties": $0.properties, "required": $0.required]] }
     }
 
-    static var openAISchemas: [[String: Any]] {
+    static func openAISchemas(_ tools: [Tool]) -> [[String: Any]] {
         tools.map { ["type": "function",
                      "function": ["name": $0.name, "description": $0.description,
                                   "parameters": ["type": "object", "properties": $0.properties, "required": $0.required]]] }
     }
 
-    static let promptLines = [
-        "You can read this Mac with tools: search_records (the user's LLM Wiki, Claude memories, Claude Code and Codex conversation logs, AOM chats, shell history, agent instruction files), read_file, list_directory and find_files.",
-        "When the user asks about their own setup, servers, accounts, files or what another AI did, search with the tools before answering; never say you can't access their records. Try a second search with fewer or other words before giving up.",
-        "Cite the file paths and the exact commands you found. AOM hides secrets in tool results; never ask the user for passwords or keys.",
-    ]
+    static var anthropicSchemas: [[String: Any]] { anthropicSchemas(tools) }
+    static var openAISchemas: [[String: Any]] { openAISchemas(tools) }
+
+    /// The system prompt's lines for a scope; none for an empty one.
+    static func promptLines(for scope: AOMAIRecordScope) -> [String] {
+        let names = scope.toolNames
+        guard !names.isEmpty else { return [] }
+        return [
+            "For this question the user allowed you to read: \(scope.summary). Your tools: \(names.joined(separator: ", ")). Nothing else on this Mac may be read.",
+            "Search with the tools before answering questions about those records; try a second search with fewer or other words before giving up.",
+            "Cite the file paths and the exact commands you found. AOM hides secrets in tool results; never ask the user for passwords or keys.",
+        ]
+    }
 
     // MARK: Running a call
 
@@ -95,25 +157,61 @@ enum AOMAILocalTools {
         }
     }
 
-    /// Runs one call off the main thread (each tool has its own time limit).
-    static func run(_ name: String, arguments: [String: Any], home: URL = FileManager.default.homeDirectoryForCurrentUser) async -> AOMAIToolResult {
+    /// Runs one call off the main thread (each tool has its own time limit),
+    /// within `scope`: 7.3 checks every call again — a tool the scope
+    /// doesn't offer, sources outside it (asked for or not: an empty or
+    /// disjoint list is refused, never widened to every source) and paths
+    /// outside its records and folders.
+    static func run(_ name: String, arguments: [String: Any], scope: AOMAIRecordScope,
+                    home: URL = FileManager.default.homeDirectoryForCurrentUser) async -> AOMAIToolResult {
         await Task.detached(priority: .userInitiated) {
-            switch name {
-            case "search_records":
-                let query = (arguments["query"] as? String) ?? ""
-                let sources = (arguments["sources"] as? [String])?.compactMap(Source.init(rawValue:))
-                return search(query, sources: sources?.isEmpty == false ? sources! : Source.allCases, home: home)
-            case "read_file":
-                return readFile(arguments["path"] as? String ?? "", start: arguments["start_line"] as? Int ?? 1,
-                                count: arguments["max_lines"] as? Int ?? 200, home: home)
-            case "list_directory":
-                return listDirectory(arguments["path"] as? String ?? "", home: home)
-            case "find_files":
-                return findFiles(arguments["name"] as? String ?? "", home: home)
-            default:
-                return AOMAIToolResult(text: "Unknown tool \(name).", summary: "Unknown tool \(name)", isError: true)
-            }
+            runNow(name, arguments: arguments, scope: scope, home: home)
         }.value
+    }
+
+    /// Pure apart from the files it reads (tests).
+    static func runNow(_ name: String, arguments: [String: Any], scope: AOMAIRecordScope, home: URL,
+                       budget: TimeInterval = 3) -> AOMAIToolResult {
+        guard scope.toolNames.contains(name) else {
+            return AOMAIToolResult(text: "\(name) isn't allowed for this question. It may read only: \(scope.summary).",
+                                   summary: "Refused \(name) (not allowed)", isError: true)
+        }
+        switch name {
+        case "search_records":
+            let query = (arguments["query"] as? String) ?? ""
+            let allowed = scope.searchSources
+            let asked = (arguments["sources"] as? [String] ?? []).compactMap(Source.init(rawValue:))
+            let sources = asked.isEmpty ? allowed : allowed.filter(asked.contains)
+            guard !sources.isEmpty else {
+                return AOMAIToolResult(text: "None of those sources is allowed for this question; use: \(allowed.map(\.rawValue).joined(separator: ", ")).",
+                                       summary: "Refused sources outside the question's scope", isError: true)
+            }
+            var result = search(query, sources: sources, home: home, budget: budget)
+            result.used = sources.map(\.title)
+            return result
+        case "read_file":
+            let full = resolve(arguments["path"] as? String ?? "", home: home)
+            if let refusal = scope.readRefusal(full, home: home) {
+                return AOMAIToolResult(text: refusal, summary: "Refused \(tilde(full, home: home)) (outside the scope)", isError: true)
+            }
+            var result = readFile(full, start: arguments["start_line"] as? Int ?? 1, count: arguments["max_lines"] as? Int ?? 200, home: home)
+            if !result.isError { result.used = [tilde(full, home: home)] }
+            return result
+        case "list_directory":
+            let full = resolve((arguments["path"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? scope.folders.first ?? "~", home: home)
+            if let refusal = scope.folderRefusal(full) {
+                return AOMAIToolResult(text: refusal, summary: "Refused \(tilde(full, home: home)) (outside the scope)", isError: true)
+            }
+            var result = listDirectory(full, home: home)
+            if !result.isError { result.used = [tilde(full, home: home)] }
+            return result
+        case "find_files":
+            var result = findFiles(arguments["name"] as? String ?? "", in: scope.folders.map { URL(fileURLWithPath: $0) }, home: home)
+            if !result.isError { result.used = scope.folders.map { tilde($0, home: home) } }
+            return result
+        default:
+            return AOMAIToolResult(text: "Unknown tool \(name).", summary: "Unknown tool \(name)", isError: true)
+        }
     }
 
     // MARK: search_records
@@ -166,8 +264,9 @@ enum AOMAILocalTools {
         case .shell_history:
             return [".zsh_history", ".bash_history"].map { home.appendingPathComponent($0) }.filter { fm.fileExists(atPath: $0.path) }
         case .agent_docs:
-            return ["AGENTS.md", "CLAUDE.md", ".claude/CLAUDE.md", ".codex/AGENTS.md", ".codex/config.toml", ".ssh/config"]
-                .map { home.appendingPathComponent($0) }.filter { fm.fileExists(atPath: $0.path) }
+            return agentDocNames.map { home.appendingPathComponent($0) }.filter { fm.fileExists(atPath: $0.path) }
+        case .ssh_config:
+            return [".ssh/config", ".ssh/known_hosts"].map { home.appendingPathComponent($0) }.filter { fm.fileExists(atPath: $0.path) }
         }
     }
 
@@ -185,8 +284,11 @@ enum AOMAILocalTools {
         }
         let deadline = Date().addingTimeInterval(budget)
         var candidates: [(source: Source, url: URL, date: Date, size: Int)] = []
-        for source in sources {
+        // 7.3 (Codex 7.2.3 report): listing and dating the files counts
+        // against the time limit too, and stops at it.
+        listing: for source in sources {
             for url in files(of: source, home: home) {
+                if Date() > deadline { break listing }
                 let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
                 candidates.append((source, url, values?.contentModificationDate ?? .distantPast, values?.fileSize ?? 0))
             }
@@ -198,6 +300,7 @@ enum AOMAILocalTools {
         var scanned = 0
         for candidate in candidates {
             if Date() > deadline || hits.count >= 30 { break }
+            guard !Task.isCancelled else { break }
             guard candidate.size < 150_000_000,
                   let data = try? Data(contentsOf: candidate.url, options: .alwaysMapped) else { continue }
             scanned += 1
@@ -504,39 +607,84 @@ enum AOMAILocalTools {
                                summary: "Listed \(tilde(full, home: home))")
     }
 
-    static func findFiles(_ name: String, home: URL) -> AOMAIToolResult {
+    static func findFiles(_ name: String, home: URL) -> AOMAIToolResult { findFiles(name, in: [home], home: home) }
+
+    /// 7.3 (Codex 7.2.3 report, B20): mdfind's output is read line by line
+    /// while it runs and every path is dated as it arrives, keeping the 40
+    /// newest — 7.2.3 collected all of it and dated only the first 5,000, so
+    /// a recent file after those was never shown. A time-out says so
+    /// instead of passing for "nothing found". Only inside `folders`.
+    static func findFiles(_ name: String, in folders: [URL], home: URL, timeout: TimeInterval = 5) -> AOMAIToolResult {
         let needle = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard needle.count >= 2 else { return AOMAIToolResult(text: "Give a name of at least two letters.", summary: "Empty file search", isError: true) }
+        guard !folders.isEmpty else { return AOMAIToolResult(text: "No folder to search.", summary: "No folder", isError: true) }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/mdfind")
-        process.arguments = ["-onlyin", home.path, "-name", needle]
+        process.arguments = folders.flatMap { ["-onlyin", $0.path] } + ["-name", needle]
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
-        // Read while mdfind runs: a full pipe would otherwise stall it (Codex audit B20).
-        let collected = OutputBox()
+        let newest = NewestPaths(limit: 40)
         let reading = DispatchGroup()
         reading.enter()
         DispatchQueue.global(qos: .userInitiated).async {
-            collected.data = pipe.fileHandleForReading.readDataToEndOfFile()
+            var pending = Data()
+            let handle = pipe.fileHandleForReading
+            while true {
+                let chunk = handle.availableData
+                if chunk.isEmpty { break }
+                pending.append(chunk)
+                while let newline = pending.firstIndex(of: 10) {
+                    let line = String(decoding: pending[pending.startIndex..<newline], as: UTF8.self)
+                    pending.removeSubrange(pending.startIndex...newline)
+                    if !line.isEmpty { newest.add(line) }
+                }
+            }
+            if !pending.isEmpty { newest.add(String(decoding: pending, as: UTF8.self)) }
             reading.leave()
         }
         do { try process.run() } catch {
             try? pipe.fileHandleForWriting.close()
             return AOMAIToolResult(text: "Spotlight didn't run.", summary: "Spotlight didn't run", isError: true)
         }
-        let timedOut = reading.wait(timeout: .now() + 5) == .timedOut
+        let timedOut = reading.wait(timeout: .now() + timeout) == .timedOut
         if timedOut { process.terminate(); _ = reading.wait(timeout: .now() + 1) }
-        let paths = String(decoding: collected.data, as: UTF8.self).split(separator: "\n").map(String.init)
-        let dated = paths.prefix(5_000).map { ($0, (try? URL(fileURLWithPath: $0).resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast) }
-            .sorted { $0.1 > $1.1 }.prefix(40)
-        let body = dated.map { "\(tilde($0.0, home: home))\t\($0.1.formatted(date: .abbreviated, time: .omitted))" }.joined(separator: "\n")
-        return AOMAIToolResult(text: paths.isEmpty ? "Spotlight found nothing named like “\(needle)”." : "\(paths.count) match(es), newest first:\n" + body,
-                               summary: "Found files named “\(needle)” · \(paths.count)")
+        let (count, dated) = newest.snapshot()
+        let body = dated.map { "\(tilde($0.path, home: home))\t\($0.date.formatted(date: .abbreviated, time: .omitted))" }.joined(separator: "\n")
+        let stopped = timedOut ? " Spotlight was stopped after \(Int(timeout)) s, so there may be more." : ""
+        let text = count == 0 ? (timedOut ? "Spotlight didn't answer within \(Int(timeout)) s." : "Spotlight found nothing named like “\(needle)”.")
+            : "\(count) match(es), newest first:\(stopped)\n" + body
+        return AOMAIToolResult(text: text, summary: "Found files named “\(needle)” · \(count)\(timedOut ? " (stopped)" : "")", isError: count == 0 && timedOut)
     }
 }
 
 /// The bytes a background read collected.
 final class OutputBox: @unchecked Sendable {
     var data = Data()
+}
+
+/// The `limit` most recently modified of the paths seen, and how many were seen.
+final class NewestPaths: @unchecked Sendable {
+    private let lock = NSLock()
+    private let limit: Int
+    private var count = 0
+    private var kept: [(path: String, date: Date)] = []
+
+    init(limit: Int) { self.limit = limit }
+
+    func add(_ path: String) {
+        let date = (try? URL(fileURLWithPath: path).resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+        lock.lock(); defer { lock.unlock() }
+        count += 1
+        if kept.count < limit {
+            kept.append((path, date))
+        } else if let oldest = kept.indices.min(by: { kept[$0].date < kept[$1].date }), kept[oldest].date < date {
+            kept[oldest] = (path, date)
+        }
+    }
+
+    func snapshot() -> (count: Int, newest: [(path: String, date: Date)]) {
+        lock.lock(); defer { lock.unlock() }
+        return (count, kept.sorted { $0.date > $1.date })
+    }
 }

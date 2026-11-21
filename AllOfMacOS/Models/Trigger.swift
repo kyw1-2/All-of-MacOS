@@ -246,7 +246,12 @@ enum TriggerInput: Codable, Hashable {
 struct TypedStringSpec: Codable, Hashable {
     var abbreviation: String
     var replacement: String = ""
+    /// 7.3: 2 reads {clipboard}, {date}, {cursor}, {arg:name} … in the
+    /// replacement (SnippetTemplate); nil (every snippet saved before) types
+    /// it literally, braces and all.
+    var syntax: Int? = nil
     var displayName: String { "Typed “\(abbreviation)”" }
+    var usesPlaceholders: Bool { syntax == SnippetTemplate.currentSyntax }
 }
 
 struct Trigger: Identifiable, Codable, Hashable {

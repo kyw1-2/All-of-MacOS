@@ -48,6 +48,12 @@ struct AOMAIChatWindowView: View {
             List(selection: Binding<UUID?>(get: { chat.chatID }, set: { id in
                 if let id, id != chat.chatID, let record = history.records.first(where: { $0.id == id }) { chat.load(record) }
             })) {
+                // 7.3: a chats.json that couldn't be read is kept, never replaced.
+                if let problem = history.problem {
+                    AOMNotice(problem.blocksSaving ? .error : .warning, problem.title, detail: problem.detail) {
+                        Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([problem.file]) }
+                    }
+                }
                 Section("Chats") {
                     ForEach(history.records) { record in
                         VStack(alignment: .leading, spacing: 2) {

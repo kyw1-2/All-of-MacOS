@@ -20,6 +20,17 @@ final class FocusEnvironment {
     let reminders: FocusReminderController
     let statusItem: FocusStatusItemController
     private(set) var started = false
+    /// 7.3: the module switch. Off: idle-app rules and break reminders stop.
+    var moduleOn = true {
+        didSet {
+            guard moduleOn != oldValue else { return }
+            idleApps.moduleOn = moduleOn
+            reminders.moduleOn = moduleOn
+            idleApps.refresh()
+            reminders.refresh()
+            FocusModule.publishStatus()
+        }
+    }
 
     private init() {
         isolated = PresetManager.isRunningTests || PresetManager.isUIPreview
@@ -112,13 +123,22 @@ enum FocusModule {
 
     /// Called once at launch (never in UI previews or unit tests).
     static func start() {
+        environment.moduleOn = true
         environment.start()
     }
 
     /// Starts a focus session with the saved length, or ends the running one.
     /// The hotkey, the status menu and Workspace call this.
     static func toggleSession() {
+        guard AOMModuleSwitches.shared.allows(.focus) else { return }
         environment.session.toggle(userInitiated: true)
+    }
+
+    /// 7.3: the module switch (refused while a session runs). Idle-app
+    /// rules and break reminders stop; the lists and the history stay.
+    static func stop() {
+        guard !isSessionActive else { return }
+        environment.moduleOn = false
     }
 
     /// A focus or break is running or paused. `AOMModuleStatusBoard.focus.isOn`

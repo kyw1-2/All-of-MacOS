@@ -194,3 +194,43 @@ struct InputSourcesFallbackRow: View {
         .onAppear { model.reloadSources() }
     }
 }
+
+/// 7.3: the input source badge (Input Source Pro's indicator) — on its own,
+/// with or without the per-app switch.
+struct InputSourcesBadgeRow: View {
+    @State private var isOn = InputSourceBadgeSettings.isEnabled
+    @State private var position = InputSourceBadgeSettings.position
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HubRowShell(icon: "character.bubble", tint: .indigo, title: "Show the input source when it changes",
+                        subtitle: "A small 한 or A beside the text cursor — or the pointer where an app doesn't share its cursor — for a moment, whether a rule or your 한/영 key changed it. Never in password fields.",
+                        onLabelTap: { isOn.toggle() }) {
+                Toggle("Show the input source when it changes", isOn: $isOn)
+                    .labelsHidden()
+                    .toggleStyle(AOMRowSwitchStyle())
+            }
+            HStack(spacing: AOMSpace.x2) {
+                Picker("Where", selection: $position) {
+                    ForEach(InputSourceBadgePosition.allCases) { Text($0.title).tag($0) }
+                }
+                .fixedSize()
+                Spacer(minLength: AOMSpace.x3)
+                Button("Preview") {
+                    let id = InputSources.currentID() ?? "com.apple.keylayout.ABC"
+                    let name = InputSources.enabled().first { $0.id == id }?.name ?? id
+                    InputSourceBadge.shared.show(InputSourceBadgeLogic.glyph(id: id, name: name), name: name)
+                }
+                .help("Shows the badge for the current input source")
+            }
+            .padding(.horizontal, AOMSpace.rowInset)
+            .padding(.vertical, AOMSpace.x2)
+            .dependentSetting(on: isOn)
+        }
+        .onChange(of: isOn) { _, value in
+            InputSourceBadgeSettings.isEnabled = value
+            InputSourceBadge.shared.refresh()
+        }
+        .onChange(of: position) { _, value in InputSourceBadgeSettings.position = value }
+    }
+}

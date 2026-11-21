@@ -110,6 +110,8 @@ struct FilesShelfSection: View {
             .disabled(!settings.shakeOpensShelf)
             AOMToggleRow("Shift while dragging opens it too", detail: "Press ⇧ during a file drag instead of shaking",
                          indent: true, isOn: $settings.shiftOpensShelf)
+            AOMToggleRow("Hide after dragging files out", detail: "Once another app takes them; never while the shelf is still working",
+                         symbol: "eye.slash", isOn: $settings.hideShelfAfterDragOut)
             AOMSettingRow("Keyboard shortcut", detail: shortcutDetail, symbol: "command") {
                 Button("Change…", action: openShortcutSettings)
             }
@@ -476,5 +478,54 @@ enum FilesThumbnails {
         if cache.count > 200 { cache.removeAll() }
         cache[key] = image
         return image
+    }
+}
+
+/// 7.3 (Codex 7.2.3 report, recommended feature 1): this session's file
+/// actions — shelf moves and copies, received files, renames and
+/// conversions — with what failed and why, and Undo while it still applies.
+struct FilesActivitySection: View {
+    @ObservedObject var log: FilesActivityLog
+
+    var body: some View {
+        if !log.entries.isEmpty {
+            AOMSection("Recent file activity", detail: "This session",
+                       help: "What the Drop Shelf, Batch Rename and the converters did since All of MacOS opened. Undo puts back only the files that are still the ones it changed.") {
+                ForEach(log.entries.prefix(8)) { entry in
+                    HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x2) {
+                        Image(systemName: entry.failures.isEmpty ? "checkmark.circle" : "exclamationmark.triangle")
+                            .foregroundStyle(entry.failures.isEmpty ? AOMColor.successText : AOMColor.warningText)
+                            .accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(entry.title).font(AOMFont.body).lineLimit(2)
+                            Text("\(entry.tool) · \(AOMRelativeTime.string(entry.date)) · \(entry.summary)")
+                                .font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
+                            ForEach(Array(entry.failures.prefix(3).enumerated()), id: \.offset) { _, failure in
+                                Text("\(failure.url.lastPathComponent): \(failure.reason)")
+                                    .font(AOMFont.caption).foregroundStyle(AOMColor.dangerText)
+                                    .lineLimit(1).truncationMode(.middle)
+                            }
+                        }
+                        Spacer(minLength: AOMSpace.x2)
+                        if entry.undo != nil { Button("Undo") { log.run(entry.id, retry: false) } }
+                        if entry.retry != nil { Button("Retry Failed") { log.run(entry.id, retry: true) } }
+                        if let file = (entry.failures.map(\.url) + entry.files).first {
+                            Button { NSWorkspace.shared.activateFileViewerSelecting(entry.failures.isEmpty ? entry.files : entry.failures.map(\.url)) } label: {
+                                Image(systemName: "folder")
+                            }
+                            .buttonStyle(.borderless)
+                            .help("Show in Finder (\((file.deletingLastPathComponent().path as NSString).abbreviatingWithTildeInPath))")
+                            .accessibilityLabel("Show in Finder")
+                        }
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(entry.failures.isEmpty ? "\(entry.title), \(entry.tool)"
+                                        : "\(entry.title), \(entry.files.count) done, \(entry.failures.count) failed, \(entry.tool)")
+                }
+                if log.entries.count > 8 {
+                    Text("\(log.entries.count - 8) earlier").font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
+                }
+            }
+        }
     }
 }

@@ -48,7 +48,9 @@ enum AOMLocalProxy {
         }
     }
 
-    /// The router's health check (`/health`), or any answer below 500 from its root.
+    /// The router's health check: `/health` answering {"status":"healthy"},
+    /// or its root naming its /v1/messages endpoint. 7.3 (Codex audit B23):
+    /// any 200 counted, so another server on the port passed for the router.
     static func isHealthy(base: String) async -> Bool {
         let session = URLSession(configuration: .ephemeral)
         defer { session.invalidateAndCancel() }
@@ -56,12 +58,22 @@ enum AOMLocalProxy {
             guard let url = AOMAIClient.endpoint(base, path) else { return false }
             var request = URLRequest(url: url)
             request.timeoutInterval = 1
-            if let (_, response) = try? await session.data(for: request), let status = (response as? HTTPURLResponse)?.statusCode,
-               status == 200 {  // a 404 root is some other server, not the router (Codex audit B23)
+            if let (data, response) = try? await session.data(for: request), let status = (response as? HTTPURLResponse)?.statusCode,
+               status == 200, isRouterAnswer(path: path, data: data) {
                 return true
             }
         }
         return false
+    }
+
+    /// Pure: the body is claude-code-proxy's own (checked on 2026-11-21:
+    /// /health → {"status":"healthy",…}; / → {"message":"Claude-to-… Proxy …",
+    /// "endpoints":{"messages":"/v1/messages",…}}).
+    static func isRouterAnswer(path: String, data: Data) -> Bool {
+        guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return false }
+        if path == "/health" { return (object["status"] as? String)?.lowercased() == "healthy" }
+        if let endpoints = object["endpoints"] as? [String: Any], (endpoints["messages"] as? String)?.hasSuffix("/v1/messages") == true { return true }
+        return (object["message"] as? String)?.localizedCaseInsensitiveContains("proxy") == true && object["status"] as? String == "running"
     }
 
     /// The process AOM started last (kept so its exit is reaped).

@@ -130,7 +130,8 @@ final class AOM721AIToolTests: XCTestCase {
         import http.server
         class H(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
-                self.send_response(200 if self.path == "/health" else 404); self.end_headers(); self.wfile.write(b"ok")
+                # 7.3: answers like claude-code-proxy (AOM checks the body, Codex audit B23).
+                self.send_response(200 if self.path == "/health" else 404); self.end_headers(); self.wfile.write(b'{"status":"healthy"}')
             def log_message(self, *a): pass
         http.server.HTTPServer(("127.0.0.1", \(port)), H).serve_forever()
         """.write(to: folder.appendingPathComponent(AOMLocalProxy.script), atomically: true, encoding: .utf8)

@@ -77,8 +77,11 @@ final class FilesDialogHelper {
     var needsAccessibility: Bool { settings.dialogHelper && !AXIsProcessTrusted() }
 
     /// Starts or stops with the switch, the Accessibility permission and Pause AOM.
+    /// 7.3: the Files module is switched off.
+    var suspended = false
+
     func refresh() {
-        let wanted = settings.dialogHelper && AXIsProcessTrusted() && !PresetManager.isUIPreview && !PresetManager.isRunningTests
+        let wanted = !suspended && settings.dialogHelper && AXIsProcessTrusted() && !PresetManager.isUIPreview && !PresetManager.isRunningTests
         if wanted { start() } else { stop() }
         onChange?()
     }

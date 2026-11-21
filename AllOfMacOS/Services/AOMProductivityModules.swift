@@ -8,29 +8,23 @@ import SwiftUI
 @MainActor
 enum AOMProductivityModules {
     /// Called once at launch; never in isolated UI previews or unit tests.
+    /// 7.3: through the module switches — a module turned off in
+    /// Settings › Modules doesn't start; the launcher always does.
     static func start() {
-        FolderRulesModule.start()
-        TextActionsModule.start()
-        FilesModule.start()
-        FocusModule.start()
-        ScreenRulerModule.start()
-        MicMuteModule.start()
-        ClickHintsModule.start()
-        // Per-app input sources (Settings › General) and the palette's
-        // hold-⌘ sheet and link rules: each starts only when turned on.
-        AppInputSourcesModule.start()
-        PaletteModule.start()
+        AOMModuleSwitches.shared.startAll()
     }
 
-    /// The status menu's Productivity items, built fresh for each click.
+    /// The status menu's Productivity items, built fresh for each click —
+    /// only the modules that are on (7.3).
     static func statusMenuItems() -> [NSMenuItem] {
-        FocusModule.statusMenuItems()
-            + ScreenRulerModule.statusMenuItems()
-            + FilesModule.statusMenuItems()
-            + TextActionsModule.statusMenuItems()
-            + ClickHintsModule.statusMenuItems()
-            + FolderRulesModule.statusMenuItems()
-            + MicMuteModule.statusMenuItems()
+        let on = AOMModuleSwitches.shared
+        return (on.isOn(.focus) ? FocusModule.statusMenuItems() : [])
+            + (on.isOn(.screenRuler) ? ScreenRulerModule.statusMenuItems() : [])
+            + (on.isOn(.files) ? FilesModule.statusMenuItems() : [])
+            + (on.isOn(.textActions) ? TextActionsModule.statusMenuItems() : [])
+            + (on.isOn(.clickHints) ? ClickHintsModule.statusMenuItems() : [])
+            + (on.isOn(.folderRules) ? FolderRulesModule.statusMenuItems() : [])
+            + (on.isOn(.micMute) ? MicMuteModule.statusMenuItems() : [])
     }
 }
 

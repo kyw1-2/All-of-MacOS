@@ -167,9 +167,12 @@ final class TextActionsController {
     }
 
     /// Monitors only while the master switch and AOM are on.
+    /// 7.3: the module switch.
+    var moduleOn = true { didSet { if moduleOn != oldValue { applyMonitors(); updateStatus() } } }
+
     private func applyMonitors() {
         let settings = preferences.settings
-        let active = settings.isOn && AutomationGate.isOn
+        let active = moduleOn && settings.isOn && AutomationGate.isOn
         monitor.update(.init(drag: active && settings.showsOnDrag,
                              clicks: active && settings.showsOnDoubleClick,
                              keyboard: active && settings.showsOnKeyboardSelection,
