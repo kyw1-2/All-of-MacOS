@@ -54,6 +54,8 @@ enum FolderRulesModule {
     /// if the box stays checked, moved to the Trash. The System Tools tile
     /// calls this too.
     static func installDiskImage() {
+        // 7.3 (review): the menu, System Tools tile and page button ask the module switch too.
+        guard AOMModuleSwitches.shared.allows(.folderRules) else { return }
         let panel = NSOpenPanel()
         panel.title = "Install Disk Image"
         panel.message = "Choose a disk image. Its app is copied to Applications."

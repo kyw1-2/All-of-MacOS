@@ -67,7 +67,7 @@ struct AOMAISettingsView: View {
                         }
                         .pickerStyle(.radioGroup)
                         .onChange(of: recordsMode) { _, value in AOMAIRecordsMode.current = value }
-                        Text("Write @wiki, @memories, @docs (@mac is all three), @claude, @codex, @chats, @shell, @ssh, @files (a folder you choose, or @~/path) or @clip in a question, or choose them with ⌘⇧M's Records screen. A question without one reads nothing. What it reads goes to the model you chose; the line under each answer says where it went and what was read. Private keys, keychains and credential files are never opened, and tokens and passwords in results are hidden.")
+                        Text("Write @wiki, @memories, @docs (@mac is all three), @claude, @codex, @chats, @shell, @ssh, @files (a folder you choose, or @~/path) or @clip in a question, or press ⌘⇧M in Ask AI to choose them on the Records screen (there ⌘⇧M adds the last question's records again). A question without one reads nothing. What it reads goes to the model you chose; the line under each answer says where it went and what was read. Private keys, keychains and credential files are never opened, and tokens and passwords in results are hidden.")
                             .font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                         Toggle(isOn: $onDeviceReadsMac) {

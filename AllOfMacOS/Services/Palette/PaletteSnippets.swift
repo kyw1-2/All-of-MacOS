@@ -47,8 +47,9 @@ enum PaletteSnippets {
         guard text.count >= 2 else { return "Type a keyword of at least two characters, such as ;sig" }
         guard text.count <= 32 else { return "Keep the keyword to 32 characters" }
         guard !text.contains(where: \.isWhitespace) else { return "A keyword has no spaces" }
+        // The matcher ignores case, so ";Ab" and ";ab" are one keyword (7.3, Codex probe).
         let taken = triggers.contains { trigger in
-            if case .typedString(let spec) = trigger.input { return spec.abbreviation == text }
+            if case .typedString(let spec) = trigger.input { return spec.abbreviation.caseInsensitiveCompare(text) == .orderedSame }
             return false
         }
         return taken ? "“\(text)” is already a typed string" : nil

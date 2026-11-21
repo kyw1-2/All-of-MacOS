@@ -446,4 +446,114 @@ final class AOM73Tests: XCTestCase {
         store.relocate(items.map { ($0.id, moved.appendingPathComponent($0.url.lastPathComponent)) })
         XCTAssertTrue(store.items.allSatisfy { $0.path.contains("/moved/") })
     }
+
+    // MARK: 7.3 review (pasted review + the Codex probes)
+
+    @MainActor
+    func testOpeningASavedChatOfAnotherProviderSendsItsTurns() {
+        let chat = PaletteAIChat()
+        chat.model = AOMAIModelRef(provider: .apple, model: "default")
+        let record = AOMAIChatHistory.Record(id: UUID(), title: "Earlier", date: Date(), model: "deepSeek:deepseek-chat",
+                                             messages: [.init(role: "user", text: "q"), .init(role: "assistant", text: "a")])
+        chat.load(record)
+        XCTAssertEqual(chat.model.provider, .deepSeek)
+        XCTAssertEqual(chat.historyStart, 0, "model's didSet held back the chat that was opened to continue it")
+        XCTAssertEqual(chat.heldTurns, 0)
+        chat.pendingScope = AOMAIRecordScope(sources: [.wiki])
+        chat.newChat()
+        XCTAssertTrue(chat.pendingScope.isEmpty, "records chosen for one chat don't carry into a new one")
+    }
+
+    @MainActor
+    func testADeletedChatIsNotSavedBack() {
+        let history = AOMAIChatHistory(url: nil)
+        let record = AOMAIChatHistory.Record(id: UUID(), title: "x", date: Date(), model: nil,
+                                             messages: [.init(role: "user", text: "q"), .init(role: "assistant", text: "a")])
+        history.save(record)
+        history.delete(record.id)
+        history.save(record)   // the open chat saved again on New Chat
+        XCTAssertFalse(history.records.contains { $0.id == record.id })
+    }
+
+    func testMentionsOnNewLinesAndTheQuestionKeepsItsFormatting() {
+        let parsed = AOMAIRecordScope.parse("details\n@wiki please", home: folder)
+        XCTAssertEqual(parsed.scope.sources, [.wiki], "a mention at the start of a line counts")
+        XCTAssertEqual(parsed.question, "details\nplease")
+        let code = "explain:\n\n    return  a"
+        XCTAssertEqual(AOMAIRecordScope.parse(code, home: folder).question, code, "line breaks and indentation stay")
+        XCTAssertEqual(AOMAIRecordScope.parse("why @mac?\n  x  y", home: folder).question, "why?\n  x  y")
+        XCTAssertEqual(AOMAIRecordScope.parse("@wiki, how?", home: folder).question, "how?")
+    }
+
+    @MainActor
+    func testShortcutFinderKeepsTheBindingsOwnTitle() throws {
+        let store = PaletteHotkeyStore(defaults: UserDefaults(suiteName: "AOM73-\(UUID().uuidString)")!)
+        let key = KeyboardShortcut(keyCode: 2, modifiers: [.command, .option, .control])
+        try store.set(key, for: "capture.area", title: "Capture Area")
+        let usage = try XCTUnwrap(store.usages(of: key, triggers: []).first)
+        XCTAssertEqual(usage.title, "Launcher: Capture Area")
+        XCTAssertEqual(usage.kind, .launcherRow(itemID: "capture.area", title: "Capture Area"), "no \"Launcher: \" prefix piles up")
+    }
+
+    func testSnippetChecksBeforeAnythingIsErased() {
+        XCTAssertNotNil(SnippetInserterRefusal.check(SnippetRender(text: String(repeating: "x", count: SnippetTemplate.sizeLimit + 1))))
+        XCTAssertNotNil(SnippetInserterRefusal.check(SnippetRender(text: "", notes: ["The clipboard had no text"])))
+        let long = SnippetRender(text: "a" + String(repeating: "b", count: 601), charactersAfterCursor: 601, cursorUTF16: 1)
+        XCTAssertEqual(SnippetTemplate.route(for: long, canRestoreClipboard: false), .type, "600+ ← presses stopped at 400")
+        XCTAssertEqual(SnippetTemplate.route(for: SnippetRender(text: "ab", charactersAfterCursor: 1, cursorUTF16: 1), canRestoreClipboard: false),
+                       .typeWithCaret(1))
+        let existing = [PaletteSnippets.trigger(abbreviation: ";Ab", text: "first")]
+        XCTAssertNotNil(PaletteSnippets.problem(with: ";ab", existing: existing), "the matcher ignores case, so these were one keyword")
+    }
+
+    @MainActor
+    func testLauncherHidesAModuleThatIsOff() {
+        let switches = AOMModuleSwitches(defaults: UserDefaults(suiteName: "AOM73-\(UUID().uuidString)")!)
+        let rows = [("rules.preview", "Rule Preview"), ("go.\(AOMMainTab.folderRules.rawValue)", "Folder Rules page"), ("capture.area", "Capture")]
+        XCTAssertEqual(AOMModuleSwitches.gated(rows.map { ($0.0, $0.1) }, isSearching: true, switches: switches, turnOnRow: { "on \($0.rawValue)" }),
+                       ["Rule Preview", "Folder Rules page", "Capture"])
+        switches.set(.folderRules, on: false)
+        let gated = AOMModuleSwitches.gated(rows.map { ($0.0, $0.1) }, isSearching: true, switches: switches,
+                                            mark: { $0 += " (Off)" }, turnOnRow: { "on \($0.rawValue)" })
+        XCTAssertEqual(gated, ["Folder Rules page (Off)", "Capture", "on folderRules"], "the tool goes, the page stays marked, Turn On is found")
+    }
+
+    @MainActor
+    func testAReceivedFileMovedOutIsNeverTrashed() throws {
+        let received = folder.appendingPathComponent("Received", isDirectory: true)
+        let mine = folder.appendingPathComponent("Mine", isDirectory: true)
+        let file = try touch("picture.txt", in: received, "received")
+        let store = FilesShelfStore(fileURL: folder.appendingPathComponent("shelf.json"))
+        let item = store.add([file], received: true)[0]
+        XCTAssertEqual(FilesShelfPanelController.receivedToTrash([item], receivedFolder: received), [file.standardizedFileURL].map { URL(fileURLWithPath: FilesPath.key($0.path)) })
+        try FileManager.default.createDirectory(at: mine, withIntermediateDirectories: true)
+        let moved = mine.appendingPathComponent("picture.txt")
+        try FileManager.default.moveItem(at: file, to: moved)
+        store.relocate([(item.id, moved)])
+        let now = try XCTUnwrap(store.items.first)
+        XCTAssertTrue(FilesShelfPanelController.receivedToTrash([now], receivedFolder: received).isEmpty, "Remove would have trashed your file")
+    }
+
+    func testRenameRefusesAFileReplacedAfterThePreviewAndLeavesBracesInNames() throws {
+        let a = try touch("a.txt", "original")
+        let rows = BatchRename.plan([a], find: "", template: "{name}-new")
+        try FileManager.default.moveItem(at: a, to: folder.appendingPathComponent("kept-a.txt"))
+        try "replacement".write(to: a, atomically: false, encoding: .utf8)
+        XCTAssertThrowsError(try BatchRename.apply(rows)) { XCTAssertTrue($0.localizedDescription.contains("after the preview"), $0.localizedDescription) }
+        XCTAssertEqual(text(a), "replacement", "nothing was renamed")
+        let literal = folder.appendingPathComponent("report-{n}.txt")
+        XCTAssertEqual(BatchRename.plan([literal], find: "unmatched", template: "other", exists: { _ in false })[0].newName, "report-{n}.txt")
+        XCTAssertEqual(BatchRename.plan([literal], find: "report", template: "r{nn}", exists: { _ in false })[0].newName, "r01-{n}.txt",
+                       "tokens are filled in the replacement only")
+    }
+
+    @MainActor
+    func testExactNamesComeFirstAndFavoritesSayWhatMadeRoom() {
+        let hits = (1...2_000).map { PaletteFileHit(url: folder.appendingPathComponent("A-report-\($0).txt"), date: nil, isFolder: false) }
+            + [PaletteFileHit(url: folder.appendingPathComponent("report"), date: nil, isFolder: false)]
+        XCTAssertEqual(PaletteLauncherData.folderMatches(hits, query: "report").first?.name, "report")
+        let favorites = PaletteFolderFavorites(defaults: UserDefaults(suiteName: "AOM73-\(UUID().uuidString)")!)
+        for index in 1...30 { XCTAssertNil(favorites.add(folder.appendingPathComponent("Fav\(index)"), query: "")) }
+        XCTAssertEqual(favorites.add(folder.appendingPathComponent("Fav31"), query: "")?.name, "Fav1")
+    }
 }

@@ -136,6 +136,9 @@ final class MicMuteController: ObservableObject {
 
     /// The toggle hotkey, the status menu item and the Workspace quick action.
     func toggle() {
+        // 7.3 (Codex probe): with the module off, the Audio page's button
+        // changed the microphone anyway. Every way in now asks the switch.
+        guard moduleOn else { _ = AOMModuleSwitches.shared.allows(.micMute); return }
         reconcile()
         guard hardware.deviceID() != nil else {
             fail("No Microphone", "macOS has no default sound input right now.")
@@ -145,6 +148,7 @@ final class MicMuteController: ObservableObject {
     }
 
     func setMuted(_ muted: Bool) {
+        guard moduleOn else { _ = AOMModuleSwitches.shared.allows(.micMute); return }
         reconcile()
         perform(machine.set(muted: muted))
     }

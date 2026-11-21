@@ -151,12 +151,53 @@ final class AOMModuleSwitches: ObservableObject {
     }
 
     /// Opens Settings at the modules list.
-    static func openSettings() {
-        AppDelegate.current?.openSettingsWindow()
-        for delay in [0.05, 0.45] {
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                NotificationCenter.default.post(name: .aomShowSettingsCategory, object: SettingsCategory.general.rawValue)
+    static func openSettings(_ category: SettingsCategory = .general) {
+        let show = {
+            AppDelegate.current?.openSettingsWindow()
+            for delay in [0.05, 0.45] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                    NotificationCenter.default.post(name: .aomShowSettingsCategory, object: category.rawValue)
+                }
             }
         }
+        if AOMLauncherController.shared.isVisible { AOMLauncherController.shared.dismiss(restoringFocus: false, then: show) } else { show() }
+    }
+}
+
+extension AOMModuleSwitch {
+    /// Pure: the module a launcher row belongs to (nil: none). Pages
+    /// ("go.<tab>") and the module's own tools and rows.
+    static func owner(ofPaletteItem id: String) -> AOMModuleSwitch? {
+        if id.hasPrefix("rules.") || id.hasPrefix("ruleitem.") || id == "go.\(AOMMainTab.folderRules.rawValue)" { return .folderRules }
+        if id == "go.\(AOMMainTab.files.rawValue)" { return .files }
+        if id == "go.\(AOMMainTab.textActions.rawValue)" { return .textActions }
+        if id == "go.\(AOMMainTab.focus.rawValue)" { return .focus }
+        return nil
+    }
+
+    /// A page row stays (its settings and data are still there); a tool or row of the module goes.
+    static func isPage(_ id: String) -> Bool { id.hasPrefix("go.") }
+}
+
+extension AOMModuleSwitches {
+    /// 7.3 (review): the launcher shows a module that is off the same way
+    /// every other entry point does. Its tools and rows leave the search;
+    /// its page stays, marked Off; searching finds "Turn On <module>".
+    @MainActor
+    static func gated<Item>(_ items: [(id: String, item: Item)], isSearching: Bool, switches: AOMModuleSwitches = .shared,
+                            mark: (inout Item) -> Void = { _ in }, turnOnRow: (AOMModuleSwitch) -> Item) -> [Item] {
+        guard !switches.off.isEmpty else { return items.map(\.item) }
+        var out: [Item] = []
+        out.reserveCapacity(items.count + switches.off.count)
+        for entry in items {
+            guard let module = AOMModuleSwitch.owner(ofPaletteItem: entry.id), !switches.isOn(module) else { out.append(entry.item); continue }
+            if AOMModuleSwitch.isPage(entry.id) {
+                var item = entry.item
+                mark(&item)
+                out.append(item)
+            }
+        }
+        if isSearching { out += AOMModuleSwitch.allCases.filter { !switches.isOn($0) }.map(turnOnRow) }
+        return out
     }
 }

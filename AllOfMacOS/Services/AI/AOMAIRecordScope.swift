@@ -256,32 +256,56 @@ struct AOMAIRecordScope: Equatable, Codable {
     static func parse(_ text: String, home: URL = FileManager.default.homeDirectoryForCurrentUser,
                       lastFolders: [String] = []) -> (question: String, scope: AOMAIRecordScope, unknown: [String]) {
         var scope = AOMAIRecordScope()
-        var kept: [Substring] = []
         var unknown: [String] = []
-        for word in text.split(separator: " ", omittingEmptySubsequences: false) {
-            guard word.hasPrefix("@"), word.count > 1 else { kept.append(word); continue }
-            let token = word.dropFirst()
+        // A mention starts the text or follows any whitespace (a new line
+        // too). Only recognised mentions are cut out; everything else —
+        // line breaks, indentation, code — stays exactly as written
+        // (7.3 review, Codex probe: "explain:\n\n    return  a" lost both).
+        guard let pattern = try? NSRegularExpression(pattern: #"(?:^|(?<=\s))@\S+"#) else { return (text, scope, unknown) }
+        let ns = text as NSString
+        var removals: [NSRange] = []
+        for match in pattern.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
+            let word = ns.substring(with: match.range)
+            let token = String(word.dropFirst())
             let lowered = token.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ",.;:!?)"))
-            if let folder = folderArgument(String(token), home: home) {
+            var recognised = true
+            if let folder = folderArgument(token, home: home) {
                 scope.sources.insert(.files)
                 if !scope.folders.contains(folder) { scope.folders.append(folder) }
-                continue
+            } else {
+                switch lowered {
+                case "mac": scope.sources.formUnion(AOMAIRecordSource.mac)
+                case "memory", "memories": scope.sources.insert(.memories)
+                case "clipboard": scope.sources.insert(.clip)
+                case "history": scope.sources.insert(.shell)
+                case "files", "folder":
+                    scope.sources.insert(.files)
+                    for folder in lastFolders where !scope.folders.contains(folder) { scope.folders.append(folder) }
+                default:
+                    if let source = AOMAIRecordSource(rawValue: lowered), source != .files { scope.sources.insert(source) }
+                    else { recognised = false; unknown.append(word) }
+                }
             }
-            switch lowered {
-            case "mac": scope.sources.formUnion(AOMAIRecordSource.mac)
-            case "memory", "memories": scope.sources.insert(.memories)
-            case "clipboard": scope.sources.insert(.clip)
-            case "history": scope.sources.insert(.shell)
-            case "files", "folder":
-                scope.sources.insert(.files)
-                for folder in lastFolders where !scope.folders.contains(folder) { scope.folders.append(folder) }
-            default:
-                if let source = AOMAIRecordSource(rawValue: lowered), source != .files { scope.sources.insert(source) }
-                else { unknown.append(String(word)); kept.append(word) }
+            guard recognised else { continue }
+            // The mention without punctuation that ends a sentence ("why @mac?"
+            // keeps its "?"), and one space after it (or before it).
+            var range = match.range
+            let trailing = word.reversed().prefix { ",.;:!?)".contains($0) }.count
+            if trailing < word.count - 1 { range.length -= (word as NSString).length - (String(word.dropLast(trailing)) as NSString).length }
+            let after = range.location + range.length
+            if after < ns.length, [" ", "\t"].contains(ns.substring(with: NSRange(location: after, length: 1))) {
+                range.length += 1
+            } else if range.location > 0, ns.substring(with: NSRange(location: range.location - 1, length: 1)) == " " {
+                range.location -= 1
+                range.length += 1
             }
+            removals.append(range)
         }
-        let question = kept.joined(separator: " ").replacingOccurrences(of: #"\s{2,}"#, with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let kept = NSMutableString(string: text)
+        for range in removals.reversed() { kept.replaceCharacters(in: range, with: "") }
+        // A comma left at the very start by "@wiki, how…" goes too.
+        var question = (kept as String).trimmingCharacters(in: .whitespacesAndNewlines)
+        if !removals.isEmpty { question = String(question.drop { ",;:".contains($0) || $0 == " " }) }
         return (question, scope, unknown)
     }
 

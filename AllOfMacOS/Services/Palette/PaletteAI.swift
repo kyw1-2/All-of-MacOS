@@ -316,6 +316,8 @@ final class PaletteAIChat: ObservableObject {
         sessions = [:]
         chatID = UUID()
         historyStart = 0
+        // Records chosen for a question go with that chat's next question only.
+        pendingScope = .none
         agentSession.stop()
     }
 
@@ -328,10 +330,12 @@ final class PaletteAIChat: ObservableObject {
         messages = record.messages.map {
             Message(role: $0.role == "user" ? .user : .assistant, text: $0.text, model: $0.model, receipt: $0.receipt)
         }
-        historyStart = 0
         sessions = [:]
         lastActivity = Date()
         if let ref = record.model.flatMap(AOMAIModelRef.init(key:)) { model = ref }
+        // After the model: its didSet holds earlier turns back on a change of
+        // provider, but a chat opened to continue it sends its own turns.
+        historyStart = 0
     }
 
     func cancel() {
@@ -899,7 +903,12 @@ final class AOMAIChatHistory: ObservableObject {
         save(Record(id: chat.chatID, title: chat.title, date: Date(), model: chat.model.key, messages: turns))
     }
 
+    /// Chats deleted this session: a later save of the open chat (New Chat,
+    /// closing the launcher) doesn't bring one back (7.3 review, Codex probe).
+    private var deleted: Set<UUID> = []
+
     func save(_ record: Record) {
+        guard !deleted.contains(record.id) else { return }
         records.removeAll { $0.id == record.id }
         records.insert(record, at: 0)
         if records.count > 60 { records.removeLast(records.count - 60) }
@@ -907,6 +916,7 @@ final class AOMAIChatHistory: ObservableObject {
     }
 
     func delete(_ id: UUID) {
+        deleted.insert(id)
         records.removeAll { $0.id == id }
         write()
     }

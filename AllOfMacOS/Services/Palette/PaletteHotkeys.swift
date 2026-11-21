@@ -127,7 +127,7 @@ final class PaletteHotkeyStore: ObservableObject {
     /// shortcuts, automations (with the apps they are limited to) and the
     /// macOS Mission Control and Spaces keys AOM reads.
     struct Usage: Equatable, Identifiable {
-        enum Kind: Equatable { case launcher, launcherRow(itemID: String), aomShortcut, automation(UUID), macOS }
+        enum Kind: Equatable { case launcher, launcherRow(itemID: String, title: String), aomShortcut, automation(UUID), macOS }
         var kind: Kind
         var title: String
         /// "Every app", "Only in Safari", "In the Coding group".
@@ -142,7 +142,8 @@ final class PaletteHotkeyStore: ObservableObject {
             found.append(Usage(kind: .launcher, title: "Opens the launcher", scope: "Every app"))
         }
         for binding in bindings where PaletteHotkeyRules.same(binding.shortcut, shortcut) {
-            found.append(Usage(kind: .launcherRow(itemID: binding.itemID), title: "Launcher: \(binding.title)", scope: "Every app"))
+            // The binding's own title travels with it: "Launcher: " is only how it's shown.
+            found.append(Usage(kind: .launcherRow(itemID: binding.itemID, title: binding.title), title: "Launcher: \(binding.title)", scope: "Every app"))
         }
         if let action = CaptureShortcuts.shared.matchingAction(keyCode: shortcut.keyCode, modifiers: shortcut.modifiers) {
             found.append(Usage(kind: .aomShortcut, title: action.displayName, scope: "Every app · Settings › Shortcuts"))

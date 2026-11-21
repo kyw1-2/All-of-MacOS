@@ -138,6 +138,8 @@ struct SceneEditor: View {
     let onSave: (SceneProfile) -> Void
     let onCancel: () -> Void
     @ObservedObject private var windows = WindowManager.shared
+    /// Read once when the editor opens, not on every keystroke (7.3 review).
+    @State private var outputs: [AudioOutputDevice] = []
 
     private static let keepAwakeChoices: [(String, Int?)] = [("Leave as it is", nil), ("1 hour", 60), ("2 hours", 120), ("4 hours", 240), ("Until turned off", 0)]
 
@@ -166,7 +168,7 @@ struct SceneEditor: View {
                         Menu("Choose") {
                             Button("Leave as it is") { scene.audio = nil }
                             Divider()
-                            ForEach(AudioOutputService.devices()) { device in
+                            ForEach(outputs) { device in
                                 Button(device.name) {
                                     scene.audio = SceneAudioTarget(uid: device.uid, name: device.name, transport: SceneAudio.transport(of: device.id))
                                 }
@@ -209,6 +211,10 @@ struct SceneEditor: View {
             .padding(AOMSpace.x3)
         }
         .frame(width: 520, height: 640)
+        .onAppear {
+            AudioOutputService.invalidateDeviceCache()
+            outputs = AudioOutputService.devices()
+        }
     }
 
     private func appList(_ apps: Binding<[SceneApp]>, waits: Bool) -> some View {

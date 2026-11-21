@@ -18,6 +18,9 @@ enum BatchRename {
         let newName: String
         /// Why this row can't be renamed; the set runs only with none.
         var problem: String?
+        /// 7.3: the file's device and inode when the preview was made; the
+        /// rename refuses a file that was replaced since.
+        var identity: String? = nil
 
         var target: URL { source.deletingLastPathComponent().appendingPathComponent(newName) }
         var changes: Bool { newName != source.lastPathComponent }
@@ -43,9 +46,13 @@ enum BatchRename {
         newBaseName(name, find: find, template: template, number: number, dateText: { dateString(date) })
     }
 
+    /// With text to find, the tokens are filled in the replacement only:
+    /// braces already in the file's name ("report-{n}.txt") stay as they
+    /// are, and a name without the text is left alone (7.3, Codex probe).
     static func newBaseName(_ name: String, find: String, template: String, number: Int, dateText: () -> String) -> String {
-        let replaced = find.isEmpty ? (template.isEmpty ? name : template) : name.replacingOccurrences(of: find, with: template)
-        return expand(replaced, name: name, number: number, dateText: dateText)
+        if find.isEmpty { return template.isEmpty ? name : expand(template, name: name, number: number, dateText: dateText) }
+        guard name.contains(find) else { return name }
+        return name.replacingOccurrences(of: find, with: expand(template, name: name, number: number, dateText: dateText))
     }
 
     static func expand(_ text: String, name: String, number: Int, date: Date) -> String {
@@ -95,6 +102,7 @@ enum BatchRename {
                 .trimmingCharacters(in: .whitespaces)
             let filename = ext.isEmpty ? base : "\(base).\(ext)"
             var row = Row(source: url, newName: filename)
+            row.identity = FolderRulesSafety.identity(url)
             if base.isEmpty || base == "." || base == ".." { row.problem = "The new name is empty" }
             else if base.contains("/") || base.contains(":") || base.contains("\0") { row.problem = "Names can't contain / or :" }
             else if filename.utf8.count > 255 { row.problem = "The new name is too long" }
@@ -136,9 +144,12 @@ enum BatchRename {
     enum Failure: LocalizedError {
         case problems(Int)
         case moveFailed(name: String, reason: String, restored: Bool)
+        case changedSincePreview(name: String)
 
         var errorDescription: String? {
             switch self {
+            case .changedSincePreview(let name):
+                return "“\(name)” was replaced or moved after the preview, so nothing was renamed. Open Batch Rename again."
             case .problems(let count): return count == 1 ? "One new name is a problem." : "\(count) new names are problems."
             case .moveFailed(let name, let reason, let restored):
                 return "“\(name)” couldn't be renamed (\(reason))." + (restored ? " The files renamed before it were put back." : " Some files couldn't be put back.")
@@ -153,6 +164,11 @@ enum BatchRename {
     static func apply(_ rows: [Row], move: (URL, URL) throws -> Void = defaultMove) throws -> Done {
         let problems = rows.filter { $0.problem != nil }.count
         guard problems == 0 else { throw Failure.problems(problems) }
+        // 7.3 (Codex probe): a file replaced after the preview is not the
+        // one that was previewed; nothing is renamed.
+        if let changed = rows.first(where: { $0.changes && $0.identity != nil && FolderRulesSafety.identity($0.source) != $0.identity }) {
+            throw Failure.changedSincePreview(name: changed.source.lastPathComponent)
+        }
         var done: [Move] = []
         for row in rows where row.changes {
             do {

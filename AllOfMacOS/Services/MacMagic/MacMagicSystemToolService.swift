@@ -392,6 +392,17 @@ final class MacMagicSystemToolService {
             if let source, BatchRename.key(candidate) == BatchRename.key(source) { continue }
             if renamex_np(temporary.path, candidate.path, UInt32(RENAME_EXCL)) == 0 { return candidate }
             let code = errno
+            // exFAT drives and SMB shares don't support RENAME_EXCL (ENOTSUP):
+            // FileManager's move, which never replaces a file, to a name free now.
+            if code == ENOTSUP || code == EXDEV {
+                if FileManager.default.fileExists(atPath: candidate.path) { continue }
+                do {
+                    try FileManager.default.moveItem(at: temporary, to: candidate)
+                    return candidate
+                } catch where (error as NSError).code == NSFileWriteFileExistsError {
+                    continue
+                }
+            }
             guard code == EEXIST else {
                 throw NSError(domain: NSPOSIXErrorDomain, code: Int(code),
                               userInfo: [NSLocalizedDescriptionKey: String(cString: strerror(code))])

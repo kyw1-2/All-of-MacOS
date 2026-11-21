@@ -393,7 +393,10 @@ final class FilesShelfPanelController: NSObject {
         guard !targets.isEmpty else { return }
         let removed = store.remove(targets)
         model.selection.subtract(targets)
-        let received = removed.map(\.item).filter(\.received).map(\.url).filter { FileManager.default.fileExists(atPath: $0.path) }
+        // 7.3 (Codex probe): only a received file still in the Received
+        // folder goes to the Trash. One moved to a folder of yours — or a
+        // different file that took its name there — stays where it is.
+        let received = Self.receivedToTrash(removed.map(\.item), receivedFolder: FilesStorage.receivedFolder)
         let text = removed.count == store.items.count + removed.count && removed.count > 1 ? "Cleared the shelf" : "Removed \(Self.count(removed.count))"
         guard !received.isEmpty else {
             model.show(text, undoTitle: "Undo") { [weak self] in self?.store.restore(removed) }
@@ -411,6 +414,13 @@ final class FilesShelfPanelController: NSObject {
                     }
                 }
             }
+        }
+    }
+
+    /// Pure: the received items whose files are still inside AOM's Received folder.
+    nonisolated static func receivedToTrash(_ items: [FilesShelfItem], receivedFolder: URL) -> [URL] {
+        items.filter(\.received).map(\.url).filter { url in
+            FileManager.default.fileExists(atPath: url.path) && FolderRulesSafety.isInside(url, receivedFolder)
         }
     }
 
@@ -602,7 +612,8 @@ struct FilesShelfView: View {
             .frame(width: 40, height: 36)
             .background {
                 if !store.items.isEmpty {
-                    FilesFileDragSource(urls: { store.items.filter(\.exists).map(\.url) })
+                    FilesFileDragSource(urls: { store.items.filter(\.exists).map(\.url) },
+                                        onEnd: { controller.dragEnded(delivered: $0) })
                 }
             }
             .help(store.items.isEmpty ? "Drop files on the shelf" : "Drag all items out")

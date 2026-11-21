@@ -31,6 +31,19 @@ The Codex review of 7.2.3 (`AOM-7.2.3-통합검수와-개선보고서`, five bun
 ### Drop Shelf
 - A mixed drop (Finder files and an image from Safari) keeps every file; promised files are counted in ("Receiving 2 of 5…") and all of them selected at the end. All selected files drag out, not the first 64. One mouse monitor serves every row instead of one per row; moves update and save the shelf once. New option: hide after dragging files out.
 
+### Before release: review fixes
+A code review of the 7.3 branch and Codex's unfinished 7.3 probes (it stopped at its usage limit; its probe sources in `~/Documents/Codex/2026-11-21/7/work` were checked one by one):
+- Ask AI keeps the scope in view during a conversation: a bar shows what the next question reads, whether it leaves the Mac, Choose Records… and Include Earlier Turns; both are in ⌘K too. ⌘⇧M opens Records (there it adds the last question's records).
+- A saved chat of another provider opened to continue it sends its own turns (the model change held them back); New Chat clears records chosen for the old chat; a deleted chat isn't saved back by New Chat.
+- A mention at the start of a line counts, and a question's line breaks, indentation and punctuation stay as written.
+- Image conversion on exFAT drives and SMB shares (no `RENAME_EXCL`) falls back to a move that never replaces.
+- Find a Shortcut opens Settings › Shortcuts and changes a launcher hotkey without piling "Launcher: " onto its title.
+- Snippets are rendered and checked (size, Accessibility, lock screen) before the abbreviation is erased; if typing still fails, the abbreviation is typed back. A `{clipboard}` left empty because it looked like a password says so. Backspaces and ← presses no longer block the main thread; the caret walks back at most 200 characters (a 601-character tail stopped at 400). Keywords that differ only in case are one keyword.
+- Modules: the launcher drops the tools of a module that is off, marks its page Off and offers "Turn On …"; Install Disk Image… and the Audio page's Mute button ask the switch too.
+- Drop Shelf: a received file moved to one of your folders is never trashed by Remove; dragging the whole stack honours "hide after dragging out"; the drag monitor is safe if a row is freed off the main thread.
+- Batch Rename refuses a file replaced after the preview, and with text to find fills tokens only in the replacement ("report-{n}.txt" stays). An exact name is first among a big folder's matches; the folder favorite that made room is named.
+- Scenes reopen a running app that has no window and wait for it; the sound step reads the outputs afresh; the editor reads them once.
+
 ### Efficiency and release
 - Batch Rename's preview makes no date formatter unless `{date}` is used (92 → 29 ms for 1,000 names in the Codex measurement); typed-string matching prepares its abbreviations once per change instead of on every key; Focus logs are encoded off the main thread; Large Files keeps only the top results while scanning; command output without newlines is capped.
 - The annotation extensions are signed once, after their version is set; a tests-only main push runs the test workflow (B21); the local proxy counts as up only when it answers like claude-code-proxy (B23).

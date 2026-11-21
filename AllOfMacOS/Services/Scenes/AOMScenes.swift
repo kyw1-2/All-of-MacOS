@@ -349,6 +349,8 @@ final class SceneRunner: ObservableObject {
         case .launch(let app): return await launch(app)
         case .layout(let name): return await arrange(name)
         case .audio(let target):
+            // Read afresh: AirPods connected a moment ago aren't in the 0.5 s cache yet.
+            AudioOutputService.invalidateDeviceCache()
             let state = SceneState.live()
             guard let found = SceneAudio.resolve(target, in: state.outputs) else { return .skipped("\(target.name) isn't connected") }
             if found.ambiguous { return .skipped("more than one output is named \(target.name)") }
@@ -381,15 +383,17 @@ final class SceneRunner: ObservableObject {
     }
 
     private func launch(_ app: SceneApp) async -> SceneStepResult.Outcome {
-        if let running = NSRunningApplication.runningApplications(withBundleIdentifier: app.bundleID).first {
-            if app.waitsForWindow, !Self.hasWindow(running.processIdentifier) { running.activate() }
-            return .already
-        }
-        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: app.bundleID) else {
+        let running = NSRunningApplication.runningApplications(withBundleIdentifier: app.bundleID).first
+        // Open with a window already: nothing to do. Open without one
+        // (Safari or Terminal with every window closed): opening it again
+        // sends the reopen event, which makes a new window, and the scene
+        // waits for it like a launch (7.3 review; activate() alone didn't).
+        if let running, !app.waitsForWindow || Self.hasWindow(running.processIdentifier) { return .already }
+        guard let url = running?.bundleURL ?? NSWorkspace.shared.urlForApplication(withBundleIdentifier: app.bundleID) else {
             return .failed("\(app.name) isn't installed")
         }
         let configuration = NSWorkspace.OpenConfiguration()
-        configuration.activates = false
+        configuration.activates = running != nil
         let opened: NSRunningApplication? = await withCheckedContinuation { continuation in
             NSWorkspace.shared.openApplication(at: url, configuration: configuration) { running, _ in
                 continuation.resume(returning: running)

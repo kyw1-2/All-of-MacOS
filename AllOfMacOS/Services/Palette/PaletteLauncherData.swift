@@ -159,10 +159,23 @@ final class PaletteLauncherData: ObservableObject {
     nonisolated static func folderMatches(_ items: [PaletteFileHit], query: String) -> [PaletteFileHit] {
         let words = query.lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
         guard !words.isEmpty else { return items }
-        return items.filter { hit in
+        let matching = items.filter { hit in
             let name = hit.name.lowercased()
             return words.allSatisfy { name.contains($0) }
         }
+        // The name itself, then names that start with it, then the rest —
+        // so an exact name survives the 2,000-row cut (7.3, Codex probe).
+        let whole = query.lowercased().trimmingCharacters(in: .whitespaces)
+        func rank(_ hit: PaletteFileHit) -> Int {
+            let name = hit.name.lowercased()
+            let base = (name as NSString).deletingPathExtension
+            if name == whole || base == whole { return 0 }
+            return name.hasPrefix(whole) ? 1 : 2
+        }
+        return matching.enumerated().sorted { a, b in
+            let (ra, rb) = (rank(a.element), rank(b.element))
+            return ra != rb ? ra < rb : a.offset < b.offset
+        }.map(\.element)
     }
 
     /// Pure: folders first, then names in Finder's order.
@@ -382,14 +395,18 @@ final class PaletteFolderFavorites: ObservableObject {
         }
     }
 
-    func add(_ url: URL, query: String) {
+    /// Returns the favorite dropped to make room (the oldest, past 30), if any.
+    @discardableResult
+    func add(_ url: URL, query: String) -> PaletteFolderFavorite? {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let base = url.path == "/" ? "Macintosh HD" : url.lastPathComponent
         let name = trimmed.isEmpty ? base : "\(base) · \(trimmed)"
         items.removeAll { $0.path == url.path && $0.query == trimmed }
         items.insert(PaletteFolderFavorite(name: name, path: url.standardizedFileURL.path, query: trimmed), at: 0)
-        if items.count > 30 { items.removeLast(items.count - 30) }
+        var dropped: PaletteFolderFavorite?
+        if items.count > 30 { dropped = items.last; items.removeLast(items.count - 30) }
         save()
+        return dropped
     }
 
     func remove(_ id: UUID) { items.removeAll { $0.id == id }; save() }

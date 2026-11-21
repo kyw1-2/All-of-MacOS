@@ -51,3 +51,29 @@ Where the two disagree, Codex's correction (it read the code the design was writ
 - UI checked with `--aom-preview-snapshot`: Records for the Next Question, the Ask AI scope row (Apple Intelligence and Local Proxy), Find a Shortcut, Window Tiling's Scenes card and sheet (`--aom-preview-scenes`).
 - Live: claude-code-proxy's `/health` and `/` bodies, used for the B23 check.
 - Not checked on the device: the badge's caret position in each app, snippet insertion in VS Code/Electron, a scene's real audio and appearance switch, TCC prompts.
+
+## Review before release (2026-11-21)
+
+Two inputs after the first CI pass: a pasted code review (8 items) and Codex's 7.3 review, which stopped at its usage limit before writing a report. Codex's probe sources (`~/Documents/Codex/2026-11-21/7/work/{ai_launcher,files_scenes,input_modules}`) show what it suspected; each suspicion was reproduced in `AOM73Tests` before the fix.
+
+| Item | Verified | Fix |
+|---|---|---|
+| Review 1: scope rows invisible during a conversation; ⌘⇧M only reused the last scope | yes (`paletteContents` draws only the transcript) | `aiScopeBar`, ⌘K actions, ⌘⇧M opens `.aiRecords` |
+| Review 2 / Codex: `load()` held back the opened chat | yes | `historyStart = 0` after `model = ref` |
+| Review 3: `commitExclusive` without ENOTSUP | yes | FileManager move fallback (not testable without exFAT/SMB) |
+| Review 4: Find a Shortcut → General; "Launcher: " prefix | yes | `.shortcuts`; `Usage.Kind.launcherRow(itemID:title:)` |
+| Review 5: erase before checks; notes unused; main-thread sleeps | yes | `SnippetInserter.refusal` first, typed abbreviation restored, notes joined into the HUD, key posting off main |
+| Review 6: off modules in the launcher | partly (module tools were few: rule preview and rows; pages kept) | `AOMModuleSwitches.gated`, Turn On rows, Install Disk Image gate |
+| Review 7: stack drag `onEnd`; deinit `assumeIsolated` | yes | both |
+| Review 8: windowless running apps; devices in `body`; stale cache | yes | reopen and wait; `invalidateDeviceCache`; `.onAppear` |
+| Codex: mentions after a newline; question formatting lost | yes | regex mentions, in-place removal |
+| Codex: New Chat keeps records; deleted chat saved back | yes | cleared; `deleted` set |
+| Codex: Mic Mute off, Audio page toggled the mic | yes (probe output) | controller gate + notice |
+| Codex: `;ab` and `;Ab` both allowed | yes (probe output) | case-insensitive keyword check |
+| Codex: 601-char suffix, ← capped at 400 | yes (probe output) | route types it, caret stays at end with a note; cap 200 |
+| Codex: received file moved out then Removed → trashed | yes | trashed only inside Received; relocate clears `received` |
+| Codex: rename after the source was replaced | yes | identity at preview, refused at apply |
+| Codex: `{n}` in an unmatched name expanded | yes | tokens only in the replacement |
+| Codex: exact match beyond 2,000; 31st favorite | yes | ranked before the cut; dropped favorite named |
+
+Not changed: the record search's `.alwaysMapped` reads (a file truncated while mapped can raise SIGBUS; logs are appended, not truncated, so it stays a known risk) and the B21 commit-message condition.

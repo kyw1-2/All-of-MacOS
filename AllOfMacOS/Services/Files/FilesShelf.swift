@@ -103,9 +103,12 @@ final class FilesShelfStore: ObservableObject {
         let index = Dictionary(items.enumerated().map { ($0.element.id, $0.offset) }, uniquingKeysWith: { first, _ in first })
         var updated = items
         var changed = false
+        let receivedFolder = FilesStorage.receivedFolder
         for (id, url) in moves {
             guard let position = index[id] else { continue }
             updated[position].path = FilesPath.key(url.path)
+            // Moved out of the Received folder, it is the person's file now (7.3).
+            if updated[position].received, !FolderRulesSafety.isInside(url, receivedFolder) { updated[position].received = false }
             changed = true
         }
         guard changed else { return }

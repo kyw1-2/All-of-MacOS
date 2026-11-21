@@ -102,15 +102,23 @@ final class FilesDragMonitor {
         }
     }
 
+    /// Safe from any thread: a view freed off the main thread (7.3 review)
+    /// is dropped on the main queue instead of trapping in assumeIsolated.
     nonisolated func remove(_ view: FilesFileDragSource.DragView) {
         let id = ObjectIdentifier(view)
-        MainActor.assumeIsolated {
-            views[id] = nil
-            views = views.filter { $0.value.view != nil }
-            if views.isEmpty, let monitor {
-                NSEvent.removeMonitor(monitor)
-                self.monitor = nil
-            }
+        if Thread.isMainThread {
+            MainActor.assumeIsolated { drop(id) }
+        } else {
+            DispatchQueue.main.async { MainActor.assumeIsolated { FilesDragMonitor.shared.drop(id) } }
+        }
+    }
+
+    private func drop(_ id: ObjectIdentifier) {
+        views[id] = nil
+        views = views.filter { $0.value.view != nil }
+        if views.isEmpty, let monitor {
+            NSEvent.removeMonitor(monitor)
+            self.monitor = nil
         }
     }
 

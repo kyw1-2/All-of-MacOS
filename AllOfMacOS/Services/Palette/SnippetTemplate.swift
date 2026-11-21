@@ -177,6 +177,9 @@ enum SnippetTemplate {
     }
 
     /// Pure (DeepSeek v2 §4.3): which way to insert.
+    /// The most ← presses AOM sends to place the caret.
+    static let caretWalkLimit = 200
+
     static func route(for render: SnippetRender, canRestoreClipboard: Bool = true) -> Route {
         let singleLine = !render.text.contains("\n")
         let suffix = render.suffix
@@ -185,8 +188,11 @@ enum SnippetTemplate {
             return .typeWithCaret(after)
         }
         if !canRestoreClipboard {
-            // Typing is slower but never loses what is on the clipboard.
-            return render.charactersAfterCursor.map { _ in suffix.contains("\n") ? .type : .typeWithCaret(suffix.count) } ?? .type
+            // Typing is slower but never loses what is on the clipboard. The
+            // caret walks back over a short line only (← is capped at 200;
+            // 7.3, Codex probe: a 601-character suffix stopped at 400).
+            guard render.charactersAfterCursor != nil, !suffix.contains("\n"), suffix.count <= caretWalkLimit else { return .type }
+            return .typeWithCaret(suffix.count)
         }
         return .paste
     }
@@ -204,34 +210,57 @@ extension PasteboardSnapshot {
     }
 }
 
+/// Pure part of SnippetInserter's check (tests).
+enum SnippetInserterRefusal {
+    static func check(_ render: SnippetRender) -> String? {
+        if render.text.count > SnippetTemplate.sizeLimit { return "The snippet is over 100,000 characters" }
+        if render.text.isEmpty { return render.notes.first ?? "The snippet came out empty" }
+        return nil
+    }
+}
+
 @MainActor
 enum SnippetInserter {
+    /// Why `render` can't be inserted now, checked before anything is
+    /// erased or typed; nil when it can.
+    static func refusal(for render: SnippetRender) -> String? {
+        if let reason = SnippetInserterRefusal.check(render) { return reason }
+        if IsSecureEventInputEnabled() { return "Not in a password field" }
+        if ScreenLock.isLocked { return "Not on the lock screen" }
+        if !AXIsProcessTrusted() { return "All of MacOS needs Accessibility to type" }
+        return nil
+    }
+
     /// Inserts `render` into the app in front, which must be `target`
-    /// (checked again right before any key goes out).
+    /// (checked again right before any key goes out). The note carries the
+    /// render's own notes too (a {clipboard} left empty because it looked
+    /// like a password).
     static func insert(_ render: SnippetRender, into target: NSRunningApplication?, completion: @escaping (Bool, String?) -> Void) {
-        guard render.text.count <= SnippetTemplate.sizeLimit else { completion(false, "The snippet is over 100,000 characters"); return }
-        guard !IsSecureEventInputEnabled(), !ScreenLock.isLocked else { completion(false, "Not in a password field or on the lock screen"); return }
-        guard AXIsProcessTrusted() else { completion(false, "All of MacOS needs Accessibility to type"); return }
+        if let refusal = refusal(for: render) { completion(false, refusal); return }
+        let done: (Bool, String?) -> Void = { inserted, note in
+            let notes = render.notes + [note].compactMap { $0 }
+            completion(inserted, notes.isEmpty ? nil : notes.joined(separator: " · "))
+        }
         let snapshot = PasteboardSnapshot.whole()
         switch SnippetTemplate.route(for: render, canRestoreClipboard: snapshot != nil) {
         case .type:
+            let caretNote = render.charactersAfterCursor == nil ? nil : "The cursor stayed at the end: the text after {cursor} is too long to walk back over"
             ActionExecutor.typeReplacementText(render.text) { typed in
-                DispatchQueue.main.async { completion(typed, typed ? nil : "Couldn't type it") }
+                DispatchQueue.main.async { done(typed, typed ? caretNote : "Couldn't type it") }
             }
         case .typeWithCaret(let back):
             ActionExecutor.typeReplacementText(render.text) { typed in
                 DispatchQueue.main.async {
-                    guard typed else { completion(false, "Couldn't type it"); return }
+                    guard typed else { done(false, "Couldn't type it"); return }
                     // Give the app a moment to take the typed text first.
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) {
-                        guard frontIs(target) else { completion(true, "The cursor stayed at the end: the app changed"); return }
-                        pressLeft(back)
-                        completion(true, nil)
+                        guard frontIs(target) else { done(true, "The cursor stayed at the end: the app changed"); return }
+                        pressLeftInBackground(back) { done(true, nil) }
                     }
                 }
             }
         case .paste:
-            guard let snapshot, let target else { completion(false, "Couldn't paste"); return }
+            guard let snapshot, let target else { done(false, "Couldn't paste"); return }
             let start = focusedSelectionLocation()
             let board = NSPasteboard.general
             board.clearContents()
@@ -240,27 +269,32 @@ enum SnippetInserter {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) {
                 guard frontIs(target) else {
                     if board.changeCount == written { snapshot.restore(to: board) }
-                    completion(false, "The app in front changed, so nothing was pasted")
+                    done(false, "The app in front changed, so nothing was pasted")
                     return
                 }
                 let sent = ClipboardStackPasteMonitor.sendPaste(to: target)
                 // The clipboard comes back only if nothing was copied since (Codex: ownership change count).
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
                     if board.changeCount == written { snapshot.restore(to: board) }
-                    guard sent else { completion(false, "The paste couldn't be sent"); return }
-                    var note: String?
-                    if let cursor = render.cursorUTF16 {
-                        if let start, setFocusedSelection(start + cursor) {
-                            note = nil
-                        } else if !render.suffix.contains("\n"), render.suffix.count <= 200 {
-                            pressLeft(render.suffix.count)
-                        } else {
-                            note = "The cursor stayed at the end: this app doesn't let AOM place it"
-                        }
+                    guard sent else { done(false, "The paste couldn't be sent"); return }
+                    guard let cursor = render.cursorUTF16 else { done(true, nil); return }
+                    if let start, setFocusedSelection(start + cursor) {
+                        done(true, nil)
+                    } else if !render.suffix.contains("\n"), render.suffix.count <= 200 {
+                        pressLeftInBackground(render.suffix.count) { done(true, nil) }
+                    } else {
+                        done(true, "The cursor stayed at the end: this app doesn't let AOM place it")
                     }
-                    completion(true, note)
                 }
             }
+        }
+    }
+
+    /// ← presses posted off the main thread (up to 400 take ~0.6 s), then `then` on main.
+    static func pressLeftInBackground(_ count: Int, then: @escaping () -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            pressLeft(count)
+            DispatchQueue.main.async(execute: then)
         }
     }
 
@@ -270,10 +304,10 @@ enum SnippetInserter {
     }
 
     /// ← presses tagged as AOM's own, so the typed-string matcher skips them.
-    static func pressLeft(_ count: Int) {
+    nonisolated static func pressLeft(_ count: Int) {
         guard count > 0 else { return }
         let source = CGEventSource(stateID: .hidSystemState)
-        for _ in 0..<min(count, 400) {
+        for _ in 0..<min(count, SnippetTemplate.caretWalkLimit) {
             for down in [true, false] {
                 guard let event = CGEvent(keyboardEventSource: source, virtualKey: 123, keyDown: down) else { continue }
                 event.flags = []
@@ -332,6 +366,8 @@ final class PaletteSnippetForm: ObservableObject {
         /// Characters of the typed abbreviation to erase first (0: from the launcher).
         var erase = 0
         var targetPID: pid_t?
+        /// The abbreviation as typed (put back if the insert fails after the erase).
+        var typed = ""
 
         var currentName: String? { names.indices.contains(index) ? names[index] : nil }
         var isComplete: Bool { index >= names.count }
@@ -354,8 +390,8 @@ final class PaletteSnippetForm: ObservableObject {
     func finish() -> Request? { defer { request = nil }; return request }
 
     /// From a typed abbreviation (KeyboardMonitor): opens the launcher on the form.
-    static func askFromTyping(snippetID: UUID, names: [String], erase: Int, target: NSRunningApplication?) {
-        shared.begin(Request(snippetID: snippetID, names: names, erase: erase, targetPID: target?.processIdentifier))
+    static func askFromTyping(snippetID: UUID, names: [String], erase: Int, target: NSRunningApplication?, typed: String = "") {
+        shared.begin(Request(snippetID: snippetID, names: names, erase: erase, targetPID: target?.processIdentifier, typed: typed))
         AOMLauncherController.shared.show(route: .snippetArguments(snippetID))
     }
 }

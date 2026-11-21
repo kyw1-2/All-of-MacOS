@@ -7,10 +7,16 @@ import SwiftUI
 /// Two cards so neither holds more than eight rows (design-3.4.0 b.2).
 struct MicMuteSection: View {
     @ObservedObject private var mic = MicMuteController.shared
+    @ObservedObject private var switches = AOMModuleSwitches.shared
     @State private var accessibilityTrusted = AOMPermissionCache.accessibilityTrusted
 
     var body: some View {
         VStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
+            if !switches.isOn(.micMute) {
+                AOMNotice(.warning, "Mic Mute is off", detail: "Its shortcut, push to talk and auto-mute do nothing until it is on again. The microphone stays as it is.") {
+                    Button("Turn On") { switches.set(.micMute, on: true) }
+                }
+            }
             AOMSection("Microphone mute",
                        help: "One shortcut mutes or unmutes the default microphone in every app at once, like a cough button. AOM uses the microphone's own mute switch, or its input volume when it has none.") {
                 stateRow
@@ -70,6 +76,7 @@ struct MicMuteSection: View {
                 AOMStatusPill(mic.isMuted ? "Muted" : "On", tone: mic.isMuted ? .warning : .success,
                               symbol: mic.isMuted ? "mic.slash" : "mic")
                 Button(mic.isMuted ? "Unmute" : "Mute") { mic.toggle() }
+                    .disabled(!switches.isOn(.micMute))
                     .disabled(!mic.canMute || mic.deviceName == nil)
                     .help(mic.isMuted ? "Unmutes the microphone" : "Mutes the microphone in every app")
             }

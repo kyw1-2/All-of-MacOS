@@ -48,11 +48,13 @@ extension QuickCommandPalette {
             if case .tool(.brew(let tab, _))? = navigation.current { cycleBrewTab(from: tab, backwards: backwards); return true }
             return false
         }
-        // 7.3: ⌘⇧M the last question's records again, ⌘⇧0 none (Ask AI).
+        // 7.3: ⌘⇧M opens Records for the Next Question (there, it adds the
+        // last question's records); ⌘⇧0 clears them.
         if navigation.current == .ai || navigation.current == .aiRecords, mods == [.command, .shift], [46, 29].contains(event.keyCode) {
             guard !event.isARepeat else { return true }
-            if event.keyCode == 46 { ai.reuseLastScope(); screens.show("Records: \(ai.pendingScope.summary)") }
-            else { ai.clearPendingScope(); screens.show("Records cleared") }
+            if event.keyCode == 29 { ai.clearPendingScope(); screens.show("Records cleared") }
+            else if navigation.current == .ai { push(.aiRecords) }
+            else { ai.reuseLastScope(); screens.show("Records: \(ai.pendingScope.summary)") }
             return true
         }
         // ⌥↩: Send To (LaunchBar's Instant Send).
@@ -752,8 +754,11 @@ extension QuickCommandPalette {
         var favorite = screenRow("folder.favorite", search.isEmpty ? "Save Folder as Favorite" : "Save Folder and “\(search)” as Favorite",
                                  "Opens again from the launcher's search", icon: "star", group: "Folder",
                                  primary: PaletteAction(title: "Save Favorite", symbol: "star", effect: .stay) {
-                                     PaletteFolderFavorites.shared.add(url, query: search)
-                                     screens.show("Saved — search for “\(url.lastPathComponent)” to open it")
+                                     if let dropped = PaletteFolderFavorites.shared.add(url, query: search) {
+                                         screens.show("Saved — the oldest favorite, “\(dropped.name)”, made room (30 at most)")
+                                     } else {
+                                         screens.show("Saved — search for “\(url.lastPathComponent)” to open it")
+                                     }
                                  })
         favorite.placement = .fallback
         items.append(favorite)
@@ -881,7 +886,7 @@ extension QuickCommandPalette {
             ? PaletteAction(title: "Insert", symbol: "keyboard") {
                 _ = PaletteSnippetForm.shared.submit(value)
                 if let done = PaletteSnippetForm.shared.finish() {
-                    insertSnippet(snippet, arguments: done.values, erase: done.erase, targetPID: done.targetPID)
+                    insertSnippet(snippet, arguments: done.values, erase: done.erase, targetPID: done.targetPID, typed: done.typed)
                 }
             }
             : PaletteAction(title: "Next Field", symbol: "arrow.right", effect: .stay) {
@@ -898,7 +903,7 @@ extension QuickCommandPalette {
     /// Renders and inserts a snippet with placeholders. From a typed
     /// abbreviation (`erase` > 0) the abbreviation is erased first, and only
     /// in the app it was typed in.
-    func insertSnippet(_ snippet: PaletteSnippets.Snippet, arguments: [String: String], erase: Int, targetPID: pid_t?) {
+    func insertSnippet(_ snippet: PaletteSnippets.Snippet, arguments: [String: String], erase: Int, targetPID: pid_t?, typed: String = "") {
         guard case .success(let render) = SnippetTemplate.render(text: snippet.text, syntax: snippet.syntax,
                                                                  context: .init(arguments: arguments)) else {
             screens.show("This snippet's text has a mistake — fix it in Automation")
@@ -911,16 +916,33 @@ extension QuickCommandPalette {
                 GestureHUD.shared.show(title: "Snippet Not Inserted", detail: "The app you typed in isn't in front any more; the text is as you left it.")
                 return
             }
-            if erase > 0 { TypedStringEngine.shared.erase(erase) }
-            SnippetInserter.insert(render, into: front) { inserted, note in
-                if !inserted {
-                    let board = NSPasteboard.general
-                    board.clearContents()
-                    board.setString(render.text, forType: .string)
-                    GestureHUD.shared.show(title: "Snippet Copied", detail: (note ?? "Couldn't insert it") + " — press ⌘V.")
-                } else if let note {
-                    GestureHUD.shared.show(title: "Snippet", detail: note)
-                }
+            // Checked before the abbreviation is erased, so a refusal leaves it as typed.
+            if let refusal = SnippetInserter.refusal(for: render) {
+                GestureHUD.shared.show(title: "Snippet Not Inserted", detail: refusal)
+                return
+            }
+            guard erase > 0 else { insertRendered(render, into: front); return }
+            // Backspaces go out off the main thread; the insert (and any caret
+            // position it reads) waits until they have landed.
+            DispatchQueue.global(qos: .userInitiated).async {
+                TypedStringEngine.shared.erase(erase)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) { insertRendered(render, into: front, typed: typed) }
+            }
+        }
+    }
+
+    /// `typed`: the abbreviation as it was typed, put back when the text
+    /// can't go in after it was erased.
+    private func insertRendered(_ render: SnippetRender, into front: NSRunningApplication?, typed: String = "") {
+        SnippetInserter.insert(render, into: front) { inserted, note in
+            if !inserted {
+                if !typed.isEmpty { ActionExecutor.typeReplacementText(typed) }
+                let board = NSPasteboard.general
+                board.clearContents()
+                board.setString(render.text, forType: .string)
+                GestureHUD.shared.show(title: "Snippet Copied", detail: (note ?? "Couldn't insert it") + " — press ⌘V.")
+            } else if let note {
+                GestureHUD.shared.show(title: "Snippet", detail: note)
             }
         }
     }
@@ -958,9 +980,9 @@ extension QuickCommandPalette {
         return usages.map { usage in
             let action: PaletteAction
             switch usage.kind {
-            case .launcher: action = PaletteAction(title: "Change in Settings", effect: .stay) { AOMModuleSwitches.openSettings() }
-            case .launcherRow(let itemID): action = PaletteAction(title: "Change Hotkey", effect: .push(.hotkey(itemID: itemID, title: usage.title))) {}
-            case .aomShortcut: action = PaletteAction(title: "Open Shortcuts Settings", effect: .stay) { AOMModuleSwitches.openSettings() }
+            case .launcher: action = PaletteAction(title: "Change in Settings", effect: .stay) { AOMModuleSwitches.openSettings(.shortcuts) }
+            case .launcherRow(let itemID, let title): action = PaletteAction(title: "Change Hotkey", effect: .push(.hotkey(itemID: itemID, title: title))) {}
+            case .aomShortcut: action = PaletteAction(title: "Open Shortcuts Settings", effect: .stay) { AOMModuleSwitches.openSettings(.shortcuts) }
             case .automation(let id): action = PaletteAction(title: "Edit Automation", symbol: "pencil") { editTrigger(id) }
             case .macOS:
                 action = PaletteAction(title: "Open Keyboard Shortcuts") {

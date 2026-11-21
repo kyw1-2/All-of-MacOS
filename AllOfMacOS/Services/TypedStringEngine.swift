@@ -35,6 +35,12 @@ final class TypedStringEngine {
 
     func reset() { buffer.removeAll() }
 
+    /// The last `count` characters typed, as typed (7.3: put back when an
+    /// expansion can't be inserted after its abbreviation was erased).
+    func typedTail(_ count: Int) -> String {
+        buffer.suffix(count).map(\.text).joined()
+    }
+
     /// Feeds one typed character. Returns a match when the buffer now ends
     /// with a registered abbreviation and the final key should be swallowed.
     /// 7.3 (Codex 7.2.3 report): the typed strings with their lowercased

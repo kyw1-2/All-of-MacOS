@@ -1097,7 +1097,9 @@ struct QuickCommandPalette: View {
                 default: items = PaletteSearch.filtered(routeItems(route), query: query)
                 }
             } else {
-                items = PaletteSearch.results(for: allItems, query: query, knowledge: PaletteKnowledgeStore.shared.knowledge)
+                items = PaletteSearch.results(for: AOMModuleSwitches.gated(allItems.map { ($0.id, $0) }, isSearching: isSearching,
+                                                                           mark: { $0.accessory = "Off" }, turnOnRow: moduleTurnOnRow),
+                                              query: query, knowledge: PaletteKnowledgeStore.shared.knowledge)
             }
             screens.remember(items.map(\.id))
             return items
@@ -1302,6 +1304,56 @@ struct QuickCommandPalette: View {
     /// The Ask AI screen: with a conversation, one row carrying its actions
     /// (the transcript is drawn instead of the list); without, the AI
     /// commands, recent chats, the model picker and AI Chat.
+    /// 7.3: searching for a module that is off finds a row that turns it on.
+    private func moduleTurnOnRow(_ module: AOMModuleSwitch) -> PaletteItem {
+        var row = PaletteItem(id: "module.on.\(module.rawValue)", title: "Turn On \(module.title)",
+                              subtitle: "Off in Settings › General › Modules · \(module.detail)", icon: module.symbol, section: .commands,
+                              primary: PaletteAction(title: "Turn On", symbol: "power", effect: .stay) {
+                                  if let refusal = AOMModuleSwitches.shared.set(module, on: true) { screens.show(refusal) }
+                                  else { screens.show("\(module.title) is on"); sourcesChanged() }
+                              },
+                              secondaries: [PaletteAction(title: "Open Modules Settings", symbol: "gearshape") { AOMModuleSwitches.openSettings() }])
+        row.keywords = "\(module.title) \(module.detail) module 모듈 켜기 turn on"
+        row.aliases = [module.title.lowercased()]
+        return row
+    }
+
+    /// 7.3: the conversation's one-line scope bar — records for the next
+    /// question, where it goes, Choose Records… (⌘⇧M), and Include Earlier
+    /// Turns while turns are held back.
+    private var aiScopeBar: some View {
+        let parsed = AOMAIRecordScope.parse(trimmed, lastFolders: Array(ai.recentFolders.prefix(1)))
+        let scope = parsed.scope.union(ai.pendingScope)
+        let effective = AOMAIRecordsMode.effective(scope, egress: ai.egress, mode: .current, onDeviceReadsMac: AOMAIRecordsMode.onDeviceReadsMac)
+        let reads = effective.isEmpty ? (scope.attachesClipboard ? "Clipboard text" : "No records") : effective.summary
+        return HStack(spacing: 8) {
+            Image(systemName: effective.isEmpty ? "tray" : "tray.full")
+                .foregroundStyle(AOMCraftColor.inkSecondary)
+                .accessibilityHidden(true)
+            Text("Next question: \(reads)")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(AOMCraftColor.ink)
+                .lineLimit(1).truncationMode(.middle)
+            Text(ai.egress.leavesMac ? "· leaves this Mac" : "· stays on this Mac")
+                .font(.system(size: 11.5))
+                .foregroundStyle(AOMCraftColor.inkSecondary)
+                .lineLimit(1)
+            Spacer(minLength: 8)
+            if ai.heldTurns > 0 {
+                Button("Include \(ai.heldTurns) Earlier Turn\(ai.heldTurns == 1 ? "" : "s")") { ai.includeEarlierTurns() }
+                    .controlSize(.small)
+                    .help("They stay on this Mac since you switched to \(ai.model.provider.title); this sends them with the next question")
+            }
+            Button("Choose Records…") { push(.aiRecords) }
+                .controlSize(.small)
+                .help("What the next question may read (⌘⇧M)")
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 7)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Next question reads \(reads)")
+    }
+
     /// 7.3: the rows that say what the next question shares — its records
     /// (typed @ mentions and the Records screen's choices), where it goes,
     /// and earlier turns held back after a switch of provider.
@@ -1382,6 +1434,12 @@ struct QuickCommandPalette: View {
                                   icon: "folder", group: "Folders",
                                   primary: PaletteAction(title: "Add", symbol: "plus.circle", effect: .stay) { ai.addFolder(URL(fileURLWithPath: folder)) }))
         }
+        if !ai.lastScope.isEmpty || ai.lastScope.attachesClipboard {
+            var reuse = screenRow("airec.reuse", "Use the Last Question's Records", ai.lastScope.summary, icon: "arrow.uturn.backward",
+                                  group: "Again", primary: PaletteAction(title: "Add", effect: .stay) { ai.reuseLastScope() })
+            reuse.shortcut = "⌘⇧M"
+            rows.insert(reuse, at: 0)
+        }
         rows.append(screenRow("airec.choosefolder", "Choose a Folder…", "@files · only what is inside it may be read", icon: "folder.badge.plus",
                               group: "Folders", primary: PaletteAction(title: "Choose…", effect: .stay) { chooseAIFolder() }))
         if !pending.isEmpty || pending.attachesClipboard {
@@ -1420,8 +1478,15 @@ struct QuickCommandPalette: View {
                     ? PaletteAction(title: "Continue in Terminal", symbol: "terminal", effect: .stay) { continueChat() }
                     : PaletteAction(title: "Open in AI Chat", symbol: "bubble.left.and.bubble.right", effect: .stay) { continueChat() },
                 PaletteAction(title: "Choose Model…", symbol: "cpu", effect: .push(.aiModels)) {},
+                // 7.3: the scope and held turns, also from ⌘K during a conversation.
+                PaletteAction(title: "Choose Records…", symbol: "tray.full", effect: .push(.aiRecords)) {},
                 PaletteAction(title: "New Chat", symbol: "square.and.pencil", effect: .stay) { ai.newChat() },
             ]
+            if ai.heldTurns > 0 {
+                secondaries.insert(PaletteAction(title: "Include \(ai.heldTurns) Earlier Turns", symbol: "arrow.up.forward", effect: .stay) {
+                    ai.includeEarlierTurns()
+                }, at: 0)
+            }
             if ai.isRunning {
                 secondaries.insert(PaletteAction(title: "Stop", symbol: "stop.circle", effect: .stay) { ai.cancel() }, at: 0)
             }
@@ -2218,6 +2283,10 @@ struct QuickCommandPalette: View {
                     resultList(items, selected: selected)
                 } else {
                     if let notice = screens.notice { noticeLine(notice) }
+                    // 7.3: what the next question reads, and earlier turns held
+                    // back, stay in view during a conversation.
+                    aiScopeBar
+                    AOMDivider()
                     AOMAITranscriptView(chat: ai) { copyToClipboard($0, announce: "Answer") }
                 }
             } else {

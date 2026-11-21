@@ -655,9 +655,25 @@ class KeyboardMonitor: ObservableObject {
             let names = SnippetTemplate.argumentNames(tokens)
             let front = NSWorkspace.shared.frontmostApplication
             if !names.isEmpty {
+                // The last key goes through, so the whole abbreviation is in the buffer.
+                let typed = MainActor.assumeIsolated { engine.typedTail(spec.abbreviation.count) }
                 DispatchQueue.main.async {
                     engine.reset()
-                    PaletteSnippetForm.askFromTyping(snippetID: trigger.id, names: names, erase: spec.abbreviation.count, target: front)
+                    PaletteSnippetForm.askFromTyping(snippetID: trigger.id, names: names, erase: spec.abbreviation.count, target: front, typed: typed)
+                }
+                return false
+            }
+            // Rendered and checked before anything is erased: a snippet that
+            // can't go in (too large, no Accessibility, the lock screen)
+            // leaves the abbreviation as typed (7.3 review).
+            let (render, refusal, typed) = MainActor.assumeIsolated { () -> (SnippetRender, String?, String) in
+                let render = SnippetTemplate.render(tokens)
+                return (render, SnippetInserter.refusal(for: render), engine.typedTail(spec.abbreviation.count))
+            }
+            if let refusal {
+                DispatchQueue.main.async {
+                    engine.reset()
+                    GestureHUD.shared.show(title: "Snippet Not Expanded", detail: refusal)
                 }
                 return false
             }
@@ -665,8 +681,10 @@ class KeyboardMonitor: ObservableObject {
                 engine.erase(match.backspaces)
                 DispatchQueue.main.async {
                     engine.reset()
-                    SnippetInserter.insert(SnippetTemplate.render(tokens), into: front) { _, note in
-                        if let note { GestureHUD.shared.show(title: "Snippet", detail: note) }
+                    SnippetInserter.insert(render, into: front) { inserted, note in
+                        // Typing it failed after the erase: the abbreviation comes back.
+                        if !inserted, !typed.isEmpty { ActionExecutor.typeReplacementText(typed) }
+                        if let note { GestureHUD.shared.show(title: inserted ? "Snippet" : "Snippet Not Expanded", detail: note) }
                     }
                 }
             }
