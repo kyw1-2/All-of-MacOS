@@ -943,7 +943,7 @@ final class SystemToolsModel: ObservableObject {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.reopen(app, bundle: bundle, name: name, triesLeft: triesLeft - 1) }
         } else {
             running.remove(.relaunchApp)
-            fail(.relaunchApp, "\(name) Didn't Quit", "\(name) is still open, probably asking about unsaved work. Nothing was reopened.")
+            fail(.relaunchApp, "\(name) Didn't Quit", "\(name) is still open. Answer its save dialog if it shows one, then try again. Nothing was reopened.")
         }
     }
 

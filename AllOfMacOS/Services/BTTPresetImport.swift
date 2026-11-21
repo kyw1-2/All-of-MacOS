@@ -143,7 +143,7 @@ enum BTTPresetImport {
         } else if let object = root as? [String: Any], object["BTTTriggerClass"] != nil {
             candidates = [Candidate(value: object, scope: flatScope(object))]
         } else {
-            throw ImportError.invalid("Expected a BTT trigger, a list of copied BTT triggers, or a plain .bttpreset file. Other BTT archives and wrappers are not supported.")
+            throw ImportError.invalid("Import a BTT trigger, a list of copied BTT triggers, or a plain .bttpreset file.")
         }
         guard !candidates.isEmpty, candidates.count <= maximumTriggers else {
             throw ImportError.invalid("Import between 1 and \(maximumTriggers) BTT triggers at a time.")

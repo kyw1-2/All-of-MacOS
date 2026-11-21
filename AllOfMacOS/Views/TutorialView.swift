@@ -23,7 +23,6 @@ struct TutorialOverlayView: View {
     @State private var page = 0
     @State private var statuses: [AOMPermission: AOMPermissionStatus] = [:]
     @AppStorage("showMenuBarIcon") private var showMenuBarIcon = true
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private static let pageCount = 3
     /// A feature's module squircle: the Workspace tile size (design-336 b.7).

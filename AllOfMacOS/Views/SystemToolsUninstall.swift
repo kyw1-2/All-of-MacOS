@@ -65,7 +65,7 @@ extension SystemToolsModel {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.waitForQuit(apps, app: app, name: name, triesLeft: triesLeft - 1) }
         } else {
             running.remove(.uninstall)
-            fail(.uninstall, "\(name) Didn't Quit", "\(name) is still open, probably asking about unsaved work. Nothing was moved.")
+            fail(.uninstall, "\(name) Didn't Quit", "\(name) is still open. Answer its save dialog if it shows one, then try again. Nothing was moved.")
         }
     }
 

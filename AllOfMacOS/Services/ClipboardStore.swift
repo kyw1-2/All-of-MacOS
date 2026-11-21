@@ -44,7 +44,9 @@ final class ClipboardStore: ObservableObject {
         /// One test for capture, suggestions, the paste log and MCP.
         func excludes(_ bundleID: String?) -> Bool {
             guard let id = bundleID?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), !id.isEmpty else { return false }
-            return excludedBundleIDs.contains(id)
+            // 7.3.2 (agy NEW-02): compared in place; the filter loop called this per
+            // entry and built the whole Set each time.
+            return ignoredApps.contains { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == id }
         }
 
         var bounded: Settings {

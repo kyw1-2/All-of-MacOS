@@ -176,7 +176,7 @@ enum DisplayMenu {
             menu.addItem(option)
         }
         item.submenu = menu
-        item.toolTip = "Switches the monitor input, possibly disconnecting this Mac. Some DDC monitors accept writes without reporting their current input."
+        item.toolTip = "Switches the monitor to another input; this Mac's picture returns when you switch back. A monitor that doesn't report its input shows no checkmark."
         return item
     }
 

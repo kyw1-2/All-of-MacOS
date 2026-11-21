@@ -480,10 +480,13 @@ enum AOMAILocalTools {
         return (start > 0 ? "…" : "") + readable(String(characters[start..<end])) + (end < characters.count ? "…" : "")
     }
 
+    /// Compiled once (7.3.2, agy NEW-04).
+    private static let unicodeEscapes = try? NSRegularExpression(pattern: #"(?:\\u[0-9a-fA-F]{4})+"#)
+
     /// Codex logs escape Korean as \uXXXX; this turns it back into text.
     static func unescapeUnicode(_ text: String) -> String {
         guard text.contains("\\u") else { return text }
-        guard let pattern = try? NSRegularExpression(pattern: #"(?:\\u[0-9a-fA-F]{4})+"#) else { return text }
+        guard let pattern = unicodeEscapes else { return text }
         var result = text
         // Runs of escapes decode together, so surrogate pairs (emoji) come back whole.
         for match in pattern.matches(in: text, range: NSRange(text.startIndex..., in: text)).reversed() {

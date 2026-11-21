@@ -444,9 +444,4 @@ final class SceneRunner: ObservableObject {
         }
     }
 
-    /// The output in use now, as a scene target.
-    static func currentAudioTarget() -> SceneAudioTarget? {
-        guard let uid = AudioOutputRestore.defaultOutputUID(), let device = AudioOutputService.devices().first(where: { $0.uid == uid }) else { return nil }
-        return SceneAudioTarget(uid: uid, name: device.name, transport: SceneAudio.transport(of: device.id))
-    }
 }

@@ -261,7 +261,7 @@ struct AOMAIRecordScope: Equatable, Codable {
         // too). Only recognised mentions are cut out; everything else —
         // line breaks, indentation, code — stays exactly as written
         // (7.3 review, Codex probe: "explain:\n\n    return  a" lost both).
-        guard let pattern = try? NSRegularExpression(pattern: #"(?:^|(?<=\s))@\S+"#) else { return (text, scope, unknown) }
+        guard let pattern = mentionPattern else { return (text, scope, unknown) }
         let ns = text as NSString
         var removals: [NSRange] = []
         for match in pattern.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
@@ -308,6 +308,9 @@ struct AOMAIRecordScope: Equatable, Codable {
         if !removals.isEmpty { question = String(question.drop { ",;:".contains($0) || $0 == " " }) }
         return (question, scope, unknown)
     }
+
+    /// Compiled once (7.3.2, agy NEW-03); `parse` runs as the question is typed.
+    private static let mentionPattern = try? NSRegularExpression(pattern: #"(?:^|(?<=\s))@\S+"#)
 
     /// "@files:~/Projects", "@~/Projects", "@/Users/me/x" → the folder (it must exist).
     static func folderArgument(_ token: String, home: URL) -> String? {

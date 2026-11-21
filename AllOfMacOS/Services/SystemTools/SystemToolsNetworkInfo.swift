@@ -105,14 +105,6 @@ extension NetworkTools {
         }
     }
 
-    /// A host the user typed: letters, digits, dots, hyphens and colons
-    /// (IPv6) only, so it can't be read as a ping option.
-    static func isValidHost(_ text: String) -> Bool {
-        let trimmed = text.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty, trimmed.count <= 253, !trimmed.hasPrefix("-") else { return false }
-        return trimmed.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || ".-:".contains($0)) }
-    }
-
     /// Five pings, at most 8 seconds in total.
     static func pingArguments(host: String) -> [String] { ["-c", "5", "-t", "8", "-q", host] }
 
@@ -139,7 +131,14 @@ extension NetworkTools {
     }
 
     static func ping(host: String) throws -> PingResult {
-        let output = try SystemToolsCommand.run("/sbin/ping", pingArguments(host: host))
+        // 7.3.2 (agy NEW-08): a host is letters, digits, dots, hyphens and
+        // colons only, and never starts with "-", so it can't be read as an option.
+        let trimmed = host.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty, trimmed.count <= 253, !trimmed.hasPrefix("-"),
+              trimmed.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || ".-:".contains($0)) }) else {
+            throw SystemToolError.commandFailed(command: "ping", status: 64, message: "“\(host)” isn't a host name or address")
+        }
+        let output = try SystemToolsCommand.run("/sbin/ping", pingArguments(host: trimmed))
         // ping exits 2 when nothing answered; that is a result, not a failure.
         guard let result = parsePing(output.stdout) else {
             throw SystemToolError.commandFailed(command: "ping", status: output.status,

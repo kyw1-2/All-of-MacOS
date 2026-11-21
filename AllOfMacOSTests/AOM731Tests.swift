@@ -35,3 +35,17 @@ extension AOM731Tests {
         XCTAssertFalse(detail.contains("Ulanzi") || detail.contains("sun") || detail.contains("browser"))
     }
 }
+
+extension AOM731Tests {
+    /// 7.3.2 (agy NEW-08): a host that starts with "-" or holds other
+    /// characters is refused before /sbin/ping runs.
+    func testPingRefusesOptionLikeHosts() {
+        XCTAssertThrowsError(try NetworkTools.ping(host: "-f"))
+        XCTAssertThrowsError(try NetworkTools.ping(host: "example.com; ls"))
+    }
+
+    /// 7.3.2 (agy NEW-03): the mention pattern is compiled once and still parses.
+    func testMentionParsingStillWorks() {
+        XCTAssertEqual(AOMAIRecordScope.parse("@wiki hi").scope.sources, [.wiki])
+    }
+}

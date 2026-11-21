@@ -174,38 +174,6 @@ final class HardwareCareModel: ObservableObject {
         } catch { message = error.localizedDescription; refreshHelperNow() }
     }
 
-    func setBattery(_ mode: BatteryCareMode) {
-        guard !PresetManager.isUIPreview, !PresetManager.isRunningTests else { return }
-        guard !busy else { return }
-        busy = true
-        message = ""
-        worker.async {
-            if !self.nativeChecked { self.native = NativeChargeLimit(); self.nativeChecked = true }
-            var failure: String?
-            var confirmedNative = false
-            do {
-                if let native = self.native {
-                    let old = try native.state()
-                    if mode == .limit80 {
-                        _ = try native.limit80(true)
-                        confirmedNative = true
-                    } else if old.enabled { _ = try native.limit80(false) }
-                }
-            } catch { failure = error.localizedDescription }
-            DispatchQueue.main.async {
-                guard !self.terminating else { return }
-                if let failure { self.message = failure; self.busy = false; return }
-                self.battery = confirmedNative ? .limit80 : .off
-                self.helperBattery = .off
-                let legacy = confirmedNative ? BatteryCareMode.off : mode
-                self.configureHelper(battery: legacy, fan: self.fan) { success in
-                    if success { self.battery = mode }
-                    self.sampleNow()
-                }
-            }
-        }
-    }
-
     func setFan(_ preset: FanPreset) {
         guard !PresetManager.isUIPreview, !PresetManager.isRunningTests else { return }
         guard !busy else { return }

@@ -133,7 +133,6 @@ private struct AOMAIProviderSettingsRow: View {
     let refresh: Int
     @State private var key = ""
     @State private var baseURL = ""
-    @State private var editingKey = false
     @State private var fetching = false
     @State private var message: String?
     @State private var expanded = false

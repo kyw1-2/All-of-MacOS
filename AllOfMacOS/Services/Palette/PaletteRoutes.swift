@@ -423,7 +423,7 @@ final class PaletteUninstallFlow: ObservableObject {
         if apps.allSatisfy(\.isTerminated) { scan(); return }
         guard triesLeft > 0 else {
             phase = .failed(title: "\(name) Didn't Quit",
-                            detail: "\(name) is still open, probably asking about unsaved work. Nothing was moved.")
+                            detail: "\(name) is still open. Answer its save dialog if it shows one, then try again. Nothing was moved.")
             return
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in

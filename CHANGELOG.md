@@ -1,3 +1,23 @@
+## [7.3.2] - 2026-11-21
+
+Code clean-up with the anti-defensive-writing rules (say what is true and what to do; keep the limits a user needs) and agy's review of 7.3.1, whose ten new candidates were checked against the code.
+
+### Clearer messages
+- An app that didn't quit for Uninstall, Relaunch or Kill Apps now says what to do: answer its save dialog, then try again (it said the app was "probably asking about unsaved work").
+- The monitor-input menu says that this Mac's picture returns when you switch back, and why a monitor may show no checkmark.
+- BTT import names the files it takes instead of listing what it doesn't.
+- Code comments that only hedged ("deliberately paranoid", "best effort", "slow sanity check", what the Studio renderer "does not attempt") now state what the code does; comments that explain why a guard exists are unchanged.
+
+### Removed (no callers)
+- About 140 lines: the last pieces of the pre-7.0 menu bar panel (`header`, `urgent`, `urgentRow`), a 32-line battery-mode setter replaced in 7.0, unused helpers (`squircle`, a ping host check, a scene audio helper) and unused view state.
+
+### Faster
+- The Ask AI mention pattern, the Unicode-escape pattern for AI record results and the AutoEQ import patterns are compiled once instead of on every call (AutoEQ compiled up to four per line).
+- The clipboard's excluded-app check no longer builds a set for every entry it filters.
+
+### Fixed
+- `ping(host:)` refuses a host that starts with "-" or holds characters other than letters, digits, dots, hyphens and colons, so it can't be read as an option.
+
 ## [7.3.1] - 2026-11-21
 
 A code-hygiene and audio audit of 7.3 (teamwork_worker_m1, 71 items), taken selectively after a second opinion: every item was checked in the code first; the ones that would make audio worse or only reword old notes were left.

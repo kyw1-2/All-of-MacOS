@@ -9,7 +9,7 @@ import CoreGraphics
 /// abbreviation is erased with synthesized backspaces before the replacement
 /// is typed or the trigger's actions fire.
 ///
-/// The buffer is deliberately paranoid: it resets on app switches, gaps
+/// The buffer resets on app switches, gaps
 /// longer than two seconds, Secure Event Input (never expand into a password
 /// field), our own typing sessions, and any moment an AOM window is key.
 @MainActor

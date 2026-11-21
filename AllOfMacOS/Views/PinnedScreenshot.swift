@@ -479,7 +479,6 @@ private struct PinnedScreenshotView: View {
     let onLock: () -> Void
     @ObservedObject var interaction: PinnedInteractionState
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovering = false
 
     var body: some View {

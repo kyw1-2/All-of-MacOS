@@ -2,8 +2,8 @@ import Foundation
 import Darwin
 
 /// Watches the target inode and its parent. The parent event re-arms a replaced
-/// inode. Polling is a slow sanity check when both sources are armed, and a
-/// one-second retry while a file or parent watch is unavailable.
+/// inode. Polling checks every 30 s when both sources are armed and every
+/// second while a file or parent watch is unavailable.
 /// All callbacks run on main, and stop cancels every source before release.
 final class ResilientFileWatcher {
     private let path: String

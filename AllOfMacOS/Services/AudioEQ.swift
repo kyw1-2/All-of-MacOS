@@ -429,8 +429,16 @@ enum AutoEQImport {
         return Profile(preamp: preamp, filters: filters, skipped: skipped)
     }
 
+    /// 7.3.2 (agy NEW-05): the four patterns are compiled once, not up to
+    /// four times per line of the profile.
+    private static let compiled = NSCache<NSString, NSRegularExpression>()
+
     private static func capture(_ pattern: String, in line: String) -> [Double] {
-        guard let expression = try? NSRegularExpression(pattern: pattern),
+        let expression: NSRegularExpression
+        if let cached = compiled.object(forKey: pattern as NSString) { expression = cached }
+        else if let made = try? NSRegularExpression(pattern: pattern) { compiled.setObject(made, forKey: pattern as NSString); expression = made }
+        else { return [] }
+        guard
               let match = expression.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
               match.numberOfRanges > 1, let range = Range(match.range(at: 1), in: line) else { return [] }
         return Double(line[range]).map { [$0] } ?? []

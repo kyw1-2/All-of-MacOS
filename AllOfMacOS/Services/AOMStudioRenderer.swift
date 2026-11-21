@@ -271,8 +271,8 @@ struct AOMStudioSettings: Codable, Equatable {
     }
 }
 
-/// Pure Core Image compositor for the captured video. It does not attempt to
-/// recover cursor events baked into an MP4 or claim CleanShot's Smart Zoom AI.
+/// Pure Core Image compositor for the captured video: background, frame,
+/// cursor overlay from the recorded cursor track, and timeline zooms.
 enum AOMStudioRenderer {
     typealias Focus = AOMStudioTimeline.Focus
 

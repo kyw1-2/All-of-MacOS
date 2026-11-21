@@ -238,9 +238,6 @@ enum AOMRadius {
     /// Tiles and thumbnails inside a card.
     static let tile = well
 
-    /// Module and status squircles: the app-icon proportion (22.5% of the side).
-    static func squircle(_ size: CGFloat) -> CGFloat { (size * 0.225).rounded() }
-
     /// Inner radius that stays concentric inside `outer` at `inset`, never below `control`.
     static func concentric(_ outer: CGFloat, inset: CGFloat) -> CGFloat { max(control, outer - inset) }
 }

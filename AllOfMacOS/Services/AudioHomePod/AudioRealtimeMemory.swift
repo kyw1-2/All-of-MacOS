@@ -13,7 +13,7 @@ import Darwin
 /// heard as a click. Wired pages stay resident, so the callbacks never wait
 /// for memory.
 ///
-/// Wiring is best effort and costs a few megabytes (about 1.3 MB for the
+/// Wiring costs a few megabytes (about 1.3 MB for the
 /// AirPlay bridge, 0.75 MB per tapped app, 0.26 MB for the shared resampling
 /// kernel). A refusal (the wired-memory limit) leaves the buffer as it was and
 /// is counted in audio-health.json (`wireFailures`).

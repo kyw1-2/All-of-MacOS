@@ -489,8 +489,8 @@ enum DisplayGeometry {
 }
 
 /// Menu-bar items hosted by Control Center / SystemUIServer, pressed through
-/// Accessibility. Their identifiers are not documented API, so each lookup is
-/// best-effort and reports failure rather than guessing.
+/// Accessibility. Their identifiers are undocumented, so a lookup that finds
+/// nothing reports failure.
 enum MenuBarExtras {
     enum Item {
         case notificationCenter, controlCenter

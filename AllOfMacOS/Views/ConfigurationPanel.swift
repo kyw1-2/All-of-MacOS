@@ -477,7 +477,6 @@ struct ActionConfigView: View {
     @State private var applicationName: String
     @State private var recordedShortcut: KeyboardShortcut?
     @State private var showsLabel: Bool
-    @EnvironmentObject private var state: AppState
 
     init(keyboardMonitor: KeyboardMonitor, trigger: Trigger, action: TriggerAction) {
         self.keyboardMonitor = keyboardMonitor

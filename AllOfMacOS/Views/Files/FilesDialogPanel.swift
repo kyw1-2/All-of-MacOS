@@ -105,7 +105,6 @@ final class FilesDialogPanelController {
 struct FilesDialogPanelView: View {
     static let rowHeight: CGFloat = 36
     @ObservedObject var model: FilesDialogPanelModel
-    @Environment(\.colorSchemeContrast) private var contrast
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
