@@ -1084,7 +1084,7 @@ struct QuickCommandPalette: View {
                 case .tool(let tool) where tool.takesQuery: items = toolItems(tool)
                 case .emoji: items = emojiItems()
                 case .contacts: items = contactItems()
-                case .hotkey, .newSnippet, .scriptArgument, .sendTo: items = routeItems(route)
+                case .hotkey, .newSnippet, .scriptArgument: items = routeItems(route)
                 default: items = PaletteSearch.filtered(routeItems(route), query: query)
                 }
             } else {
