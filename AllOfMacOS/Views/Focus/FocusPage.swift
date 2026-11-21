@@ -31,6 +31,12 @@ struct FocusPage: View {
                 FocusSessionHeader(session: session, ticker: session.ticker, settings: settings)
                 FocusLengthPicker(session: session, settings: settings)
             }
+            // 7.2.3 (audit B08): a Focus file that couldn't be read is kept, never replaced.
+            ForEach([session.log.problem, lists.problem, activity.problem].compactMap { $0 }, id: \.file) { problem in
+                AOMNotice(problem.blocksSaving ? .error : .warning, problem.title, detail: problem.detail) {
+                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([problem.file]) }
+                }
+            }
             AOMTipCard(id: "focus.memory", symbol: "memorychip", title: "Free memory on this Mac",
                        message: "List apps you leave open, like chat and mail. Focus hides or quits them once they've been idle, and quits the idlest first when memory runs low.")
             FocusColumns {

@@ -28,17 +28,21 @@ final class FocusListsStore: ObservableObject {
     @Published var lists: FocusLists {
         didSet {
             guard lists != oldValue else { return }
-            FocusStorage.save(lists, named: Self.fileName, in: directory)
+            if problem?.blocksSaving != true { FocusStorage.save(lists, named: Self.fileName, in: directory) }
             onChange?(oldValue, lists)
         }
     }
     let directory: URL
     /// Called after every change with the old and new lists.
     var onChange: ((FocusLists, FocusLists) -> Void)?
+    /// lists.json couldn't be read (7.2.3, audit B08).
+    let problem: FocusDataProblem?
 
     init(directory: URL) {
         self.directory = directory
-        lists = FocusStorage.load(FocusLists.self, named: Self.fileName, in: directory) ?? FocusLists()
+        let loaded = FocusStorage.loadChecked(FocusLists.self, named: Self.fileName, in: directory)
+        problem = loaded.problem("Your Focus app lists")
+        lists = loaded.value ?? FocusLists()
     }
 
     // MARK: Distracting apps

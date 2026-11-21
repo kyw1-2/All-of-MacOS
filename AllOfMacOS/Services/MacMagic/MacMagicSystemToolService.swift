@@ -385,14 +385,42 @@ final class MacMagicSystemToolService {
     }
 
     /// Converts a video to H.264 MP4 (or another preset) via AVAssetExportSession.
+    ///
+    /// 7.2.3 (audit B06): `export()` never throws, so a failed export was
+    /// reported as converted. `export(to:as:)` throws on failure and
+    /// cancellation; the export goes to a temporary file first, is checked
+    /// for a video track, and only then takes the destination's place, so a
+    /// failed or partial export leaves nothing behind (and an existing file
+    /// the save panel agreed to replace is replaced, not left as it was).
     func convertVideo(url: URL, to destination: URL, preset: String = AVAssetExportPresetHighestQuality) async throws {
         let asset = AVURLAsset(url: url)
         guard let session = AVAssetExportSession(asset: asset, presetName: preset) else {
             throw CocoaError(.fileReadUnknown)
         }
-        session.outputURL = destination
-        session.outputFileType = .mp4
-        try await session.export()
+        let files = FileManager.default
+        let staging = try files.url(for: .itemReplacementDirectory, in: .userDomainMask,
+                                    appropriateFor: destination.deletingLastPathComponent(), create: true)
+        defer { try? files.removeItem(at: staging) }
+        let temporary = staging.appendingPathComponent(destination.lastPathComponent)
+        try await session.export(to: temporary, as: .mp4)
+        try await Self.checkConvertedVideo(temporary)
+        if files.fileExists(atPath: destination.path) {
+            _ = try files.replaceItemAt(destination, withItemAt: temporary)
+        } else {
+            try files.moveItem(at: temporary, to: destination)
+        }
+    }
+
+    /// A finished export is a non-empty file with a video track.
+    static func checkConvertedVideo(_ url: URL) async throws {
+        let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        guard size > 0 else {
+            throw CocoaError(.fileWriteUnknown, userInfo: [NSLocalizedDescriptionKey: "The export finished without writing a video."])
+        }
+        let tracks = try await AVURLAsset(url: url).loadTracks(withMediaType: .video)
+        guard !tracks.isEmpty else {
+            throw CocoaError(.fileWriteUnknown, userInfo: [NSLocalizedDescriptionKey: "The exported file has no video in it."])
+        }
     }
 
     // MARK: - System Management

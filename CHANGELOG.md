@@ -1,3 +1,16 @@
+## [7.2.3] - 2026-11-21
+
+The P1/P2 bugs from the integrated audit of 7.2.1 that 7.2.2 left out (B01, B06, B08, B09, B10), each reproduced against the 7.2.2 code first. Notes: `docs/design-7.2-launcher.md` § 7.2.3.
+
+### Files
+- **Shelf Undo moves only the file it moved (B01).** Undo kept just the two paths, so after you put the moved file away and another file took its name, Undo moved that other file back. Move To and the Trash now remember the file's volume and inode, and Undo leaves a different file alone and says so. A file edited in place still comes back. The Files page's Trash Undo gets the same check.
+- **A Shelf action that partly fails keeps its Undo (B10).** When one file of several couldn't move, the message named it and the Undo for the ones that did move was gone. The message now says "Moved 2 of 3 items to Desktop. Couldn't move “c” because …" and Undo takes the two back. When Undo can't, it says why and where the file still is, and the shelf keeps pointing at it. Undo of Remove puts each received file back from the Trash on its own: one whose old place was taken stays in the Trash and its shelf item shows it there, instead of showing whatever took its name.
+- **Convert Video no longer reports a failed export as done (B06).** `AVAssetExportSession.export()` never throws, so an export that wrote nothing (an unwritable folder, an existing file) showed "Video converted". It now uses `export(to:as:)`, which throws on failure and cancel, writes to a temporary file, checks it has a video track, and only then takes the destination's place. A file the save panel agreed to replace is replaced; before, the export failed on it and the old file stayed.
+
+### Records
+- **An unreadable focus history is kept (B08).** A `sessions.json` that couldn't be decoded loaded as an empty log and was replaced by the next session. As with Folder Rules' `rules.json`, it is now moved aside as `sessions.unreadable-<date>.json` before anything is saved, and a file that can't be read at all (permissions) is never saved over. The Focus page shows a notice with Show in Finder. Focus's app lists and activity log get the same handling.
+- **A deleted AI chat stays deleted (B09).** Every save and delete wrote the whole chat list from the concurrent global queue, so a big save asked for first could finish last and bring back a chat you had just deleted. `chats.json` now has one serial writer; a write already superseded when its turn comes is skipped, so the newest list is always the last one written.
+
 ## [7.2.2] - 2026-11-21
 
 Requests from the user after 7.2.1, plus the integrated audit of 7.2.1 (`AOM-7.2.1-통합감사보고서-2026-11-21.pdf`). What was taken and why: `docs/design-7.2-launcher.md` § 7.2.2.

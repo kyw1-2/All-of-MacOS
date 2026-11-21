@@ -78,27 +78,36 @@ final class FocusActivityStore: ObservableObject {
 
     @Published private(set) var items: [FocusActivity] = []
     let directory: URL
+    /// activity.json couldn't be read (7.2.3, audit B08).
+    let problem: FocusDataProblem?
 
     init(directory: URL) {
         self.directory = directory
-        items = FocusStorage.load([FocusActivity].self, named: Self.fileName, in: directory) ?? []
+        let loaded = FocusStorage.loadChecked([FocusActivity].self, named: Self.fileName, in: directory)
+        problem = loaded.problem("The Focus activity log")
+        items = loaded.value ?? []
     }
 
     /// Newest first.
     func add(_ activity: FocusActivity) {
         items.insert(activity, at: 0)
         if items.count > Self.limit { items.removeLast(items.count - Self.limit) }
-        FocusStorage.save(items, named: Self.fileName, in: directory)
+        save()
     }
 
     func clear() {
         items.removeAll()
-        FocusStorage.save(items, named: Self.fileName, in: directory)
+        save()
     }
 
     func replace(with items: [FocusActivity]) {
         self.items = items.sorted { $0.date > $1.date }
-        FocusStorage.save(self.items, named: Self.fileName, in: directory)
+        save()
+    }
+
+    private func save() {
+        guard problem?.blocksSaving != true else { return }
+        FocusStorage.save(items, named: Self.fileName, in: directory)
     }
 
     /// Memory freed by quits that finished today.

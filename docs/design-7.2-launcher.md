@@ -130,7 +130,7 @@ replaced by the Hyper key's Caps Lock → F18) and puts them back when AOM lets 
 holds AOM's pair.
 
 Not done in 7.2.2 (a later pass): B01, B06, B08, B09, B10 (P1/P2 outside launcher and AI), B14–B22, B25–B26, E01–E08,
-N04–N09.
+N04–N09. B01, B06 and B08–B10 went into 7.2.3 (below).
 
 ### Verification
 
@@ -143,3 +143,46 @@ N04–N09.
 - Previews: System Tools without the removed tiles and the sidebar without Statistics. The glass needs the desktop
   behind the window, which AOM's own snapshot can't show; the code path (no stored setting → on → behind-window
   material, 62 % page tint) was checked, the look itself only on the installed app.
+
+## 7.2.3 — the audit's remaining P1/P2 file and record bugs
+
+The five items 7.2.2 left (B01, B06, B08, B09, B10), each read in the report and checked against the 7.2.2 code before
+changing it. B01, B06 and B08 were reproduced on the 7.2.2 tree (adapted tests: Undo moved the other file; Convert
+Video returned without an error after writing nothing, and after leaving an existing file as it was; the damaged
+`sessions.json` was replaced with no copy kept). B09 and B10 can't be driven from a test on 7.2.2 (the chat history
+has no file under tests, `runTransfer` was private) and were confirmed in the code, as the report also marks them.
+
+- **B01 Shelf Undo** (`FilesTransfer.Move.identity`). Move To and the Trash record the device and inode of the file at
+  its new place (`FolderRulesSafety.identity`, the check Folder Rules has made since 6.4.0). `moveBack` refuses a
+  missing file, a different file under the name, and a taken old place, in that order. An in-place edit keeps the
+  inode and still comes back; an app that saves by replacing the file makes a new inode, and Undo then refuses — the
+  safe side, within the toast's few seconds.
+- **B10 partial Shelf actions.** The Undo closure is set whenever something moved, even with failures; the message
+  reads "Moved 2 of 3 items to X. Couldn't move “c” … because …". Undo matches results to shelf items by id
+  (`ShelfMove`), not by path. Undo of Remove (`itemsToRestore`): a received file that came back returns as it was, one
+  whose old place was taken keeps its item pointing at the file in the Trash, one that is gone stays off.
+- **B06 Convert Video.** `export(to:as:)` (back-deployed to macOS 10.15 in the SDK) throws on `.failed` and
+  `.cancelled`; the deprecated `export()` returns either way, hence the warning. The export goes to an
+  `itemReplacementDirectory` on the destination's volume, must be non-empty with a video track, and then replaces
+  (`replaceItemAt`) or moves into the destination. The save panel's Replace now works: AVFoundation won't write over a
+  file, so before it failed and said "converted".
+- **B08 Focus files** (`FocusStorage.loadChecked`). Missing starts fresh; undecodable is moved to
+  `<name>.unreadable-<date>.json` first; unreadable (permissions) or not movable blocks saving. `FocusLogStore`,
+  `FocusListsStore` and `FocusActivityStore` use it, and the Focus page shows a notice with Show in Finder, as Folder
+  Rules does for `rules.json`. The timer state file still starts fresh (it holds no history).
+- **B09 AI chats** (`AOMLatestWriter`). One serial queue per file and a generation counter: each write takes the next
+  number; when its turn comes and a newer one exists, it is skipped; encoding happens on the queue. The newest list is
+  always written last. Not changed: deleting the chat that is open in AI Chat and then starting a new one saves it
+  again (the open conversation is saved on New Chat); that is a separate follow-up.
+
+### Verification
+
+- `AOM723Tests` (14): B01 a different file under the name is left alone, an in-place edit still comes back; B10 the
+  partial move keeps Undo and moves the one file back, a blocked Undo says where the file is and the shelf keeps it,
+  the messages, Remove's per-item restore from a stand-in Trash; B06 an unwritable folder throws and writes nothing, an
+  existing file is replaced with a real MP4 (a ten-frame H.264 movie made with `AVAssetWriter`), a non-video throws;
+  B08 a damaged log is set aside and survives the next save, an unreadable one is never saved over, lists and activity
+  too; B09 a save held mid-write while a delete and a newer save queue behind it ends with the newest list, and the
+  superseded write is skipped.
+- Full suite: 404 tests (390 + 14), 0 failures, 17 skipped. On the 7.2.2 tree the adapted B01, B06 (two) and B08 tests
+  showed each bug.

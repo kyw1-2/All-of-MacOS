@@ -114,7 +114,14 @@ struct FilesTransfer: Equatable {
     var done: [Move] = []
     var failures: [Failure] = []
 
-    struct Move: Equatable { var from: URL; var to: URL }
+    /// `identity` (device and inode) is the file's at `to` when the move
+    /// finished. Undo checks it and leaves a different file that took the
+    /// name since alone (7.2.3, audit B01). Nil: checked by path only.
+    struct Move: Equatable {
+        var from: URL
+        var to: URL
+        var identity: String? = nil
+    }
     struct Failure: Equatable { var url: URL; var reason: String }
 }
 
@@ -141,7 +148,7 @@ enum FilesFileActions {
                 do {
                     if move { try fileManager.moveItem(at: source, to: destination) }
                     else { try fileManager.copyItem(at: source, to: destination) }
-                    result.done.append(.init(from: source, to: destination))
+                    result.done.append(.init(from: source, to: destination, identity: FolderRulesSafety.identity(destination)))
                 } catch {
                     result.failures.append(.init(url: url, reason: reason(error)))
                 }
@@ -150,19 +157,30 @@ enum FilesFileActions {
         }.value
     }
 
-    /// Moves files back to where they came from (Undo Move To). Only when the
-    /// old place is still free.
+    /// Moves files back to where they came from (Undo Move To, Put Back).
+    /// Only the file that was moved, and only while its old place is free:
+    /// a different file that took its name since stays where it is
+    /// (7.2.3, audit B01; Folder Rules has checked the same since 6.4.0).
     static func moveBack(_ moves: [FilesTransfer.Move]) async -> FilesTransfer {
         await Task.detached(priority: .userInitiated) {
             var result = FilesTransfer()
             for move in moves where move.from != move.to {
-                guard !FileManager.default.fileExists(atPath: move.from.path) else {
+                let folder = FileManager.default.displayName(atPath: move.to.deletingLastPathComponent().path)
+                guard FolderRulesSafety.exists(move.to.path) else {
+                    result.failures.append(.init(url: move.to, reason: "it's no longer in \(folder)"))
+                    continue
+                }
+                if let identity = move.identity, FolderRulesSafety.identity(move.to) != identity {
+                    result.failures.append(.init(url: move.to, reason: "the “\(move.to.lastPathComponent)” in \(folder) is a different file now, so it was left alone"))
+                    continue
+                }
+                guard !FolderRulesSafety.exists(move.from.path) else {
                     result.failures.append(.init(url: move.to, reason: "a file named “\(move.from.lastPathComponent)” is back in its old folder"))
                     continue
                 }
                 do {
                     try FileManager.default.moveItem(at: move.to, to: move.from)
-                    result.done.append(.init(from: move.to, to: move.from))
+                    result.done.append(.init(from: move.to, to: move.from, identity: FolderRulesSafety.identity(move.from)))
                 } catch {
                     result.failures.append(.init(url: move.to, reason: reason(error)))
                 }
@@ -211,7 +229,10 @@ enum FilesFileActions {
                 var resulting: NSURL?
                 do {
                     try FileManager.default.trashItem(at: url, resultingItemURL: &resulting)
-                    if let resulting { trashed.append(.init(from: url, to: resulting as URL)) }
+                    if let resulting {
+                        let place = resulting as URL
+                        trashed.append(.init(from: url, to: place, identity: FolderRulesSafety.identity(place)))
+                    }
                 } catch {
                     failures.append(.init(url: url, reason: reason(error)))
                 }

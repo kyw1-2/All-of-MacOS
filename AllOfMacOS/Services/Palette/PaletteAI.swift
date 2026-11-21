@@ -744,13 +744,19 @@ final class AOMAIChatHistory: ObservableObject {
     }
 
     @Published private(set) var records: [Record] = []
-    private let url: URL? = {
+    let writer: AOMLatestWriter?
+
+    static var defaultURL: URL? {
         guard !PresetManager.isRunningTests, !PresetManager.isUIPreview else { return nil }
         return FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/AllOfMacOS/AI/chats.json")
-    }()
+    }
 
-    init() {
+    convenience init() { self.init(url: Self.defaultURL) }
+
+    /// `url` nil keeps the history in memory (tests, previews).
+    init(url: URL?) {
+        writer = url.map { AOMLatestWriter(url: $0) }
         if let url, let data = try? Data(contentsOf: url),
            let decoded = try? JSONDecoder().decode([Record].self, from: data) { records = decoded }
     }
@@ -759,7 +765,10 @@ final class AOMAIChatHistory: ObservableObject {
         let turns = chat.messages.filter { $0.role != .error && !$0.text.isEmpty }
             .map { Record.Turn(role: $0.role == .user ? "user" : "assistant", text: $0.text, model: $0.model) }
         guard turns.contains(where: { $0.role == "assistant" }) else { return }
-        let record = Record(id: chat.chatID, title: chat.title, date: Date(), model: chat.model.key, messages: turns)
+        save(Record(id: chat.chatID, title: chat.title, date: Date(), model: chat.model.key, messages: turns))
+    }
+
+    func save(_ record: Record) {
         records.removeAll { $0.id == record.id }
         records.insert(record, at: 0)
         if records.count > 60 { records.removeLast(records.count - 60) }
@@ -771,14 +780,53 @@ final class AOMAIChatHistory: ObservableObject {
         write()
     }
 
+    /// 7.2.3 (audit B09): each save and delete wrote the whole list from the
+    /// concurrent global queue, so a big save asked for first could finish
+    /// last and bring back a chat deleted after it. Writes now go through
+    /// one serial writer, and one superseded before it starts is dropped.
     private func write() {
-        guard let url else { return }
+        guard let writer else { return }
         let snapshot = records
-        DispatchQueue.global(qos: .utility).async {
-            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            if let data = try? JSONEncoder().encode(snapshot) { try? data.write(to: url, options: .atomic) }
+        writer.write { try JSONEncoder().encode(snapshot) }
+    }
+
+    /// Waits for pending writes (tests).
+    func flush() { writer?.flush() }
+}
+
+/// One file written off the main thread, one write at a time, the newest
+/// state last. A write superseded by a newer one before it starts is
+/// skipped (its state is already stale). `beforeWrite` lets the tests slow
+/// a write down.
+final class AOMLatestWriter: @unchecked Sendable {
+    let url: URL
+    private let queue: DispatchQueue
+    private let lock = NSLock()
+    private var generation = 0
+    var beforeWrite: (@Sendable (Int) -> Void)?
+
+    init(url: URL) {
+        self.url = url
+        queue = DispatchQueue(label: "com.kyw.allofmacos.writer.\(url.lastPathComponent)", qos: .utility)
+    }
+
+    /// `encode` runs on the writer's queue, so large snapshots don't stall the caller.
+    func write(_ encode: @escaping @Sendable () throws -> Data) {
+        let mine = lock.withLock { generation += 1; return generation }
+        queue.async { [self] in
+            guard lock.withLock({ generation == mine }) else { return }
+            beforeWrite?(mine)
+            do {
+                let data = try encode()
+                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try data.write(to: url, options: .atomic)
+            } catch {
+                NSLog("[AOM] Couldn't save %@: %@", url.lastPathComponent, error.localizedDescription)
+            }
         }
     }
+
+    func flush() { queue.sync {} }
 }
 
 /// Raycast's AI Commands on the selected text ({selection}).

@@ -263,49 +263,75 @@ final class FilesShelfPanelController: NSObject {
         }
     }
 
-    private func runTransfer(_ items: [FilesShelfItem], to folder: URL, move: Bool) {
+    /// One shelf item's move, kept for Undo by the item's id (a path can
+    /// name a different shelf item by then).
+    struct ShelfMove: Equatable {
+        var itemID: UUID
+        var move: FilesTransfer.Move
+    }
+
+    func runTransfer(_ items: [FilesShelfItem], to folder: URL, move: Bool) {
         model.progress = move ? "Moving…" : "Copying…"
         Task {
             let result = await FilesFileActions.transfer(items.map(\.url), to: folder, move: move)
             model.progress = nil
             let folderName = FileManager.default.displayName(atPath: folder.path)
-            if move {
-                for done in result.done {
-                    if let item = items.first(where: { FilesPath.key($0.path) == FilesPath.key(done.from.path) }) {
-                        store.relocate(item.id, to: done.to)
-                    }
-                }
-            } else {
+            guard move else {
                 let copies = store.add(result.done.map(\.to))
                 model.selection = Set(copies.map(\.id))
-            }
-            if let failure = result.failures.first {
-                let verb = move ? "move" : "copy"
-                model.show("Couldn't \(verb) “\(failure.url.lastPathComponent)” because \(failure.reason)", tone: .danger)
+                let (text, tone) = Self.transferMessage(result, move: false, total: items.count, folderName: folderName)
+                model.show(text, tone: tone)
                 return
             }
-            guard move else {
-                model.show("Copied \(Self.count(result.done.count)) to \(folderName)")
+            var moves: [ShelfMove] = []
+            for done in result.done {
+                guard let item = items.first(where: { FilesPath.key($0.path) == FilesPath.key(done.from.path) }) else { continue }
+                store.relocate(item.id, to: done.to)
+                if done.from != done.to { moves.append(ShelfMove(itemID: item.id, move: done)) }
+            }
+            let (text, tone) = Self.transferMessage(result, move: true, total: items.count, folderName: folderName)
+            // 7.2.3 (audit B10): a failure no longer drops the Undo of the
+            // files that did move.
+            guard !moves.isEmpty || result.failures.isEmpty else {
+                model.show(text, tone: tone)
                 return
             }
-            let moves = result.done
-            model.show("Moved \(Self.count(moves.count)) to \(folderName)", undoTitle: "Undo") {
-                self.undoMove(moves, items: items)
+            model.show(text, tone: tone, undoTitle: "Undo") {
+                self.undoMove(moves)
             }
         }
     }
 
-    private func undoMove(_ moves: [FilesTransfer.Move], items: [FilesShelfItem]) {
+    /// "Moved 3 items to Desktop", or which file failed and why, after how
+    /// many of the others went.
+    static func transferMessage(_ result: FilesTransfer, move: Bool, total: Int, folderName: String) -> (text: String, tone: AOMTone) {
+        let verb = move ? "move" : "copy"
+        let past = move ? "Moved" : "Copied"
+        guard let failure = result.failures.first else {
+            return ("\(past) \(count(result.done.count)) to \(folderName)", .success)
+        }
+        let others = result.failures.count > 1 ? " (and \(result.failures.count - 1) more)" : ""
+        let why = "Couldn't \(verb) “\(failure.url.lastPathComponent)”\(others) because \(failure.reason)"
+        guard !result.done.isEmpty else { return (why, .danger) }
+        return ("\(past) \(result.done.count) of \(count(total)) to \(folderName). \(why)", .danger)
+    }
+
+    private func undoMove(_ moves: [ShelfMove]) {
         Task {
-            let result = await FilesFileActions.moveBack(moves)
+            let result = await FilesFileActions.moveBack(moves.map(\.move))
             for done in result.done {
-                if let item = items.first(where: { FilesPath.key($0.path) == FilesPath.key(done.from.path) })
-                    ?? store.items.first(where: { FilesPath.key($0.path) == FilesPath.key(done.from.path) }) {
-                    store.relocate(item.id, to: done.to)
+                if let entry = moves.first(where: { FilesPath.key($0.move.to.path) == FilesPath.key(done.from.path) }) {
+                    store.relocate(entry.itemID, to: done.to)
                 }
             }
             if let failure = result.failures.first {
-                model.show("Couldn't move “\(failure.url.lastPathComponent)” back because \(failure.reason)", tone: .danger)
+                // The shelf item keeps naming the file where it really is.
+                let entry = moves.first { FilesPath.key($0.move.to.path) == FilesPath.key(failure.url.path) }
+                let stillThere = entry.map { Self.isStill($0.move) } ?? false
+                let still = stillThere ? ". It's still in \(FileManager.default.displayName(atPath: failure.url.deletingLastPathComponent().path))" : ""
+                let others = result.failures.count > 1 ? " (and \(result.failures.count - 1) more)" : ""
+                let moved = result.done.isEmpty ? "" : "Moved \(Self.count(result.done.count)) back. "
+                model.show("\(moved)Couldn't move “\(failure.url.lastPathComponent)”\(others) back because \(failure.reason)\(still)", tone: .danger)
             } else {
                 model.show("Moved \(Self.count(result.done.count)) back")
             }
@@ -354,10 +380,39 @@ final class FilesShelfPanelController: NSObject {
             let trash = await FilesFileActions.trash(received)
             model.show(text, undoTitle: "Undo") {
                 Task {
-                    _ = await FilesFileActions.moveBack(trash.trashed)
-                    self.store.restore(removed)
+                    let back = await FilesFileActions.moveBack(trash.trashed)
+                    self.store.restore(Self.itemsToRestore(removed, trashed: trash.trashed, putBack: back))
+                    if let failure = back.failures.first {
+                        let others = back.failures.count > 1 ? " (and \(back.failures.count - 1) more)" : ""
+                        self.model.show("Couldn't put “\(failure.url.lastPathComponent)”\(others) back because \(failure.reason)", tone: .danger)
+                    }
                 }
             }
+        }
+    }
+
+    /// The move is still undone-able: its file is at `to` and is the one
+    /// that was moved there.
+    nonisolated static func isStill(_ move: FilesTransfer.Move) -> Bool {
+        guard FolderRulesSafety.exists(move.to.path) else { return false }
+        return move.identity == nil || FolderRulesSafety.identity(move.to) == move.identity
+    }
+
+    /// What Undo of a removal puts back on the shelf (7.2.3, audit B10). An
+    /// item whose received file came back out of the Trash returns as it
+    /// was; one whose file couldn't (its old place was taken) names the
+    /// file in the Trash instead of whatever took its name; one whose file
+    /// is gone stays off.
+    nonisolated static func itemsToRestore(_ removed: [(index: Int, item: FilesShelfItem)], trashed: [FilesTransfer.Move],
+                                           putBack: FilesTransfer) -> [(index: Int, item: FilesShelfItem)] {
+        removed.compactMap { entry in
+            let key = FilesPath.key(entry.item.path)
+            guard let move = trashed.first(where: { FilesPath.key($0.from.path) == key }) else { return entry }
+            if putBack.done.contains(where: { FilesPath.key($0.from.path) == FilesPath.key(move.to.path) }) { return entry }
+            guard isStill(move) else { return nil }
+            var item = entry.item
+            item.path = FilesPath.key(move.to.path)
+            return (entry.index, item)
         }
     }
 

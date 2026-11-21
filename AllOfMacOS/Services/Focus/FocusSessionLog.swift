@@ -95,6 +95,9 @@ final class FocusLogStore: ObservableObject {
 
     @Published private(set) var entries: [FocusLogEntry] = []
     let directory: URL
+    /// The log on disk couldn't be read (7.2.3, audit B08): where it was
+    /// kept, or why nothing is saved over it. The Focus page shows it.
+    let problem: FocusDataProblem?
 
     private struct File: Codable {
         var version = 1
@@ -103,9 +106,9 @@ final class FocusLogStore: ObservableObject {
 
     init(directory: URL) {
         self.directory = directory
-        if let file = FocusStorage.load(File.self, named: Self.fileName, in: directory) {
-            entries = file.entries.sorted { $0.end < $1.end }
-        }
+        let loaded = FocusStorage.loadChecked(File.self, named: Self.fileName, in: directory)
+        problem = loaded.problem("Your focus history")
+        if let file = loaded.value { entries = file.entries.sorted { $0.end < $1.end } }
     }
 
     func append(_ entry: FocusLogEntry, now: Date = Date()) {
@@ -137,6 +140,7 @@ final class FocusLogStore: ObservableObject {
     }
 
     private func save() {
+        guard problem?.blocksSaving != true else { return }
         FocusStorage.save(File(entries: entries), named: Self.fileName, in: directory)
     }
 }
