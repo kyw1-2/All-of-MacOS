@@ -20,39 +20,53 @@ struct QuickCommandPalette: View {
     var host: Host = .window
     /// 6.11: the screen to open on (nil: the root search).
     var initialRoute: PaletteRoute? = nil
+    /// 7.2: a launcher hotkey's row to run as soon as the rows are built.
+    var runItem: PaletteHotkey? = nil
     @EnvironmentObject var appState: AppState
-    @ObservedObject private var clipboardStore = ClipboardStore.shared
+    @ObservedObject var clipboardStore = ClipboardStore.shared
     @ObservedObject private var captureHistory = CaptureHistory.shared
-    @ObservedObject private var quicklinks = PaletteQuicklinkStore.shared
-    @StateObject private var session = PaletteSession()
+    @ObservedObject var quicklinks = PaletteQuicklinkStore.shared
+    @StateObject var session = PaletteSession()
     @StateObject private var recentFiles = PaletteRecentFiles()
     @Environment(\.openSettings) private var openSettings
-    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.colorSchemeContrast) var contrast
 
-    @State private var query = ""
-    @State private var selectedID: String?
-    @State private var showsActions = false
-    @State private var actionIndex = 0
+    @State var query = ""
+    @State var selectedID: String?
+    @State var showsActions = false
+    @State var actionIndex = 0
     @State private var editingQuicklinks = false
     @State private var editingLinkRouter = false
     /// Bumped when a suggestion is forgotten, so the list redraws.
     @State private var refreshToken = 0
     /// Bumped when a source of rows changes (clipboard, captures, menus,
     /// files, Keep Awake, the preset): the cached results are rebuilt.
-    @State private var generation = 0
+    @State var generation = 0
     @State private var appeared = false
     @StateObject private var resultsCache = PaletteResultsCache()
-    @FocusState private var isFieldFocused: Bool
+    @FocusState var isFieldFocused: Bool
     /// 6.7: the screens pushed over the root search, the question one of
     /// them asks, and what they load.
-    @State private var navigation = PaletteNavigation()
-    @State private var confirmation: PaletteConfirmation?
+    @State var navigation = PaletteNavigation()
+    @State var confirmation: PaletteConfirmation?
     /// The selected row to give back once a popped screen's query is restored.
     @State private var pendingSelection: String?
-    @StateObject private var screens = PaletteRouteModels()
+    @StateObject var screens = PaletteRouteModels()
+    /// 7.2: what the new screens load (files, folders, network, rules, scripts).
+    @StateObject var data = PaletteLauncherData()
+    @ObservedObject var brew = HomebrewModel.shared
+    @ObservedObject var vpn = VPNModel.shared
+    @ObservedObject var hotkeys = PaletteHotkeyStore.shared
+    @ObservedObject var schedule = PaletteSchedule.shared
+    @ObservedObject var contacts = PaletteContacts.shared
+    /// 7.2 (report 05 §3-E): Clipboard History's kind filter (⇥ cycles it).
+    @State var clipboardFilter: ClipboardEntry.Kind?
+    /// ⌘ held for a moment: the first nine rows show ⌘1…⌘9.
+    @State var showsQuickRunHints = false
+    @State var commandDownTicket = 0
     /// 7.0: the conversation is drawn by its own views; the palette redraws
     /// only when its rows change (a question, an answer, a model), not per token.
-    private var ai: PaletteAIChat { PaletteAIChat.shared }
+    var ai: PaletteAIChat { PaletteAIChat.shared }
     @State private var aiSignature = ""
 
     enum Host: Equatable { case window, launcher }
@@ -114,6 +128,12 @@ struct QuickCommandPalette: View {
         var aliases: [String] = []
         /// 6.7: a checklist row (the uninstall review): ticked or not.
         var checked: Bool?
+        /// 7.2: an emoji drawn as the row's badge.
+        var glyph: String?
+        /// 7.2: the text Send To (⌥↩) hands on.
+        var sendText: String?
+        /// 7.2: the row can get a launcher hotkey of its own (⌘K › Set Hotkey…).
+        var hotkeyable = false
 
         /// Opens a launcher screen rather than running something.
         var pushes: Bool {
@@ -148,7 +168,12 @@ struct QuickCommandPalette: View {
     }
 
     enum Section: String, CaseIterable {
+        /// 7.2: the empty launcher's earlier searches (report 05 §3-D).
+        case recent = "Recent searches"
+        /// 7.2: the next events today, once Calendar access was given.
+        case events = "Up next"
         case calculator = "Calculator"
+        case emoji = "Emoji"
         case quicklinks = "Quicklinks"
         case commands = "Commands"
         case automations = "Automations"
@@ -159,6 +184,9 @@ struct QuickCommandPalette: View {
         // Listed only while searching, like Raycast's root search.
         case applications = "Applications"
         case menuItems = "Menu items"
+        case snippets = "Snippets"
+        case scripts = "Script commands"
+        case contacts = "Contacts"
         case bookmarks = "Bookmarks"
         case files = "Files"
         case fallback = "Search with"
@@ -274,14 +302,14 @@ struct QuickCommandPalette: View {
 
     // MARK: Items
 
-    private func close() { isPresented = false }
+    func close() { isPresented = false }
 
     /// Rows that lead into AOM's own window: in the launcher, AOM comes forward.
-    private func showAOM() {
+    func showAOM() {
         if host == .launcher { AppDelegate.current?.showMainWindow() }
     }
 
-    private func openAOMSettings() {
+    func openAOMSettings() {
         if host == .launcher { AppDelegate.current?.openSettingsWindow() } else { openSettings() }
     }
 
@@ -363,6 +391,20 @@ struct QuickCommandPalette: View {
               subtitle: "Find any app's menu bar icon, even behind the notch, and open it · 메뉴바 아이콘",
               aliases: ["menu bar", "menubar", "menu bar items", "status items", "메뉴바", "메뉴 막대", "ice", "bartender"],
               keywords: "notch hidden icons extras tray 노치 숨은 아이콘"),
+        // 7.2 (Oracle report 05 §3-A, B, F, H).
+        .init(id: "emoji.screen", route: .emoji, subtitle: "Find an emoji or symbol by name and type it · 이모지 (:fire)",
+              aliases: ["emoji", "emojis", "symbols", "emoji picker", "이모지", "이모티콘", "기호", "특수문자"],
+              keywords: "smiley face heart 웃음 하트 표정"),
+        .init(id: "snippets.screen", route: .snippets, subtitle: "Paste saved text by its keyword; it also expands as you type · 스니펫",
+              aliases: ["snippet", "snippets", "text expansion", "스니펫", "상용구", "자주 쓰는 문구"],
+              keywords: "typed string abbreviation espanso textexpander 텍스트 확장"),
+        .init(id: "scripts.screen", route: .scripts, subtitle: "Your scripts as commands — Raycast script commands work too · 스크립트",
+              aliases: ["script", "scripts", "script commands", "스크립트"], keywords: "shell bash python zsh raycast"),
+        .init(id: "schedule.screen", route: .schedule, subtitle: "Today and the next seven days; join a meeting link · 일정",
+              aliases: ["calendar", "schedule", "my schedule", "agenda", "일정", "캘린더", "오늘 일정"],
+              keywords: "events meeting zoom meet teams 회의 약속"),
+        .init(id: "contacts.screen", route: .contacts, subtitle: "Copy an address, call or message someone · 연락처",
+              aliases: ["contacts", "contact", "people", "연락처", "주소록"], keywords: "phone email call message 전화 이메일 문자"),
         .init(id: "system.screen.commands", route: .system,
               subtitle: "Lock, sleep, restart, empty Trash, dark mode … · 시스템 명령",
               aliases: ["system", "system commands", "시스템", "시스템 명령"],
@@ -397,11 +439,14 @@ struct QuickCommandPalette: View {
               type: .centerWindow, keywords: "가운데 center"),
     ]
 
-    private var trimmed: String { PaletteSearch.trimmedQuery(query) }
-    private var isSearching: Bool { !trimmed.isEmpty }
+    var trimmed: String { PaletteSearch.trimmedQuery(query) }
+    var isSearching: Bool { !trimmed.isEmpty }
 
     private var allItems: [PaletteItem] {
         var items: [PaletteItem] = []
+        items += recentQueryItems()
+        items += upNextItems()
+        items += emojiRootItems()
         items += calculatorItems()
         items += quicklinkItems()
         items += commandItems()
@@ -412,16 +457,20 @@ struct QuickCommandPalette: View {
         items += navigationItems()
         if isSearching {
             items += applicationItems()
+            items += snippetRootItems()
+            items += scriptRootItems()
+            items += contactRootItems()
+            items += eventSearchItems()
             items += menuItems()
             items += bookmarkItems()
             items += fallbackItems()
         } else {
             items += suggestedApplicationItems()
         }
-        return items
+        return items.map(withHotkey)
     }
 
-    private func copyToClipboard(_ text: String, announce: String) {
+    func copyToClipboard(_ text: String, announce: String) {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
@@ -445,7 +494,11 @@ struct QuickCommandPalette: View {
             secondaries: [PaletteAction(title: "Copy Equation", symbol: "equal") {
                 close(); copyToClipboard("\(question) = \(result.display)", announce: "\(question) = \(result.display)")
             }],
-            placement: .pinned, accessory: kind)]
+            placement: .pinned, accessory: kind)].map { item in
+                var item = item
+                item.sendText = result.display
+                return item
+            }
     }
 
     private func quicklinkItems() -> [PaletteItem] {
@@ -716,7 +769,7 @@ struct QuickCommandPalette: View {
 
     private func clipboardItems() -> [PaletteItem] {
         clipboardStore.entries.prefix(20).map { entry in
-            PaletteItem(
+            var item = PaletteItem(
                 id: "clipboard.\(entry.id.uuidString)", title: entry.title,
                 subtitle: [entry.sourceName, AOMRelativeTime.string(entry.lastCopiedAt)].compactMap { $0 }.joined(separator: " · "),
                 icon: entry.kind.symbol, section: .clipboard,
@@ -728,12 +781,14 @@ struct QuickCommandPalette: View {
                         close(); copyEntry(entry.id, plainText: true)
                     }]
                     : [])
+            item.sendText = entry.kind == .text || entry.kind == .link ? entry.text : nil
+            return item
         }
     }
 
     /// 6.7 (report A3): a copy that fails says so instead of closing silently.
     @discardableResult
-    private func copyEntry(_ id: UUID, plainText: Bool) -> Bool {
+    func copyEntry(_ id: UUID, plainText: Bool) -> Bool {
         do {
             _ = try clipboardStore.write(entryIDs: [id], plainText: plainText)
             return true
@@ -754,7 +809,7 @@ struct QuickCommandPalette: View {
         }
     }
 
-    private func fileActions(_ file: PaletteFile) -> [PaletteAction] {
+    func fileActions(_ file: PaletteFile) -> [PaletteAction] {
         [PaletteAction(title: "Show in Finder", symbol: "folder") {
             close(); NSWorkspace.shared.activateFileViewerSelecting([file.url])
         },
@@ -765,13 +820,15 @@ struct QuickCommandPalette: View {
 
     private func fileItem(_ file: PaletteFile, id: String, title: String? = nil) -> PaletteItem {
         let folder = (file.url.deletingLastPathComponent().path as NSString).abbreviatingWithTildeInPath
-        return PaletteItem(id: id, title: title ?? file.name,
+        var item = PaletteItem(id: id, title: title ?? file.name,
                            subtitle: title == nil ? folder : file.name, icon: "doc", section: .recentFiles,
                            primary: PaletteAction(title: "Open", symbol: "arrow.up.forward.app") {
                                close(); NSWorkspace.shared.open(file.url)
                            },
                            secondaries: fileActions(file), accessory: AOMRelativeTime.string(file.date),
                            image: session.icon(forPath: file.url.path))
+        item.sendText = file.url.path
+        return item
     }
 
     private func recentFileItems() -> [PaletteItem] {
@@ -1009,7 +1066,7 @@ struct QuickCommandPalette: View {
     /// 6.5: built once per query and change of a source, not on every
     /// hover or arrow key (each rebuild ranked every row, the apps and, while
     /// searching, all 242 actions).
-    private var results: [PaletteItem] {
+    var results: [PaletteItem] {
         let route = navigation.current
         return resultsCache.items(for: .init(query: query, refresh: refreshToken, generation: generation,
                                              route: route.map { "\($0)" } ?? "")) {
@@ -1023,6 +1080,11 @@ struct QuickCommandPalette: View {
                 case .clipboard: items = clipboardHistoryItems()
                 // Results and progress rows are never filtered away (Codex review U4).
                 case .uninstallReview where screens.uninstall?.phase != .review: items = uninstallReviewItems()
+                // 7.2: here the field is the search (brew search, Spotlight, names) or an input.
+                case .tool(let tool) where tool.takesQuery: items = toolItems(tool)
+                case .emoji: items = emojiItems()
+                case .contacts: items = contactItems()
+                case .hotkey, .newSnippet, .scriptArgument, .sendTo: items = routeItems(route)
                 default: items = PaletteSearch.filtered(routeItems(route), query: query)
                 }
             } else {
@@ -1033,7 +1095,7 @@ struct QuickCommandPalette: View {
         }
     }
 
-    private func sourcesChanged() {
+    func sourcesChanged() {
         // After the change lands (objectWillChange fires before it).
         DispatchQueue.main.async { generation &+= 1 }
     }
@@ -1041,11 +1103,15 @@ struct QuickCommandPalette: View {
     /// Runs one of a row's actions and lets ⌘K learn the pick. In the
     /// launcher the panel goes first and, unless the row opens AOM itself,
     /// the app that was in front is active again when the action runs.
-    private func perform(_ action: PaletteAction?, of item: PaletteItem) {
+    func perform(_ action: PaletteAction?, of item: PaletteItem) {
         guard let action, !item.isDimmed else { return }
         // ⌘K learns root picks only: a row inside a screen (an app to kill,
         // a confirmation) never becomes the default for a similar search.
-        if navigation.isRoot { PaletteKnowledgeStore.shared.record(itemID: item.id, query: query) }
+        if navigation.isRoot, item.section != .recent { PaletteKnowledgeStore.shared.record(itemID: item.id, query: query) }
+        // 7.2 (report 05 §3-D): the search comes back under Recent searches.
+        if navigation.isRoot, isSearching, item.section != .recent, item.section != .calculator {
+            PaletteRecentQueryStore.shared.record(trimmed)
+        }
         switch action.effect {
         case .push(let route):
             push(route)
@@ -1067,7 +1133,7 @@ struct QuickCommandPalette: View {
 
     // MARK: Screens
 
-    private func push(_ route: PaletteRoute) {
+    func push(_ route: PaletteRoute) {
         navigation.push(route, query: query, selection: selectedID ?? results.first?.id)
         pendingSelection = nil
         query = ""
@@ -1078,7 +1144,7 @@ struct QuickCommandPalette: View {
         generation &+= 1
     }
 
-    private func pop() {
+    func pop() {
         guard let frame = navigation.pop() else { return }
         leave(frame.route)
         showsActions = false
@@ -1094,6 +1160,7 @@ struct QuickCommandPalette: View {
 
     /// What a screen starts when it opens.
     private func enter(_ route: PaletteRoute) {
+        enter72(route)
         switch route {
         case .tool(.brew(let tab, let term)):
             let brew = HomebrewModel.shared
@@ -1102,7 +1169,8 @@ struct QuickCommandPalette: View {
                 brew.searchText = term
                 if !term.isEmpty { brew.whenIdle { if brew.searchText == term, brew.tab == .search { brew.search() } } }
             }
-        case .tool, .automationCatalog: break
+        case .tool, .automationCatalog, .folder, .rulePreview, .emoji, .snippets, .newSnippet, .scripts, .scriptOutput,
+             .scriptArgument, .schedule, .contacts, .sendTo, .hotkey: break
         case .killApps: screens.watchApps(true)
         case .uninstallReview(let app): screens.beginUninstall(app)
         case .soundDevices: screens.loadSound()
@@ -1119,6 +1187,7 @@ struct QuickCommandPalette: View {
 
     /// What it stops when it goes (a screen still lower on the stack keeps its own).
     private func leave(_ route: PaletteRoute) {
+        leave72(route)
         switch route {
         case .killApps where !navigation.frames.contains { $0.route == .killApps }:
             screens.watchApps(false)
@@ -1136,7 +1205,7 @@ struct QuickCommandPalette: View {
     // MARK: AI (6.9)
 
     /// Opens Ask AI (if needed) and sends the question.
-    private func askAI(_ question: String) {
+    func askAI(_ question: String) {
         if ai.isRunning {
             if navigation.current != .ai { push(.ai); query = question }
             screens.show("Still answering — ⌘. stops it")
@@ -1147,11 +1216,11 @@ struct QuickCommandPalette: View {
         ai.ask(question)
     }
 
-    private func quickAsk() {
+    func quickAsk() {
         if trimmed.isEmpty { push(.ai) } else { askAI(trimmed) }
     }
 
-    private func nextModel() {
+    func nextModel() {
         let ready = AOMAIConfig.pickerModels().filter(\.ready).flatMap { group in
             group.models.map { AOMAIModelRef(provider: group.provider, model: $0.id) }
         }
@@ -1174,7 +1243,7 @@ struct QuickCommandPalette: View {
         }
     }
 
-    private var frontAppForAI: NSRunningApplication? {
+    var frontAppForAI: NSRunningApplication? {
         host == .launcher ? AOMLauncherController.shared.frontApp : PaletteSession.previousApp()
     }
 
@@ -1240,12 +1309,14 @@ struct QuickCommandPalette: View {
             if ai.isRunning {
                 secondaries.insert(PaletteAction(title: "Stop", symbol: "stop.circle", effect: .stay) { ai.cancel() }, at: 0)
             }
-            return [PaletteItem(id: "ai.answer", title: ai.lastAnswer.map { String($0.prefix(80)) } ?? "Waiting for the answer…",
+            var answer = PaletteItem(id: "ai.answer", title: ai.lastAnswer.map { String($0.prefix(80)) } ?? "Waiting for the answer…",
                                 subtitle: ai.model.title, icon: "sparkles", section: .commands,
                                 primary: ai.isRunning
                                     ? PaletteAction(title: "Stop", symbol: "stop.circle", effect: .stay) { ai.cancel() }
                                     : PaletteAction(title: pasteTitle, symbol: "doc.on.clipboard") { pasteAnswer() },
-                                secondaries: secondaries, secondaryLimit: .max)]
+                                secondaries: secondaries, secondaryLimit: .max)
+            answer.sendText = ai.isRunning ? nil : ai.lastAnswer
+            return [answer]
         }
         var items: [PaletteItem] = []
         if isSearching {
@@ -1300,7 +1371,7 @@ struct QuickCommandPalette: View {
         }
     }
 
-    private func confirm(_ question: PaletteConfirmation) {
+    func confirm(_ question: PaletteConfirmation) {
         confirmation = question
         push(.confirm)
     }
@@ -1337,7 +1408,7 @@ struct QuickCommandPalette: View {
 
     private func routeItems(_ route: PaletteRoute) -> [PaletteItem] {
         switch route {
-        case .tool: return []
+        case .tool(let tool): return toolItems(tool)
         case .automationCatalog: return automationCatalogItems()
         case .killApps: return killAppItems()
         case .uninstallApps: return uninstallListItems()
@@ -1352,10 +1423,22 @@ struct QuickCommandPalette: View {
         case .ai: return aiItems()
         case .aiModels: return aiModelItems()
         case .confirm: return confirmationItems()
+        case .folder(let url): return folderItems(url)
+        case .rulePreview(let id): return rulePreviewItems(id)
+        case .emoji: return emojiItems()
+        case .snippets: return snippetItems()
+        case .newSnippet(let text): return newSnippetItems(text)
+        case .scripts: return scriptItems()
+        case .scriptOutput: return scriptOutputItems()
+        case .scriptArgument(let id): return scriptArgumentItems(id)
+        case .schedule: return scheduleItems()
+        case .contacts: return contactItems()
+        case .sendTo(let payload): return sendToItems(payload)
+        case .hotkey(let itemID, let title): return hotkeyItems(itemID: itemID, title: title)
         }
     }
 
-    private func screenRow(_ id: String, _ title: String, _ subtitle: String, icon: String, group: String?,
+    func screenRow(_ id: String, _ title: String, _ subtitle: String, icon: String, group: String?,
                      section: Section = .commands, primary: PaletteAction, secondaries: [PaletteAction] = [],
                      accessory: String? = nil, image: NSImage? = nil, dimmed: Bool = false) -> PaletteItem {
         var item = PaletteItem(id: id, title: title, subtitle: subtitle, icon: icon, section: section,
@@ -1365,7 +1448,7 @@ struct QuickCommandPalette: View {
         return item
     }
 
-    private func folder(of path: String?) -> String {
+    func folder(of path: String?) -> String {
         guard let path else { return "" }
         return (URL(fileURLWithPath: path).deletingLastPathComponent().path as NSString).abbreviatingWithTildeInPath
     }
@@ -1441,7 +1524,7 @@ struct QuickCommandPalette: View {
     }
 
     /// A result line on a screen; at the root (the panel may be closing) a HUD.
-    private func announce(_ text: String) {
+    func announce(_ text: String) {
         screens.show(text)
         if navigation.isRoot || host == .window { GestureHUD.shared.show(title: text, detail: nil) }
     }
@@ -1643,7 +1726,11 @@ struct QuickCommandPalette: View {
         let search = isSearching ? ClipboardSearchQuery(trimmed) : nil
         let boards = clipboardStore.boards
         let matching = search.map { query in clipboardStore.entries.lazy.filter { query.matches($0, boards: boards) } }
-        let entries = matching.map { Array($0.prefix(300)) } ?? Array(clipboardStore.entries.prefix(300))
+        // 7.2 (report 05 §3-E): the kind filter of the chips (⇥).
+        let kind = clipboardFilter
+        let source: LazyFilterSequence<[ClipboardEntry]> = matching
+            ?? clipboardStore.entries.lazy.filter { _ in true }
+        let entries: [ClipboardEntry] = Array(source.filter { kind == nil || $0.kind == kind }.prefix(300))
         return entries.map { entry in
             var secondaries = [PaletteAction(title: "Copy", symbol: "doc.on.doc") { copyEntry(entry.id, plainText: false) }]
             if entry.kind == .text || entry.kind == .link {
@@ -1668,6 +1755,7 @@ struct QuickCommandPalette: View {
                            },
                            secondaries: secondaries)
             item.keywords = entry.sourceName ?? ""
+            item.sendText = entry.kind == .text || entry.kind == .link ? entry.text : nil
             return item
         }
     }
@@ -1816,6 +1904,7 @@ struct QuickCommandPalette: View {
         switch section {
         case .menuItems: return session.target.map { "\($0.name) menus" } ?? section.rawValue
         case .fallback: return "Search with"
+        case .events: return isSearching ? "Calendar" : section.rawValue
         default: return section.rawValue
         }
     }
@@ -1839,13 +1928,7 @@ struct QuickCommandPalette: View {
                     .accessibilityHidden(true)
             }
 
-            Group {
-                if case .tool(let tool) = navigation.current {
-                    LauncherToolContent(tool: tool, back: pop)
-                } else {
-                    paletteContents(items: items, selected: selected, header: header)
-                }
-            }
+            paletteContents(items: items, selected: selected, header: header)
             .frame(width: size.width, height: size.height)
             .overlay(alignment: .bottomTrailing) {
                 if showsActions, let selected {
@@ -1890,21 +1973,11 @@ struct QuickCommandPalette: View {
                     .accessibilityHidden(true)
             }
         }
-        .background(PaletteNavigationKeys { event in
-            switch event.keyCode {
-            case 53 where !navigation.isRoot || showsActions:
-                if !event.isARepeat {
-                    if showsActions { showsActions = false } else { pop() }
-                }
-                return true
-            case 48 where isFieldFocused && !showsActions && (navigation.isRoot || navigation.current == .ai):
-                if !event.isARepeat {
-                    if navigation.current == .ai { nextModel() } else { quickAsk() }
-                }
-                return true
-            default: return false
-            }
-        })
+        .background(PaletteNavigationKeys(handle: { event in
+            handleKey(event, items: items, selected: selected)
+        }, flagsChanged: { flags in
+            commandFlagsChanged(flags)
+        }))
         .aomAnimation(.quick, value: showsActions)
         .onAppear {
             appear()
@@ -1923,6 +1996,15 @@ struct QuickCommandPalette: View {
         .onReceive(screens.objectWillChange) { _ in sourcesChanged() }
         .onReceive(PaletteUninstallFlow.recentDidChange) { _ in sourcesChanged() }
         .onReceive(NotificationCenter.default.publisher(for: AOMAIConfig.didChange)) { _ in sourcesChanged() }
+        // 7.2: the new screens' sources.
+        .onReceive(data.objectWillChange) { _ in sourcesChanged() }
+        .onReceive(brew.objectWillChange) { _ in if isBrewScreen { sourcesChanged() } }
+        .onReceive(vpn.objectWillChange) { _ in if navigation.current == .tool(.vpn) { sourcesChanged() } }
+        .onReceive(hotkeys.objectWillChange) { _ in sourcesChanged() }
+        .onReceive(schedule.objectWillChange) { _ in sourcesChanged() }
+        .onReceive(contacts.objectWillChange) { _ in sourcesChanged() }
+        .onReceive(brew.toasts.$message.compactMap { $0 }) { text in if isBrewScreen { screens.show(text) } }
+        .onReceive(vpn.toasts.$message.compactMap { $0 }) { text in if navigation.current == .tool(.vpn) { screens.show(text) } }
         // 7.0: only what the AI rows show; tokens are drawn by the transcript.
         .onReceive(PaletteAIChat.shared.objectWillChange) { _ in
             DispatchQueue.main.async {
@@ -1941,11 +2023,13 @@ struct QuickCommandPalette: View {
             showsActions = false
             // A confirmation is answered, not searched.
             if navigation.current?.isSearchable == false, !query.isEmpty { query = "" }
+            queryChanged72()
         }
         .onDisappear {
             session.end()
             recentFiles.stop()
             screens.end()
+            end72()
         }
         .onExitCommand {
             // Esc goes back one level: the Actions panel, the screen (6.7),
@@ -1957,10 +2041,9 @@ struct QuickCommandPalette: View {
             case .close: close()
             }
         }
-        .onKeyPress(.upArrow) { if case .tool = navigation.current { return .ignored }; moveSelection(-1, in: items, selected: selected); return .handled }
-        .onKeyPress(.downArrow) { if case .tool = navigation.current { return .ignored }; moveSelection(1, in: items, selected: selected); return .handled }
+        .onKeyPress(.upArrow) { moveSelection(-1, in: items, selected: selected); return .handled }
+        .onKeyPress(.downArrow) { moveSelection(1, in: items, selected: selected); return .handled }
         .onKeyPress(.return, phases: .down) { press in
-            if case .tool = navigation.current { return .ignored }
             // On Ask AI a typed line is a question, not a row choice.
             if navigation.current == .ai, !trimmed.isEmpty, !press.modifiers.contains(.command) {
                 askAI(trimmed)
@@ -1968,7 +2051,8 @@ struct QuickCommandPalette: View {
             }
             guard let item = selected else { return .handled }
             if showsActions {
-                let action = PaletteSearch.action(at: actionIndex, of: item)
+                let actions = panelActions(item)
+                let action = actions.indices.contains(actionIndex) ? actions[actionIndex] : nil
                 showsActions = false
                 perform(action, of: item)
             } else if press.modifiers.contains(.command) {
@@ -1995,8 +2079,8 @@ struct QuickCommandPalette: View {
 
     /// 7.0: screens whose rows have something to show beside them.
     private var showsDetailPane: Bool {
-        host == .launcher && (navigation.current == .clipboard || navigation.current == .windowLayouts)
-            && AOMLauncherController.shared.panelSize.width >= 600
+        host == .launcher && AOMLauncherController.shared.panelSize.width >= 600
+            && (navigation.current == .clipboard || navigation.current == .windowLayouts || showsInfoDetail)
     }
 
     @ViewBuilder
@@ -2017,11 +2101,19 @@ struct QuickCommandPalette: View {
                     AOMAITranscriptView(chat: ai) { copyToClipboard($0, announce: "Answer") }
                 }
             } else {
+                if navigation.current == .clipboard {
+                    clipboardFilterBar
+                    AOMDivider()
+                }
                 if let header {
                     routeHeaderView(header, fills: items.isEmpty)
                     if !items.isEmpty { AOMDivider() }
                 } else if let notice = screens.notice, !navigation.isRoot {
                     noticeLine(notice)
+                }
+                if case .scriptOutput = navigation.current, let run = data.scriptRun {
+                    scriptOutputView(run)
+                    AOMDivider()
                 }
                 if !items.isEmpty {
                     if showsDetailPane {
@@ -2047,6 +2139,8 @@ struct QuickCommandPalette: View {
             AOMLauncherClipDetail(entry: entry)
         } else if navigation.current == .windowLayouts, let item {
             AOMLauncherWindowDetail(layoutID: item.id, title: item.title, shortcut: item.shortcut)
+        } else if let info = item.flatMap(detailInfo) {
+            AOMLauncherInfoDetail(info: info)
         } else {
             Color.clear
         }
@@ -2059,6 +2153,8 @@ struct QuickCommandPalette: View {
         if let initialRoute, navigation.isRoot { push(initialRoute) }
         session.begin()
         recentFiles.start()
+        appear72()
+        if let runItem { runHotkeyItem(runItem) }
         guard PresetManager.isUIPreview else { return }
         let arguments = ProcessInfo.processInfo.arguments
         if let index = arguments.lastIndex(of: "--aom-preview-palette-query"), arguments.indices.contains(index + 1) {
@@ -2098,10 +2194,16 @@ struct QuickCommandPalette: View {
                     let routes: [String: PaletteRoute] = ["ai": .ai, "killApps": .killApps, "uninstallApps": .uninstallApps,
                                                           "sound": .soundDevices, "clipboard": .clipboard,
                                                           "windows": .windowLayouts, "keepAwake": .keepAwake, "system": .system]
-                    if let route = routes[name] { push(route) }
+                    if let route = routes[name] ?? Self.previewRoute72(name) { push(route) }
                 }
                 if let filter { query = filter }
             }
+        }
+        if arguments.contains("--aom-preview-quick-run-hints") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showsQuickRunHints = true }
+        }
+        if let index = arguments.lastIndex(of: "--aom-preview-clipboard-filter"), arguments.indices.contains(index + 1) {
+            clipboardFilter = ClipboardEntry.Kind(rawValue: arguments[index + 1])
         }
         if arguments.contains("--aom-preview-palette-actions") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showsActions = true }
@@ -2132,9 +2234,9 @@ struct QuickCommandPalette: View {
         showsActions.toggle()
     }
 
-    private func moveSelection(_ offset: Int, in items: [PaletteItem], selected: PaletteItem?) {
+    func moveSelection(_ offset: Int, in items: [PaletteItem], selected: PaletteItem?) {
         if showsActions, let selected {
-            actionIndex = min(selected.actions.count - 1, max(0, actionIndex + offset))
+            actionIndex = min(panelActions(selected).count - 1, max(0, actionIndex + offset))
             return
         }
         guard !items.isEmpty else { return }
@@ -2210,7 +2312,7 @@ struct QuickCommandPalette: View {
             return RouteHeader(symbol: "hifispeaker.2", tint: AOMModule.audio.hue, title: "Reading Sound Devices…",
                                detail: "Outputs, inputs and the current volume.", busy: true)
         default:
-            return nil
+            return routeHeader72
         }
     }
 
@@ -2405,6 +2507,9 @@ struct QuickCommandPalette: View {
         case nil: return "No results for “\(query)”"
         case .killApps?: return isSearching ? "No running app matches “\(query)”" : "No app AOM can quit is running"
         case .uninstallApps?: return isSearching ? "No installed app matches “\(query)”" : "No app AOM can uninstall"
+        case .clipboard? where clipboardFilter != nil:
+            let kind = Self.filterTitle(clipboardFilter).lowercased()
+            return isSearching ? "No \(kind) match “\(query)”" : "No \(kind) in clipboard history"
         case .clipboard?: return isSearching ? "Nothing copied matches “\(query)”" : "Clipboard history is empty"
         case let route?: return isSearching ? "Nothing in \(route.title) matches “\(query)”" : "Nothing here yet"
         }
@@ -2457,11 +2562,20 @@ struct QuickCommandPalette: View {
                                 .padding(.bottom, AOMSpace.x1)
                                 .accessibilityAddTraits(.isHeader)
                         }
-                        row(item, selected: item.id == selected?.id)
+                        row(item, selected: item.id == selected?.id, index: index)
                             .id(item.id)
                     }
                 }
                 .padding(AOMSpace.x2)
+            }
+            // 7.2 (report 05 §4): rows fade under the field and the footer
+            // instead of being cut by a hard edge.
+            .mask {
+                VStack(spacing: 0) {
+                    LinearGradient(colors: [.black.opacity(0), .black], startPoint: .top, endPoint: .bottom).frame(height: 8)
+                    Color.black
+                    LinearGradient(colors: [.black, .black.opacity(0)], startPoint: .top, endPoint: .bottom).frame(height: 10)
+                }
             }
             .onChange(of: selectedID) { _, id in
                 if let id { proxy.scrollTo(id, anchor: nil) }
@@ -2492,7 +2606,7 @@ struct QuickCommandPalette: View {
         return false
     }
 
-    private func row(_ item: PaletteItem, selected: Bool) -> some View {
+    private func row(_ item: PaletteItem, selected: Bool, index: Int) -> some View {
         // The hover lives in the row (6.5): moving the pointer redraws one
         // row, not the palette and its search. 6.7: a destructive answer is
         // selected in red.
@@ -2512,11 +2626,11 @@ struct QuickCommandPalette: View {
             if item.section == .calculator {
                 calculatorRow(item, selected: selected)
             } else {
-                standardRow(item, selected: selected)
+                standardRow(item, selected: selected, quickRun: showsQuickRunHints && index < 9 && quickRunAllowed ? index + 1 : nil)
             }
         }
         .contextMenu {
-            ForEach(Array(item.actions.enumerated()), id: \.offset) { _, action in
+            ForEach(Array(panelActions(item).enumerated()), id: \.offset) { _, action in
                 Button(action.title) { perform(action, of: item) }
             }
             if PaletteKnowledgeStore.shared.knowledge.decayedScore(item.id, now: Date()) > 0 {
@@ -2541,7 +2655,13 @@ struct QuickCommandPalette: View {
 
     @ViewBuilder
     private func badge(_ item: PaletteItem, selected: Bool) -> some View {
-        if let image = item.image {
+        if let glyph = item.glyph {
+            // 7.2: an emoji is its own badge, drawn large (report 05 §4).
+            Text(glyph)
+                .font(.system(size: PaletteMetrics.rowBadge * 0.86))
+                .frame(width: PaletteMetrics.rowBadge + 4, height: PaletteMetrics.rowBadge)
+                .accessibilityHidden(true)
+        } else if let image = item.image {
             Image(nsImage: image)
                 .resizable()
                 .interpolation(.high)
@@ -2574,6 +2694,14 @@ struct QuickCommandPalette: View {
         case "ai": return AOMBrand.start
         case "awake": return AOMModule.focus.hue
         case "battery": return AOMColor.success
+        // 7.2
+        case "brew", "go": return id == "go.homebrew" || id.hasPrefix("brew") ? Color(red: 0.85, green: 0.6, blue: 0.2) : nil
+        case "network", "vpn": return AOMModule.systemTools.hue
+        case "snippet", "snippets": return AOMModule.textActions.hue
+        case "event", "schedule": return AOMColor.danger
+        case "contact", "contacts": return AOMModule.tiling.hue
+        case "send": return AOMBrand.start
+        case "script", "scripts": return AOMBrand.graphite
         case "confirm": return id == "confirm.accept" ? AOMColor.danger : AOMBrand.graphite
         default: return nil
         }
@@ -2589,11 +2717,16 @@ struct QuickCommandPalette: View {
         case .captures: return AOMModule.capture.hue
         case .recentFiles, .files: return AOMModule.files.hue
         case .quicklinks, .bookmarks: return AOMModule.tiling.hue
-        case .calculator, .navigation, .applications, .menuItems, .fallback: return AOMBrand.graphite
+        case .calculator, .navigation, .applications, .menuItems, .fallback, .recent: return AOMBrand.graphite
+        case .emoji: return AOMColor.warning
+        case .snippets: return AOMModule.textActions.hue
+        case .scripts: return AOMBrand.graphite
+        case .events: return AOMColor.danger
+        case .contacts: return AOMModule.tiling.hue
         }
     }
 
-    private func standardRow(_ item: PaletteItem, selected: Bool) -> some View {
+    private func standardRow(_ item: PaletteItem, selected: Bool, quickRun: Int? = nil) -> some View {
         // 7.0: Raycast's neutral selection — the row's colours stay, so the
         // subtitle and keys read the same selected or not.
         let destructive = item.primary.isDestructive && navigation.current == .confirm
@@ -2631,7 +2764,10 @@ struct QuickCommandPalette: View {
                     .foregroundStyle(AOMCraftColor.inkTertiary)
                     .lineLimit(1)
             }
-            if let keys = item.shortcut {
+            if let quickRun {
+                // 7.2: ⌘ held — ⌘1…⌘9 run these rows (Alfred, Raycast).
+                AOMCraftKeycap(text: "⌘\(quickRun)")
+            } else if let keys = item.shortcut {
                 HStack(spacing: AOMSpace.x0_5 + 1) {
                     ForEach(Array(AOMShortcutKeys.parts(keys).enumerated()), id: \.offset) { _, part in
                         AOMCraftKeycap(text: part)
@@ -2677,7 +2813,7 @@ struct QuickCommandPalette: View {
             primaryTitle: item?.primary.title,
             primaryDestructive: item?.primary.isDestructive ?? false,
             status: status,
-            showsActions: (item?.actions.count ?? 0) > 1 && !(item?.isDimmed ?? true),
+            showsActions: (item.map(panelActions)?.count ?? 0) > 1 && !(item?.isDimmed ?? true),
             bindsKeys: false,
             onPrimary: { if let item { perform(item.primary, of: item) } },
             onActionsPanel: { toggleActions(item) })
@@ -2693,7 +2829,7 @@ struct QuickCommandPalette: View {
                 .padding(.horizontal, AOMSpace.x3)
                 .padding(.top, AOMSpace.x2 + 2)
                 .padding(.bottom, AOMSpace.x1)
-            ForEach(Array(item.actions.enumerated()), id: \.offset) { index, action in
+            ForEach(Array(panelActions(item).enumerated()), id: \.offset) { index, action in
                 let isCurrent = index == actionIndex
                 Button {
                     showsActions = false
@@ -2712,6 +2848,7 @@ struct QuickCommandPalette: View {
                         Spacer(minLength: AOMSpace.x3)
                         if index == 0 { AOMCraftKeycap(text: "↩") }
                         if index == 1 { AOMCraftKeycap(text: "⌘↩") }
+                        if action.title == "Send To…" { AOMCraftKeycap(text: "⌥↩") }
                     }
                     .padding(.horizontal, AOMSpace.x2 + 2)
                     .frame(height: 32)
@@ -2866,10 +3003,11 @@ enum PaletteApplications {
 /// The palette's rows, Spotlight-sized (3.3.6; 3.3.5 had an 18 pt badge on
 /// 24 pt rows): a 28 pt badge on a 40 pt row; the calculator's answer row
 /// is taller.
-private enum PaletteMetrics {
+enum PaletteMetrics {
     /// Report 04 §5.1 (Raycast's 46 pt rows on AOM's 13 pt type): 44.
-    static let rowBadge: CGFloat = 26
-    static let rowHeight: CGFloat = 44
+    /// 7.2 (report 05 §4): ⌘- and ⌘= pick 36, 44 or 52 (Settings too).
+    static var rowBadge: CGFloat { AOMLauncherDensity.current.badge }
+    static var rowHeight: CGFloat { AOMLauncherDensity.current.rowHeight }
     static let calculatorHeight: CGFloat = 60
     static let actionPanelWidth: CGFloat = 280
     static let actionBarHeight: CGFloat = 38

@@ -160,12 +160,13 @@ final class HomebrewModel: ObservableObject {
         let upgradable = outdated.filter { !$0.pinned }
         guard !upgradable.isEmpty else { toasts.show("Everything is up to date", tone: .success); return }
         let names = upgradable.prefix(10).map(\.name).joined(separator: ", ") + (upgradable.count > 10 ? " and \(upgradable.count - 10) more" : "")
-        guard confirm("Upgrade \(upgradable.count) Package\(upgradable.count == 1 ? "" : "s")?",
-                      "\(names). Homebrew downloads and installs the new versions; it can take a while and you can cancel. Pinned packages stay as they are.",
-                      button: "Upgrade All", destructive: false) else { return }
-        run(.upgradeAll, logs: true) { [weak self] result in
-            self?.finished(.upgradeAll, result, success: "Upgraded \(upgradable.count) package\(upgradable.count == 1 ? "" : "s")")
-            self?.checkOutdated()
+        ask("Upgrade \(upgradable.count) Package\(upgradable.count == 1 ? "" : "s")?",
+            "\(names). Homebrew downloads and installs the new versions; it can take a while and you can cancel. Pinned packages stay as they are.",
+            button: "Upgrade All", destructive: false) { [weak self] in
+            self?.run(.upgradeAll, logs: true) { [weak self] result in
+                self?.finished(.upgradeAll, result, success: "Upgraded \(upgradable.count) package\(upgradable.count == 1 ? "" : "s")")
+                self?.checkOutdated()
+            }
         }
     }
 
@@ -192,12 +193,13 @@ final class HomebrewModel: ObservableObject {
             guard let size = Homebrew.parseFreedSize(dry.stdout), items > 0 else {
                 self.report(.cleanup, "Nothing to clean up", tone: .success); return
             }
-            guard self.confirm("Clean Up Homebrew?",
-                               "This removes \(items) old version\(items == 1 ? "" : "s"), download\(items == 1 ? "" : "s") and log\(items == 1 ? "" : "s") and frees about \(SystemStatus.size(size.bytes)). Installed packages keep working.",
-                               button: "Clean Up", destructive: true) else { return }
-            self.run(.cleanup, logs: true) { result in
-                let freed = Homebrew.parseFreedSize(result.stdout)
-                self.finished(.cleanup, result, success: freed.map { "Freed \(SystemStatus.size($0.bytes))" } ?? "Cleaned up")
+            self.ask("Clean Up Homebrew?",
+                     "This removes \(items) old version\(items == 1 ? "" : "s"), download\(items == 1 ? "" : "s") and log\(items == 1 ? "" : "s") and frees about \(SystemStatus.size(size.bytes)). Installed packages keep working.",
+                     button: "Clean Up", destructive: true) {
+                self.run(.cleanup, logs: true) { result in
+                    let freed = Homebrew.parseFreedSize(result.stdout)
+                    self.finished(.cleanup, result, success: freed.map { "Freed \(SystemStatus.size($0.bytes))" } ?? "Cleaned up")
+                }
             }
         }
     }
@@ -225,23 +227,25 @@ final class HomebrewModel: ObservableObject {
     }
 
     func uninstall(_ package: Homebrew.Package) {
-        guard confirm("Uninstall \(package.name)?",
-                      "Homebrew removes the \(package.kind == .cask ? "app" : "formula") \(package.name). Packages that need it may stop working; brew refuses if another installed formula depends on it.",
-                      button: "Uninstall", destructive: true) else { return }
-        run(.uninstall(package), logs: true) { [weak self] result in
-            self?.finished(.uninstall(package), result, success: "Uninstalled \(package.name)")
-            self?.loadInstalled()
+        ask("Uninstall \(package.name)?",
+            "Homebrew removes the \(package.kind == .cask ? "app" : "formula") \(package.name). Packages that need it may stop working; brew refuses if another installed formula depends on it.",
+            button: "Uninstall", destructive: true) { [weak self] in
+            self?.run(.uninstall(package), logs: true) { [weak self] result in
+                self?.finished(.uninstall(package), result, success: "Uninstalled \(package.name)")
+                self?.loadInstalled()
+            }
         }
     }
 
     func install(_ package: Homebrew.Package) {
         guard Homebrew.isValidPackageName(package.name) else { return }
-        guard confirm("Install \(package.name)?",
-                      "Homebrew downloads and installs the \(package.kind == .cask ? "app (cask)" : "formula") \(package.name) and anything it needs.",
-                      button: "Install", destructive: false) else { return }
-        run(.install(package), logs: true) { [weak self] result in
-            self?.finished(.install(package), result, success: "Installed \(package.name)")
-            if self?.installed != nil { self?.loadInstalled() }
+        ask("Install \(package.name)?",
+            "Homebrew downloads and installs the \(package.kind == .cask ? "app (cask)" : "formula") \(package.name) and anything it needs.",
+            button: "Install", destructive: false) { [weak self] in
+            self?.run(.install(package), logs: true) { [weak self] result in
+                self?.finished(.install(package), result, success: "Installed \(package.name)")
+                if self?.installed != nil { self?.loadInstalled() }
+            }
         }
     }
 
@@ -354,6 +358,16 @@ final class HomebrewModel: ObservableObject {
 
     func clearActivity() { activity.removeAll() }
 
+    /// 7.2: set while the launcher shows Homebrew, which asks inside its
+    /// panel (Cancel selected) instead of a modal alert over it.
+    var launcherConfirm: ((_ title: String, _ message: String, _ button: String, _ destructive: Bool,
+                           _ proceed: @escaping () -> Void) -> Void)?
+
+    private func ask(_ title: String, _ message: String, button: String, destructive: Bool, then proceed: @escaping () -> Void) {
+        if let launcherConfirm { launcherConfirm(title, message, button, destructive, proceed); return }
+        if confirm(title, message, button: button, destructive: destructive) { proceed() }
+    }
+
     private func confirm(_ title: String, _ message: String, button: String, destructive: Bool) -> Bool {
         let alert = NSAlert()
         alert.alertStyle = destructive ? .warning : .informational
@@ -387,7 +401,6 @@ final class HomebrewModel: ObservableObject {
 /// Search; the running job with Cancel; the live output; and the activity.
 struct HomebrewSheet: View {
     @ObservedObject var model: HomebrewModel
-    var back: (() -> Void)? = nil
     @State private var installedFilter = ""
     @State private var showsOutput = true
     @FocusState private var searchFocused: Bool
@@ -427,17 +440,17 @@ struct HomebrewSheet: View {
                         .aomCard(padding: 0)
                     }
                     output
-                    if back == nil, !model.activity.isEmpty {
+                    if !model.activity.isEmpty {
                         AOMLogSection("Activity", entries: model.activity, limit: 3, clear: { model.clearActivity() })
                     }
                 }
                 .padding(AOMSpace.x4)
             }
         }
-        .frame(minWidth: back == nil ? 720 : 0, idealWidth: 760, minHeight: back == nil ? 600 : 0, idealHeight: 680)
+        .frame(minWidth: 720, idealWidth: 760, minHeight: 600, idealHeight: 680)
         .background(AOMColor.canvas)
         .aomToast(model.toasts)
-        .onExitCommand { if let back { back() } else { dismiss() } }
+        .onExitCommand { dismiss() }
     }
 
     // MARK: Header
@@ -457,14 +470,8 @@ struct HomebrewSheet: View {
             }
             .layoutPriority(1)
             Spacer(minLength: AOMSpace.x3)
-            if let back {
-                Menu("Actions") { maintenance }
-                    .disabled(model.isBusy || model.brew == nil)
-                Button("Back", action: back)
-            } else {
-                maintenance.disabled(model.isBusy || model.brew == nil)
-                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction).buttonStyle(AOMPrimaryButtonStyle())
-            }
+            maintenance.disabled(model.isBusy || model.brew == nil)
+            Button("Done") { dismiss() }.keyboardShortcut(.defaultAction).buttonStyle(AOMPrimaryButtonStyle())
         }
     }
 
@@ -687,7 +694,7 @@ struct HomebrewSheet: View {
                             }
                             .padding(AOMSpace.x2)
                         }
-                        .frame(height: back == nil ? 150 : 76)
+                        .frame(height: 150)
                         .background(AOMColor.field, in: RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous))
                         .overlay(RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous).strokeBorder(AOMColor.hairline))
                         .onChange(of: model.log.last?.id) { _, last in

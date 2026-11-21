@@ -35,6 +35,26 @@ enum PaletteRoute: Hashable {
     case aiModels
     /// The pending in-panel confirmation (one at a time).
     case confirm
+    // 7.2 (Oracle report 05 and the Codex 7.2 review).
+    /// A folder's contents (Alfred's and Raycast's file browsing).
+    case folder(URL)
+    /// One folder rule's dry run.
+    case rulePreview(UUID)
+    case emoji
+    case snippets
+    /// The field takes the new snippet's keyword; the text is fixed.
+    case newSnippet(String)
+    case scripts
+    /// A script's whole output (mode fullOutput).
+    case scriptOutput(String)
+    /// The field takes a script's argument before it runs.
+    case scriptArgument(String)
+    case schedule
+    case contacts
+    /// LaunchBar's Instant Send: what to do with a row's text.
+    case sendTo(PaletteSendPayload)
+    /// Waiting for the key a row's hotkey becomes.
+    case hotkey(itemID: String, title: String)
 
     var title: String {
         switch self {
@@ -53,12 +73,24 @@ enum PaletteRoute: Hashable {
         case .ai: return "Ask AI"
         case .aiModels: return "Choose Model"
         case .confirm: return "Confirm"
+        case .folder(let url): return url.path == "/" ? "Macintosh HD" : url.lastPathComponent
+        case .rulePreview: return "Rule Preview"
+        case .emoji: return "Emoji & Symbols"
+        case .snippets: return "Snippets"
+        case .newSnippet: return "New Snippet"
+        case .scripts: return "Script Commands"
+        case .scriptOutput: return "Output"
+        case .scriptArgument: return "Run Script"
+        case .schedule: return "My Schedule"
+        case .contacts: return "Contacts"
+        case .sendTo: return "Send To"
+        case .hotkey: return "Set Hotkey"
         }
     }
 
     var placeholder: String {
         switch self {
-        case .tool(let tool): return tool.title
+        case .tool(let tool): return tool.placeholder
         case .automationCatalog: return "Find an automation action…"
         case .killApps: return "Search running apps…"
         case .uninstallApps: return "Search installed apps…"
@@ -73,6 +105,18 @@ enum PaletteRoute: Hashable {
         case .ai: return "Ask anything…"
         case .aiModels: return "Search models…"
         case .confirm: return "↑↓ to choose, ↩ to confirm, esc to go back"
+        case .folder: return "Filter this folder…"
+        case .rulePreview: return "Filter the files…"
+        case .emoji: return "Search emoji and symbols — fire, heart, 불, 하트…"
+        case .snippets: return "Search snippets by keyword or text…"
+        case .newSnippet: return "Type the keyword that expands it, such as ;sig"
+        case .scripts: return "Search script commands…"
+        case .scriptOutput: return "Filter the output…"
+        case .scriptArgument: return "Type the argument, then ↩"
+        case .schedule: return "Search the next seven days…"
+        case .contacts: return "Search names, companies, addresses or numbers…"
+        case .sendTo: return "Where should it go?"
+        case .hotkey: return "Press the new shortcut (esc cancels)"
         }
     }
 
@@ -92,11 +136,47 @@ enum PaletteRoute: Hashable {
         case .ai: return "sparkles"
         case .aiModels: return "cpu"
         case .confirm: return "exclamationmark.triangle"
+        case .folder: return "folder"
+        case .rulePreview: return "folder.badge.gearshape"
+        case .emoji: return "face.smiling"
+        case .snippets, .newSnippet: return "text.badge.plus"
+        case .scripts, .scriptOutput, .scriptArgument: return "terminal"
+        case .schedule: return "calendar"
+        case .contacts: return "person.crop.circle"
+        case .sendTo: return "paperplane"
+        case .hotkey: return "keyboard"
         }
     }
 
     /// Typing filters this screen's rows (a confirmation has two fixed rows).
-    var isSearchable: Bool { self != .confirm }
+    var isSearchable: Bool {
+        switch self {
+        case .confirm, .hotkey: return false
+        default: return true
+        }
+    }
+
+    /// 7.2: ⌘1…⌘9 run a row at once only where no row quits, trashes or
+    /// changes the Mac (the root, Emoji, Snippets, Clipboard, files, models).
+    var allowsQuickRun: Bool {
+        switch self {
+        case .emoji, .snippets, .clipboard, .folder, .aiModels, .windowLayouts, .soundDevices, .sendTo, .contacts, .schedule:
+            return true
+        case .tool(let tool):
+            if case .files = tool { return true }
+            return tool == .network
+        default:
+            return false
+        }
+    }
+}
+
+/// 7.2: the text a row hands to Send To, and what to call it there.
+struct PaletteSendPayload: Hashable {
+    let text: String
+    let title: String
+    /// A clipboard entry, so Send To can queue the entry itself.
+    var clipboardEntry: UUID?
 }
 
 /// A screen on the stack and what the screen below it showed.

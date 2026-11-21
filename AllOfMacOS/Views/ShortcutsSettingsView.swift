@@ -276,5 +276,46 @@ struct LauncherShortcutSettings: View {
         .onChange(of: choice) { _, value in
             status = GlobalHotKeyManager.shared.apply(value)
         }
+        LauncherOptionsSettings()
+    }
+}
+
+/// 7.2: the launcher's row size and the hotkeys its rows were given
+/// (⌘K › Set Hotkey… in the launcher).
+struct LauncherOptionsSettings: View {
+    @State private var density = AOMLauncherDensity.current
+    @ObservedObject private var hotkeys = PaletteHotkeyStore.shared
+
+    var body: some View {
+        AOMSection("Launcher rows", detail: density.title) {
+            HubRowShell(icon: "list.bullet", tint: .indigo, title: "Row size",
+                        subtitle: "Compact fits more results, Spacious is easier to read. ⌘- and ⌘= change it in the launcher.") {
+                Picker("", selection: $density) {
+                    ForEach(AOMLauncherDensity.allCases) { Text($0.title).tag($0) }
+                }
+                .labelsHidden()
+                .frame(width: 140)
+                .accessibilityLabel("Launcher row size")
+            }
+        }
+        .onChange(of: density) { _, value in AOMLauncherDensity.current = value }
+        AOMSection("Launcher hotkeys", detail: hotkeys.bindings.isEmpty ? nil : "\(hotkeys.bindings.count)") {
+            if hotkeys.bindings.isEmpty {
+                HubRowShell(icon: "keyboard", tint: .indigo, title: "No hotkeys yet",
+                            subtitle: "In the launcher, select a command, app, quicklink, script or snippet and choose ⌘K › Set Hotkey….") { EmptyView() }
+            } else {
+                ForEach(hotkeys.bindings.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }) { binding in
+                    HubRowShell(icon: "keyboard", tint: .indigo, title: binding.title, subtitle: "Works from any app") {
+                        HStack(spacing: 8) {
+                            HStack(spacing: 3) {
+                                ForEach(Array(AOMShortcutKeys.parts(binding.display).enumerated()), id: \.offset) { AOMKeycap(text: $0.element) }
+                            }
+                            Button("Remove") { hotkeys.remove(binding.itemID) }
+                                .accessibilityLabel("Remove the hotkey for \(binding.title)")
+                        }
+                    }
+                }
+            }
+        }
     }
 }

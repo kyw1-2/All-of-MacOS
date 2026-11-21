@@ -1,9 +1,25 @@
 ## [7.2.0] - 2026-11-21
 
-- The launcher opens Homebrew updates, installed packages, services and searches in place. The default brew keyword searches packages locally in the launcher. Custom web quicklinks keep their configured URL.
-- Network Info, VPN/Tailscale, Spotlight filename search, folder-rule previews and the paste queue open in the same panel. Clipboard History can queue a result for Paste Next in Stack.
-- Open the model picker from root search with ⌘P, keep the question, then press Tab to ask. An unmodified Tab in the search editor submits the query, with a visible Ask AI button. Codex offers the models listed by its local CLI cache and passes the selected ID to the CLI.
-- Configure Automation collects action templates in one searchable list. Saved automations remain available in root search.
+The launcher does the work in place. Codex's 7.2 patch and DeepSeek's report 05 on Oracle, checked against the code: `docs/design-7.2-launcher.md`.
+
+### Launcher screens
+- **Homebrew in the launcher:** Homebrew Updates, Installed, Services and Search are screens of rows — ↩ upgrades, starts or installs, ⌘K holds Uninstall…, the homepage, formulae.brew.sh and Copy Install Command, ⇥ switches lists, and a detail pane shows the version and summary. Confirmations ask inside the panel; a running brew job shows its last line and Cancel.
+- **Network Info, VPN and Tailscale, Paste Stack and Folder Rule previews** are launcher rows too (↩ copies an address, connects a VPN, pastes the next item, previews a rule as a dry run). Codex's version embedded the System Tools sheets, which the keyboard couldn't reach.
+- **Search Files** (Spotlight, home folder) with a detail pane, and **folder browsing**: ↩ on a folder lists it in the launcher, folders first, with Enclosing Folder.
+- **Emoji & Symbols:** `:fire` in the root search or the Emoji screen finds emoji by English and Korean name (macOS's own names plus everyday words such as 불, 하트, 체크); ↩ types it into the app in front.
+- **Snippets:** the Typed String automations that type text, found by keyword or text; ↩ types one, New Snippet saves the clipboard or the typed text under a keyword that also expands as you type.
+- **Script Commands:** scripts in `~/Library/Application Support/AllOfMacOS/Script Commands` with a title comment become commands; Raycast's `@raycast.*` metadata works as is. Each script asks once (again after an edit); full output stays in the launcher.
+- **My Schedule and Contacts:** the next seven days with Join for meeting links, and people to copy, write, call or message. Access is asked only from the screen's Allow row; once given, the empty launcher shows the next two events and searches find people.
+
+### Launcher keys and rows
+- **Send To (⌥↩):** any row with text — a clip, an answer, a file path, an emoji, an address — goes to the front app, the clipboard, Large Type, an AI command, a web search, the Paste Stack or a new snippet.
+- **Hotkeys for launcher rows:** ⌘K › Set Hotkey… gives a command, app, Settings page, quicklink, script or snippet a key that works from any app. A key the launcher, another row, a Capture shortcut or an automation already uses is refused with its owner. Settings › Shortcuts lists and removes them.
+- **Recent searches** in the empty launcher (never passwords or tokens); choosing one puts the text back.
+- **⌘1…⌘9** run the numbered row where nothing destructive is listed; hold ⌘ to see the numbers.
+- **Clipboard filters:** All, Text, Links, Images, Files, Colors — click or ⇥.
+- **Row size:** ⌘- and ⌘= (or Settings › Shortcuts) choose 36, 44 or 52 pt rows. The list fades at its edges.
+- Ask AI from root search with ⇥ (an AppKit key monitor that leaves Korean input composing), ⌘P keeps the question while choosing a model, and Codex offers the models its CLI lists and passes the chosen one to `codex exec`.
+- Configure Automation collects action templates in one searchable screen.
 
 ## [7.1.0] - 2026-11-21
 

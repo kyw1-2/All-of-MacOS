@@ -99,8 +99,14 @@
 	<string>All of MacOS needs audio capture access to control per-app volume, routing, and equalizer settings.</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Run your configured automations when Bluetooth devices connect or disconnect.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>The launcher's My Schedule lists your next events and joins meeting links. AOM only reads events, and only after you choose Allow there.</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>The launcher's My Schedule lists your next events and joins meeting links. AOM only reads events, and only after you choose Allow there.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>AOM uses your camera only when Camera Overlay is enabled and you start a screen recording.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>The launcher's Contacts search finds people by name, company, address or number to copy, call or write to them. AOM only reads contacts, and only after you choose Allow there.</string>
 	<key>NSDesktopFolderUsageDescription</key>
 	<string>Folder Rules and Files read the Desktop when you choose it, to tidy or list files.</string>
 	<key>NSDocumentsFolderUsageDescription</key>

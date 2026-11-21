@@ -136,3 +136,84 @@ struct AOMLauncherWindowDetail: View {
         }
     }
 }
+
+/// 7.2: the detail of any other row — an emoji large, a file's icon, a
+/// person, an event, a snippet's text, a Homebrew package — with its facts.
+struct AOMLauncherInfo {
+    var title: String
+    var symbol: String?
+    var glyph: String?
+    var image: NSImage?
+    /// Longer text under the title (a snippet, a package's summary).
+    var body: String?
+    var fields: [(String, String)] = []
+
+    init(title: String, symbol: String? = nil, glyph: String? = nil, image: NSImage? = nil, body: String? = nil,
+         fields: [(String, String)] = []) {
+        self.title = title
+        self.symbol = symbol
+        self.glyph = glyph
+        self.image = image
+        self.body = body
+        self.fields = fields
+    }
+}
+
+struct AOMLauncherInfoDetail: View {
+    let info: AOMLauncherInfo
+
+    var body: some View {
+        VStack(alignment: .center, spacing: 12) {
+            Group {
+                if let glyph = info.glyph {
+                    Text(glyph).font(.system(size: 96)).frame(height: 120)
+                } else if let image = info.image {
+                    Image(nsImage: image).resizable().interpolation(.high).frame(width: 84, height: 84)
+                } else if let symbol = info.symbol {
+                    Image(systemName: symbol)
+                        .font(.system(size: 40, weight: .regular))
+                        .foregroundStyle(AOMCraftColor.inkSecondary)
+                        .frame(width: 84, height: 84)
+                        .background(AOMCraftColor.rowHover, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                }
+            }
+            .padding(.top, 18)
+            .accessibilityHidden(true)
+            Text(info.title)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(AOMCraftColor.ink)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .padding(.horizontal, 18)
+            if let body = info.body, !body.isEmpty {
+                ScrollView {
+                    Text(body)
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(AOMCraftColor.inkSecondary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 120)
+                .padding(10)
+                .background(AOMCraftColor.rowHover, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .padding(.horizontal, 18)
+            }
+            VStack(spacing: 0) {
+                ForEach(Array(info.fields.enumerated()), id: \.offset) { _, field in
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(field.0).foregroundStyle(AOMCraftColor.inkSecondary)
+                        Spacer(minLength: 12)
+                        Text(field.1).foregroundStyle(AOMCraftColor.ink).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+                    }
+                    .font(.system(size: 12))
+                    .frame(minHeight: 26)
+                    .overlay(alignment: .bottom) { Rectangle().fill(AOMCraftColor.hairline).frame(height: 0.5) }
+                }
+            }
+            .padding(.horizontal, 18)
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .combine)
+    }
+}

@@ -1,5 +1,8 @@
+import AppKit
 import SwiftUI
 
+/// 7.2: the System Tools the launcher opens in place (Raycast's Brew,
+/// Network and File Search extensions), each a screen of its own rows.
 enum LauncherTool: Hashable {
     case brew(HomebrewModel.Tab, String)
     case files(String)
@@ -10,6 +13,27 @@ enum LauncherTool: Hashable {
 
     static let entries: [Self] = [.brew(.outdated, ""), .brew(.installed, ""), .brew(.services, ""),
                                   .brew(.search, ""), .vpn, .network, .files(""), .rulePreview, .pasteStack]
+    /// What the field says: the search itself, or a filter of the rows.
+    var placeholder: String {
+        switch self {
+        case .brew(.search, _): return "Formula or app name, such as ripgrep or firefox…"
+        case .brew: return "Filter packages…"
+        case .files: return "File or folder name…"
+        case .pasteStack: return "Filter the queue…"
+        case .rulePreview: return "Search folder rules…"
+        case .vpn: return "Filter connections…"
+        case .network: return "Filter addresses…"
+        }
+    }
+
+    /// The field is the search itself (brew search, Spotlight), not a filter.
+    var takesQuery: Bool {
+        switch self {
+        case .brew(.search, _), .files: return true
+        default: return false
+        }
+    }
+
     static func packageQuery(_ text: String) -> String {
         text.lowercased().hasPrefix("search ") ? String(text.dropFirst(7)).trimmingCharacters(in: .whitespaces) : text
     }
@@ -75,51 +99,47 @@ enum LauncherTool: Hashable {
     }
 }
 
-struct LauncherToolContent: View {
-    let tool: LauncherTool
-    let back: () -> Void
-    @StateObject private var toasts = AOMToastModel()
-
-    var body: some View {
-        switch tool {
-        case .brew: HomebrewSheet(model: .shared, back: back)
-        case .files(let query): LauncherFileSearch(initial: query, back: back)
-        case .pasteStack: LauncherStackContents(back: back)
-        case .rulePreview: LauncherRulePreview(back: back)
-        case .vpn: VPNSheet(model: .shared, back: back)
-        case .network: NetworkInfoSheet(toasts: toasts, back: back)
-        }
-    }
-}
-
-/// Handle an unmodified Tab before AppKit's field editor moves focus. Keep
-/// IME composition, keyboard navigation in other windows and Shift-Tab native.
+/// 7.2: the launcher's own keys, read before AppKit's field editor acts on
+/// them — Tab (Quick AI, the next filter), Esc on a screen, ⌘1…⌘9, ⌥↩,
+/// ⌘- and ⌘=, and the key a new hotkey is recorded from — plus ⌘ held,
+/// for the ⌘1…⌘9 hints. A key typed while an input method composes
+/// (Korean, Japanese) always goes to the field; other windows and sheets
+/// keep their keys.
 struct PaletteNavigationKeys: NSViewRepresentable {
     let handle: (NSEvent) -> Bool
+    var flagsChanged: ((NSEvent.ModifierFlags) -> Void)? = nil
 
     final class Anchor: NSView {
         var monitor: Any?
         var handle: ((NSEvent) -> Bool)?
+        var flagsChanged: ((NSEvent.ModifierFlags) -> Void)?
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             if let monitor { NSEvent.removeMonitor(monitor); self.monitor = nil }
             guard window != nil else { return }
-            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
                 guard let self, let window = self.window, event.window === window, window.isKeyWindow,
-                      window.attachedSheet == nil, NSApp.modalWindow == nil,
-                      event.keyCode == 48 || event.keyCode == 53,
-                      event.modifierFlags.intersection([.shift, .command, .control, .option, .function]).isEmpty,
-                      (window.firstResponder as? NSTextView)?.hasMarkedText() != true,
+                      window.attachedSheet == nil, NSApp.modalWindow == nil else { return event }
+                if event.type == .flagsChanged {
+                    self.flagsChanged?(event.modifierFlags)
+                    return event
+                }
+                guard (window.firstResponder as? NSTextView)?.hasMarkedText() != true,
                       self.handle?(event) == true else { return event }
                 return nil
             }
         }
     }
+
     func makeNSView(context: Context) -> Anchor { Anchor() }
-    func updateNSView(_ view: Anchor, context: Context) { view.handle = handle }
+    func updateNSView(_ view: Anchor, context: Context) {
+        view.handle = handle
+        view.flagsChanged = flagsChanged
+    }
     static func dismantleNSView(_ view: Anchor, coordinator: ()) {
         view.handle = nil
+        view.flagsChanged = nil
         if let monitor = view.monitor { NSEvent.removeMonitor(monitor); view.monitor = nil }
     }
 }

@@ -60,7 +60,33 @@ final class AOMLauncherController: NSObject, NSWindowDelegate {
 
     func show() { show(initialRoute: nil) }
 
-    private func show(initialRoute: PaletteRoute?) {
+    /// 7.2: a launcher hotkey (⌘K › Set Hotkey…). An app opens at once; any
+    /// other row is found by a launcher that stays invisible unless the row
+    /// opens a screen (or can't be found), so a command runs without a flash.
+    func run(_ hotkey: PaletteHotkey) {
+        if hotkey.itemID.hasPrefix("app.") {
+            let url = URL(fileURLWithPath: String(hotkey.itemID.dropFirst("app.".count)))
+            if FileManager.default.fileExists(atPath: url.path) {
+                NSWorkspace.shared.openApplication(at: url, configuration: .init())
+                return
+            }
+        }
+        if isVisible { hideImmediatelyForHandoff() }
+        show(initialRoute: nil, runItem: hotkey)
+    }
+
+    /// Fades in a launcher opened invisibly for a hotkey.
+    func reveal() {
+        guard let panel, panel.isVisible, !hiding, panel.alphaValue < 1 else { return }
+        PaletteInputSource.switchToEnglish()
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = QuickCommandPalette.reducesMotion ? 0.05 : 0.12
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            panel.animator().alphaValue = 1
+        }
+    }
+
+    private func show(initialRoute: PaletteRoute?, runItem: PaletteHotkey? = nil) {
         guard !isVisible, let appState = AppDelegate.current?.appState ?? AppState.current else { return }
         // 7.0: one floating surface at a time — the shelf, the menu bar
         // panel, the switcher or the drop shelf goes before the launcher comes.
@@ -68,7 +94,8 @@ final class AOMLauncherController: NSObject, NSWindowDelegate {
         presentation &+= 1
         hiding = false
         // Raycast's "auto-switch input source": type commands in English.
-        PaletteInputSource.switchToEnglish()
+        // A hotkey's command that never shows the panel leaves it alone.
+        if runItem == nil { PaletteInputSource.switchToEnglish() }
         let own = ProcessInfo.processInfo.processIdentifier
         if let front = NSWorkspace.shared.frontmostApplication, front.processIdentifier != own {
             previousApp = front
@@ -79,7 +106,7 @@ final class AOMLauncherController: NSObject, NSWindowDelegate {
         panelSize = Self.size(fitting: Self.screenUnderPointer()?.visibleFrame ?? CGRect(origin: .zero, size: Self.size))
         let presented = Binding<Bool>(get: { [weak self] in self?.isVisible ?? false },
                                       set: { [weak self] open in if !open { self?.dismiss(restoringFocus: true) } })
-        let root = QuickCommandPalette(isPresented: presented, host: .launcher, initialRoute: initialRoute)
+        let root = QuickCommandPalette(isPresented: presented, host: .launcher, initialRoute: initialRoute, runItem: runItem)
             .environmentObject(appState)
             .accentColor(appState.accentColorChoice.color)
             .tint(appState.accentColorChoice.color)
@@ -95,6 +122,8 @@ final class AOMLauncherController: NSObject, NSWindowDelegate {
         // activates AOM as well, should typing ever not reach the panel.
         if Self.activatesApp || PresetManager.isUIPreview { NSApp.activate(ignoringOtherApps: true) }
         panel.makeKeyAndOrderFront(nil)
+        // A hotkey's command decides first whether the panel is seen at all.
+        if runItem != nil { watchClicksOutside(); return }
         NSAnimationContext.runAnimationGroup { context in
             context.duration = PresetManager.isUIPreview ? 0 : QuickCommandPalette.reducesMotion ? 0.05 : 0.12
             context.timingFunction = CAMediaTimingFunction(name: .easeOut)
