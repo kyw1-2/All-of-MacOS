@@ -998,14 +998,15 @@ enum ParityActions {
             GestureHUD.shared.show(title: on ? "Airplane Mode On" : "Airplane Mode Off", icon: on ? "airplane" : "wifi")
             completion(problem == nil)
         case .dismissNotifications:
-            let closed = NotificationDismisser.dismissAll()
-            switch closed {
-            case .success(let count):
-                GestureHUD.shared.show(title: count == 0 ? "No Notifications" : "Closed \(count) Notification\(count == 1 ? "" : "s")", icon: "bell.slash")
-                completion(true)
-            case .failure(let error):
-                log(error.message)
-                completion(false)
+            NotificationDismisser.dismissAllInBackground { closed in
+                switch closed {
+                case .success(let count):
+                    GestureHUD.shared.show(title: count == 0 ? "No Notifications" : "Closed \(count) Notification\(count == 1 ? "" : "s")", icon: "bell.slash")
+                    completion(true)
+                case .failure(let error):
+                    log(error.message)
+                    completion(false)
+                }
             }
         case .showEmojiPicker:
             if MenuBarExtras.pressEditMenuItem(prefix: "Emoji") || MenuBarExtras.pressEditMenuItem(prefix: "이모티콘") { completion(true); return }

@@ -382,6 +382,9 @@ final class GestureHUD {
             showAtNotch(title: title, detail: detail, icon: icon, screen: screen, notch: notch)
             return
         }
+        // One HUD at a time: the other one's fade-out is cancelled by the new
+        // generation, so it is taken down here (Gemini review).
+        notchPanel?.orderOut(nil)
 
         // Apple-style native OSD HUD card: 200 x 160 pt, balanced & ultra-translucent.
         // A detail longer than its one-line badge (an outcome with a reason or
@@ -475,6 +478,7 @@ final class GestureHUD {
         panel.hasShadow = false
         panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.mainMenuWindow)) + 2)
         notchPanel = panel
+        self.panel?.orderOut(nil)
         let token = UUID()
         generation = token
         let host = NSHostingView(rootView: NotchHUDView(title: String(title.prefix(60)), detail: detail.map { String($0.prefix(90)) },

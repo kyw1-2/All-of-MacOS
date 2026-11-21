@@ -60,9 +60,12 @@ enum AOMRadios {
     static func setAirplaneMode(_ on: Bool) -> String? {
         var problems: [String] = []
         if on {
+            let before = saved
             if saved == nil || wifiOn || bluetoothOn { saved = Saved(wifi: wifiOn, bluetooth: bluetoothOn) }
             if let problem = setWiFi(false) { problems.append(problem) }
             if !setBluetooth(false) { problems.append("Bluetooth power isn't available") }
+            // Nothing turned off: Airplane Mode didn't start, so nothing to restore.
+            if problems.count == 2 { saved = before }
         } else {
             let back = restore(from: saved)
             if back.wifi, let problem = setWiFi(true) { problems.append(problem) }
@@ -96,6 +99,14 @@ enum NotificationDismisser {
         return titled.first { closeNames.contains($0.1) }?.0
     }
 
+    /// Off the main thread: a run can take seconds with many notifications.
+    static func dismissAllInBackground(_ completion: @escaping @MainActor (Result<Int, AOMAIError>) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = dismissAll()
+            DispatchQueue.main.async { MainActor.assumeIsolated { completion(result) } }
+        }
+    }
+
     static func dismissAll() -> Result<Int, AOMAIError> {
         guard AXIsProcessTrusted() else {
             return .failure(AOMAIError(message: "Dismiss All Notifications needs Accessibility for AOM."))
@@ -106,10 +117,20 @@ enum NotificationDismisser {
         let root = AXUIElementCreateApplication(app.processIdentifier)
         AXUIElementSetMessagingTimeout(root, 1)
         var closed = 0
+        var last: AXUIElement?
         // Each press changes the tree, so it is read again after every one.
+        // A notification that is still there after its press (a long close
+        // animation, or one that won't close) gets one more wait, then the
+        // run stops instead of pressing it again and again.
         for _ in 0..<60 {
             guard let (element, action) = firstClosable(in: root, depth: 0) else { break }
+            if let last, CFEqual(last, element) {
+                usleep(400_000)
+                guard let again = firstClosable(in: root, depth: 0), !CFEqual(again.0, element) else { break }
+                continue
+            }
             guard AXUIElementPerformAction(element, action as CFString) == .success else { break }
+            last = element
             closed += 1
             usleep(120_000)
         }
