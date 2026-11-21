@@ -88,8 +88,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// microphone page links, the clipboard stack's library button).
     @MainActor static weak var current: AppDelegate?
     var statusItem: NSStatusItem?
-    /// The 6.0 control panel shown from the menu bar icon.
-    private var statusPopover: NSPopover?
+    /// Keeps the UI-preview menu bar window alive; written only, on purpose.
     private var previewPanelWindow: NSWindow?
     var appState: AppState? {
         didSet {
@@ -504,68 +503,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         MainActor.assumeIsolated { if let appState { appState.setSnappingEnabled(!appState.currentPreset.snappingEnabled) } }
     }
 
-    // MARK: - Capture actions
-    //
-    // Each of these forwards to the coordinator, which owns the capture path
-    // itself. They are separate selectors rather than one dispatching method
-    // because `NSMenuItem` identifies its action by selector, not by an argument.
-
-    @objc func quickAccessDiagnosticsAction() {
-        MainActor.assumeIsolated { QuickAccessDiagnosticsController.shared.present() }
-    }
-
-    @objc func importQuickAccessFileAction() {
-        MainActor.assumeIsolated { CaptureCoordinator.shared.chooseQuickAccessFiles() }
-    }
-
-    @objc func restoreRecentQuickAccessAction() {
-        MainActor.assumeIsolated { CaptureCoordinator.shared.restoreRecentlyClosedOverlay() }
-    }
-
-    @objc func toggleQuickAccessVisibilityAction() {
-        MainActor.assumeIsolated { CaptureCoordinator.shared.toggleQuickAccessVisibility() }
-    }
-
-    @objc func saveAllQuickAccessAction() {
-        MainActor.assumeIsolated { CaptureCoordinator.shared.saveAllQuickAccess() }
-    }
-
-    @objc func closeAllQuickAccessAction() {
-        MainActor.assumeIsolated { CaptureCoordinator.shared.closeAllQuickAccess() }
-    }
-
-    @objc func captureAllInOneAction() { MainActor.assumeIsolated { CaptureCoordinator.shared.captureAllInOne() } }
-    @objc func captureAreaAction() { MainActor.assumeIsolated { CaptureCoordinator.shared.captureArea() } }
-    @objc func captureFullscreenAction() { MainActor.assumeIsolated { CaptureCoordinator.shared.captureFullscreen() } }
-    @objc func captureWindowAction() { MainActor.assumeIsolated { CaptureCoordinator.shared.captureWindowFromPicker() } }
-    @objc func captureActiveWindowAction() { MainActor.assumeIsolated { CaptureCoordinator.shared.captureActiveWindow() } }
-    @objc func pauseRecordingAction() { MainActor.assumeIsolated { ScreenRecordingService.shared.togglePause() } }
-    @objc func openAnnotationProjectAction() { MainActor.assumeIsolated { AnnotationEditorController.shared.chooseProject() } }
-    @objc func recordScreenAction() { MainActor.assumeIsolated { ScreenRecordingService.shared.toggleRecording() } }
-    @objc func recordFullscreenAction() { MainActor.assumeIsolated { ScreenRecordingService.shared.recordFullscreenUnderPointer() } }
-    @objc func captureWindowUnderCursorAction() { MainActor.assumeIsolated { CaptureCoordinator.shared.captureWindowUnderCursor() } }
-    @objc func capturePreviousAreaAction() { MainActor.assumeIsolated { CaptureCoordinator.shared.capturePreviousArea() } }
-    @objc func captureScrollingAction() { MainActor.assumeIsolated { CaptureCoordinator.shared.captureScrolling() } }
-    @objc func captureScrollingHorizontalAction() { MainActor.assumeIsolated { CaptureCoordinator.shared.captureScrollingHorizontal() } }
-    @objc func captureAllDisplaysAction() { MainActor.assumeIsolated { CaptureCoordinator.shared.captureAllDisplays() } }
-    @objc func captureTextWithBreaksAction() { MainActor.assumeIsolated { CaptureCoordinator.shared.captureText(keepsLineBreaks: true) } }
-    @objc func captureTextWithoutBreaksAction() { MainActor.assumeIsolated { CaptureCoordinator.shared.captureText(keepsLineBreaks: false) } }
-    @objc func captureSelfTimerAction() { MainActor.assumeIsolated { CaptureCoordinator.shared.captureWithSelfTimer() } }
-    @objc func annotateLastAction() { MainActor.assumeIsolated { AnnotationEditorController.shared.openMostRecent() } }
-    @objc func pinLastAction() { MainActor.assumeIsolated { CaptureActions.pinLastCapture() } }
-    @objc func copyLastAction() { MainActor.assumeIsolated { CaptureActions.copyLastCapture() } }
-    @objc func saveLastAction() { MainActor.assumeIsolated { CaptureActions.saveLastCapture() } }
-    @objc func ocrLastAction() { MainActor.assumeIsolated { CaptureActions.copyTextFromLastCapture() } }
-    @objc func captureHistoryAction() { MainActor.assumeIsolated { CaptureHistoryWindowController.shared.present() } }
-    @objc func unpinAllAction() { MainActor.assumeIsolated { PinnedScreenshotController.shared.unpinAll() } }
-    @objc func toggleCaptureOverlayAction() {
-        MainActor.assumeIsolated {
-            CaptureSettings.overlayEnabled.toggle()
-            GestureHUD.shared.show(title: "Quick Access Overlay",
-                                   detail: CaptureSettings.overlayEnabled ? "On" : "Off")
-        }
-    }
-
     @objc private func showCheatSheet() { GestureHUD.shared.toggleCheatSheet() }
     @objc private func toggleHUD() {
         let enabled = UserDefaults.standard.object(forKey: "AOMHUDEnabled") as? Bool ?? true
@@ -929,7 +866,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc func keepAwakeFor(_ sender: NSMenuItem) {
         let minutes = sender.tag >= 0 ? sender.tag : nil
-        MainActor.assumeIsolated { KeepAwakeService.shared.start(minutes: minutes, keepDisplay: false) }
+        _ = MainActor.assumeIsolated { KeepAwakeService.shared.start(minutes: minutes, keepDisplay: false) }
     }
 
     @objc func keepAwakeOff() { MainActor.assumeIsolated { KeepAwakeService.shared.stop() } }

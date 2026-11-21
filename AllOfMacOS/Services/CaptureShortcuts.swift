@@ -279,7 +279,7 @@ final class CaptureShortcuts: ObservableObject {
         case .togglePinWindowUnderCursor: WindowPinningService.shared.perform(.togglePinWindowUnderCursor)
         case .unpinAllWindows: WindowPinningService.shared.unpinAll()
         case .windowSwitcher: MainActor.assumeIsolated { WindowSwitcherController.shared.show() }
-        case .keepAwake: MainActor.assumeIsolated { KeepAwakeService.shared.toggle(minutes: nil, keepDisplay: false) }
+        case .keepAwake: _ = MainActor.assumeIsolated { KeepAwakeService.shared.toggle(minutes: nil, keepDisplay: false) }
         case .appAudioMixer: MainActor.assumeIsolated { AppAudioMixerService.shared.showPanel() }
         case .muteFrontAppAudio: MainActor.assumeIsolated { AppAudioMixerService.shared.toggleMuteFront() }
         case .measureScreen: MainActor.assumeIsolated { ScreenRulerModule.measure() }

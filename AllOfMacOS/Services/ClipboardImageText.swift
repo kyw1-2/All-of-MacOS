@@ -1,6 +1,5 @@
 import AppKit
 import ImageIO
-import Vision
 
 /// Text inside image items, with where it is (parity gap P04: OCR region
 /// search). Indexing keeps each recognised line's box, normalised to the

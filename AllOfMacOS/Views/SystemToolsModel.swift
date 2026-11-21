@@ -1342,20 +1342,6 @@ final class SystemToolsModel: ObservableObject {
         _ = menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
     }
 
-    func promptText(_ title: String, _ message: String, placeholder: String) -> String? {
-        let alert = NSAlert()
-        alert.messageText = title
-        alert.informativeText = message
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
-        field.placeholderString = placeholder
-        alert.accessoryView = field
-        alert.window.initialFirstResponder = field
-        alert.addButton(withTitle: "OK")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
-        return field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
     func pickFolder(message: String) -> URL? {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true

@@ -26,7 +26,11 @@ struct AudioIOGapDetector: Equatable {
         defer { expected = sampleTime + Double(frames) }
         guard let expected else { return 0 }
         let delta = sampleTime - expected
-        guard delta >= 1 else { return 0 }
+        // 7.3.1 (audit AUD-02, checked): a slip of a frame or a few is clock
+        // jitter, not lost audio, and restarting the fade-in on it dipped
+        // continuous playback. A gap is at least half a cycle missing; the
+        // fade-in after a real gap (silence → signal) stays as it is.
+        guard delta >= max(1, Double(frames) / 2) else { return 0 }
         return Int(min(delta, 1_000_000_000).rounded())
     }
 }

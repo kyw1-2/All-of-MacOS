@@ -138,6 +138,19 @@ enum AudioSystemLoad {
         guard !parts.isEmpty else { return nil }
         return "Crackle likely: " + parts.joined(separator: " and ")
     }
+
+    /// 7.3.1 (audit AUD-08): the measured state and what it does to audio,
+    /// without naming apps or guessing at causes ("charging in the sun").
+    static func detail(_ causes: [Cause]) -> String {
+        causes.map { cause -> String in
+            switch cause {
+            case .memory(let gb):
+                return "\(gb) GB of memory is swapped to disk; an app's audio thread that waits for paged memory misses its 2.7 ms deadline. Closing the apps using the most memory frees it."
+            case .heat(let state):
+                return "Thermal state is \(state == .critical ? "critical" : "serious"); macOS slows the processor and audio threads run late until it cools."
+            }
+        }.joined(separator: " ")
+    }
 }
 
 extension AudioRecovery {
@@ -145,10 +158,7 @@ extension AudioRecovery {
     static func checkHomePod() {
         let causes = AudioSystemLoad.current()
         if let line = AudioSystemLoad.summary(causes) {
-            let advice = causes.contains { if case .memory = $0 { return true } else { return false } }
-                ? "Quit apps you are not using (browser tabs, Ulanzi Studio) — audio threads miss their deadline when memory is swapped."
-                : "Let the Mac cool down; heavy apps and charging in the sun make audio threads late."
-            GestureHUD.shared.show(title: line, detail: advice)
+            GestureHUD.shared.show(title: line, detail: AudioSystemLoad.detail(causes))
         } else {
             GestureHUD.shared.show(title: "No load problem found",
                                    detail: "Memory and temperature are fine. If it still crackles, try Reconnect App Audio.")

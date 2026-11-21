@@ -219,7 +219,13 @@ final class SharedOutputRenderer {
         engine.attach(node)
         engine.connect(node, to: engine.mainMixerNode, format: format)
         engine.prepare()
-        do { try engine.start() } catch { engine.stop(); return nil }
+        do { try engine.start() } catch {
+            // 7.3.1 (audit AUD-04): the reason was dropped; it goes to the log now.
+            let code = (error as NSError).code
+            GestureLog.shared.logFromAnyThread("Audio output \(device.name) didn't start: \(error.localizedDescription) (\(code))", level: .error)
+            engine.stop()
+            return nil
+        }
         let graph = DeviceGraph(engine: engine, bus: bus, node: node, deviceID: device.id)
         graph.eventSource = AudioEventLog.shared.register(name: "output:\(uid)", rings: [bus.events]) { [weak bus] in
             ["output.limiterEngagements": bus?.limiterEngagements.load() ?? 0]

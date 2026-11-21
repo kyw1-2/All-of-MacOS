@@ -155,12 +155,6 @@ enum CleanupTools {
         return identity
     }
 
-    /// Each leftover with how it matched (see `LeftoverMatcher.matchKind`).
-    static func leftoverMatches(bundleID: String, appName: String, library: URL)
-        -> [(candidate: CleanupCandidate, kind: LeftoverMatcher.MatchKind)] {
-        leftoverScan(bundleID: bundleID, appName: appName, library: library).matches
-    }
-
     /// One pass over the leftover folders: the matches, and (6.8) the
     /// folders that exist but could not be listed — TCC-protected ones are
     /// asked once, and the review can say what it did not check.

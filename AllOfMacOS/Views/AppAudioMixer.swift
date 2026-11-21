@@ -1350,10 +1350,18 @@ struct AirPlayProcessingControls: View {
             .disabled(!service.soundEnabled)
     }
 
+    /// 7.3.1 (audit AUD-03): the setting drives SharedOutputRenderer's
+    /// queued AirPlay path only. The direct path (the default since 6.5)
+    /// never reads it, so the switch is shown only when the queued path is in use.
+    private var usesQueuedAirPlay: Bool { !AirPlayDirectStream.isEnabled() }
+
+    @ViewBuilder
     private var stableDynamicsToggle: some View {
-        Toggle("Stable AirPlay dynamics (reduce crackling)", isOn: $service.stableAirPlayDynamics)
-            .toggleStyle(.switch).controlSize(.small)
-            .disabled(!service.soundEnabled || !service.airPlayProcessingEnabled)
+        if usesQueuedAirPlay {
+            Toggle("Stable AirPlay dynamics (reduce crackling)", isOn: $service.stableAirPlayDynamics)
+                .toggleStyle(.switch).controlSize(.small)
+                .disabled(!service.soundEnabled || !service.airPlayProcessingEnabled)
+        }
     }
 
     private var status: some View {
@@ -1363,7 +1371,7 @@ struct AirPlayProcessingControls: View {
             } else if service.airPlayPreparing {
                 Label("Connecting — current audio continues", systemImage: "airplay.audio")
             } else if service.airPlayProcessingActive {
-                Label(service.stableAirPlayDynamics
+                Label(service.stableAirPlayDynamics && usesQueuedAirPlay
                       ? "App volume and EQ → HomePod; output-wide Magic Boost bypassed for stability"
                       : "App volume, EQ and boost → HomePod", systemImage: "airplay.audio")
             } else {

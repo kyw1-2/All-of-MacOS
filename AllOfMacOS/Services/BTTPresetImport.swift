@@ -604,7 +604,7 @@ enum BTTPresetImport {
         // BTTActionsToExecute, and dedicated category arrays.
         var groups: [Int: [TriggerAction]] = [:]
         var order: [Int] = []
-        var mappedCount = 0, total = 0
+        var total = 0
         func append(_ category: Int, _ result: ActionResult) throws {
             total += 1
             guard total <= maximumActions else { throw ImportError.invalid("A trigger can hold at most \(maximumActions) actions.") }
@@ -617,7 +617,6 @@ enum BTTPresetImport {
                 if !order.contains(category) { order.append(category) }
                 groups[category, default: []].append(placeholder(dropped))
             case .mapped(let action, let notes, let review):
-                mappedCount += 1
                 out.approximations += notes
                 if let review { out.review.append(review) }
                 if !order.contains(category) { order.append(category) }
@@ -642,6 +641,10 @@ enum BTTPresetImport {
                 try append(category, try action(Fields(raw), context: context, legacy: false))
             }
         }
+        // 7.3.1 (audit Item 02): counted from the result, not from a variable
+        // the nested function mutates — the compiler took that one for
+        // always 0 and marked the loop below "will never be executed".
+        let mappedCount = groups.values.reduce(0) { $0 + $1.filter { !$0.isPlaceholder }.count }
         guard mappedCount > 0 else {
             if out.dropped.isEmpty { throw ImportError.invalid("The trigger has no actions.") }
             throw ImportError.invalid("No action could be imported: " + out.dropped.map { "\($0.name) (action \($0.id))" }.joined(separator: ", ") + ".")

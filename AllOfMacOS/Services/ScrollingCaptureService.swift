@@ -1,7 +1,6 @@
 import Foundation
 import AppKit
 import CoreGraphics
-import ScreenCaptureKit
 
 /// Interactive scrolling capture and conservative image overlap matching.
 /// The session can observe manual scrolling or generate small automatic steps.

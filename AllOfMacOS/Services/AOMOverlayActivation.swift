@@ -80,25 +80,6 @@ enum AOMOverlayActivation {
         return windowDirectlyAbove(in: list, ownPID: ProcessInfo.processInfo.processIdentifier)
     }
 
-    /// Hides the main window immediately for screen captures so it does not
-    /// obstruct the desktop or appear inside captured frames. 6.8: no longer
-    /// used by captures (see `beginCapture`); kept for explicit callers.
-    static func hideMainWindow() {
-        MainActor.assumeIsolated {
-            suppressReopenUntil = Date().addingTimeInterval(3)
-            let nonPanels = NSApp.windows.filter { !($0 is NSPanel) && $0.canBecomeMain }
-            for w in nonPanels {
-                if w.isVisible {
-                    w.orderOut(nil)
-                }
-            }
-            if let window = mainWindow, window.isVisible {
-                window.orderOut(nil)
-            }
-            CATransaction.flush()
-        }
-    }
-
     /// Activate for a general overlay flow (clipboard, annotation, hud) without
     /// bringing up a main window that was previously hidden.
     /// If the main window was already visible on screen, it is left untouched.

@@ -2548,53 +2548,6 @@ struct QuickCommandPalette: View {
         .accessibilityElement(children: .combine)
     }
 
-    /// The conversation: each question, then its answer (Markdown inline,
-    /// selectable), errors in red; follows the newest line.
-    private var aiTranscript: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                VStack(alignment: .leading, spacing: AOMSpace.x3) {
-                    ForEach(ai.messages) { message in
-                        switch message.role {
-                        case .user:
-                            Text(message.text)
-                                .font(AOMFont.body.weight(.semibold))
-                                .foregroundStyle(AOMCraftColor.inkSecondary)
-                                .lineLimit(4)
-                                .textSelection(.enabled)
-                        case .assistant:
-                            if message.text.isEmpty {
-                                HStack(spacing: AOMSpace.x2) {
-                                    ProgressView().controlSize(.small)
-                                    Text("Thinking…").font(AOMFont.callout).foregroundStyle(AOMCraftColor.inkTertiary)
-                                }
-                            } else {
-                                Text(Self.markdown(message.text))
-                                    .font(AOMFont.body)
-                                    .foregroundStyle(AOMCraftColor.ink)
-                                    .textSelection(.enabled)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                        case .error:
-                            Label(message.text, systemImage: "exclamationmark.triangle.fill")
-                                .font(AOMFont.callout)
-                                .foregroundStyle(AOMColor.dangerText)
-                                .padding(AOMSpace.x2)
-                                .background(AOMColor.danger.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                                .textSelection(.enabled)
-                        }
-                    }
-                    Color.clear.frame(height: 1).id("ai.bottom")
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, AOMSpace.x4)
-                .padding(.vertical, AOMSpace.x3)
-            }
-            .onChange(of: ai.messages) { _, _ in proxy.scrollTo("ai.bottom", anchor: .bottom) }
-            .onAppear { proxy.scrollTo("ai.bottom", anchor: .bottom) }
-        }
-    }
-
     static func markdown(_ text: String) -> AttributedString {
         (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
             ?? AttributedString(text)

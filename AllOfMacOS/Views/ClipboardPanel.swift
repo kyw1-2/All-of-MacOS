@@ -205,7 +205,7 @@ final class ClipboardPanelController {
             state.query = ""
             state.searchExpanded = false
             state.searchFieldActive = false
-            panel?.makeFirstResponder(nil)
+            _ = panel?.makeFirstResponder(nil)
             state.clearSelection()
         } else if !state.selected.isEmpty {
             state.clearSelection()
@@ -224,14 +224,14 @@ final class ClipboardPanelController {
                      extend: modifiers.contains(.shift), toggle: modifiers.contains(.command))
         // Clear the native field editor too, so arrows/Space act on this card
         // immediately after the user leaves the search field.
-        if panel?.firstResponder is NSTextView { panel?.makeFirstResponder(nil) }
+        if panel?.firstResponder is NSTextView { _ = panel?.makeFirstResponder(nil) }
     }
 
     func openPreview(_ entry: ClipboardEntry) {
         previewNavigationGeneration += 1
         state.searchFieldActive = false
         state.select(entry.id, in: state.displayedResults(in: store))
-        panel?.makeFirstResponder(nil)
+        _ = panel?.makeFirstResponder(nil)
         state.preview = entry
     }
 
@@ -240,7 +240,7 @@ final class ClipboardPanelController {
         state.preview = nil
         state.searchFieldActive = false
         panel?.makeKeyAndOrderFront(nil)
-        panel?.makeFirstResponder(nil)
+        _ = panel?.makeFirstResponder(nil)
     }
 
     func movePreview(from id: UUID, offset: Int) {
@@ -307,7 +307,7 @@ final class ClipboardPanelController {
         panel.sharingType = ClipboardPreferences.shared.showInScreenCapture ? .readOnly : .none
         if let container = panel.contentView as? ClipboardPanelContainerView, panel.firstResponder !== container,
            !((panel.firstResponder as? NSTextView)?.isEditable ?? false) {
-            panel.makeFirstResponder(container)
+            _ = panel.makeFirstResponder(container)
         }
         // A new presentation may interrupt a previous slide-out animation.
         panel.alphaValue = 1
@@ -580,7 +580,7 @@ final class ClipboardPanelController {
             if self.state.searchFieldActive && [48, 125].contains(event.keyCode),
                event.modifierFlags.intersection([.command, .option, .control]).isEmpty {
                 self.state.searchFieldActive = false
-                self.panel?.makeFirstResponder(nil)
+                _ = self.panel?.makeFirstResponder(nil)
                 if let first = self.state.displayedResults(in: self.store).first {
                     self.state.select(first.id, in: self.state.displayedResults(in: self.store))
                 }

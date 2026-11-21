@@ -286,7 +286,6 @@ struct AddTriggerSheet: View {
         case .drawings: return !drawingSamples.isEmpty && !drawingName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         case .otherTriggers: return canAddOtherTrigger
         case .all: return false
-        default: return true
         }
     }
 

@@ -103,7 +103,6 @@ struct AOMMenuBarPanel: View {
     /// 6.8 (6.7 report §5): the first three quick actions of the user's own
     /// Workspace order (Customize Workspace), labelled — not a fixed six.
     @ObservedObject private var layout = AOMWorkspaceLayout.shared
-    private var quickKinds: [WorkspaceQuickActionKind] { Array(layout.visibleQuickActions.prefix(3)) }
 
     /// 7.0: drawn by the craft panel (Control Center 26): live sessions on
     /// top, tinted tiles, labelled quick actions with More for the rest,
@@ -179,42 +178,6 @@ struct AOMMenuBarPanel: View {
                   onToggle: model.toggleMic),
         ]
         return tiles
-    }
-
-    /// Raycast's search bar as the panel's first row: ⌘K from anywhere.
-    private var launcherBar: some View {
-        let shape = RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous)
-        return Button {
-            actions.close()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { actions.openLauncher() }
-        } label: {
-            HStack(spacing: AOMSpace.x2) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(AOMColor.accent)
-                // 6.7: it opens the launcher; it is not a field to type in here.
-                Text("Open Launcher…")
-                    .font(AOMFont.body)
-                    .foregroundStyle(AOMColor.text)
-                Text("Kill Apps, Uninstall, Sound …")
-                    .font(AOMFont.caption)
-                    .foregroundStyle(AOMColor.textTertiary)
-                    .lineLimit(1)
-                Spacer(minLength: 0)
-                if AOMLauncherShortcut.isRegistered {
-                    HStack(spacing: 3) { ForEach(AOMLauncherShortcut.current.keycaps, id: \.self) { AOMKeycap(text: $0) } }
-                }
-            }
-            .padding(.horizontal, AOMSpace.x2 + AOMSpace.x0_5)
-            .frame(height: 36)
-            .background(Color.primary.opacity(0.06), in: shape)
-            .overlay(shape.strokeBorder(Color.white.opacity(0.14), lineWidth: 0.75))
-            .contentShape(shape)
-        }
-        .buttonStyle(.plain)
-        .help(AOMLauncherShortcut.isRegistered ? "The launcher — \(AOMLauncherShortcut.current.displayString) from any app"
-                                                : "The launcher (no global key is registered; set one in Settings › Shortcuts)")
-        .accessibilityLabel("Open Launcher")
     }
 
     private var batteryRow: some View {
@@ -312,70 +275,5 @@ struct AOMMenuBarPanel: View {
         .background(tint.opacity(0.1), in: RoundedRectangle(cornerRadius: AOMRadius.well + 2, style: .continuous))
     }
 
-    private func tile(_ title: String, _ symbol: String, _ hue: Color, on: Bool, enabled: Bool = true,
-                      _ toggle: @escaping () -> Void) -> some View {
-        AOMMenuBarTile(title: title, symbol: symbol, hue: hue, on: on, enabled: enabled, toggle: toggle)
-    }
-
-    private var footer: some View {
-        HStack(spacing: AOMSpace.x2) {
-            Button("Open All of MacOS") { actions.close(); actions.openWindow() }
-                .buttonStyle(AOMPrimaryButtonStyle())
-            Button { actions.close(); actions.openSettings() } label: { Image(systemName: "gearshape") }
-                .help("Settings…")
-                .accessibilityLabel("Settings")
-            Spacer()
-            // 6.7: Quit lives in the full menu (and ⌘Q), not next to Settings.
-            Button { actions.showAllCommands() } label: { Image(systemName: "ellipsis") }
-                .help("All commands and Quit — the full menu (also ⌥-click the icon)")
-                .accessibilityLabel("All commands and Quit")
-        }
-        .controlSize(.small)
-    }
-}
-
-/// A switch as a Control Center tile: its glyph in a circle that fills
-/// with the tool's hue when on, the name, and On/Off.
-private struct AOMMenuBarTile: View {
-    let title: String
-    let symbol: String
-    let hue: Color
-    let on: Bool
-    var enabled = true
-    let toggle: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: toggle) {
-            HStack(spacing: AOMSpace.x2) {
-                Image(systemName: symbol)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(on ? Color.white : AOMColor.textSecondary)
-                    .frame(width: 26, height: 26)
-                    .background(on ? hue : AOMColor.track, in: Circle())
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(title).font(AOMFont.callout.weight(.medium)).foregroundStyle(AOMColor.text).lineLimit(1)
-                    Text(on ? "On" : "Off").font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, AOMSpace.x2)
-            .frame(height: 46)
-            // 6.5: an On tile glows faintly in its tool's hue (Control Center).
-            .background {
-                let shape = RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous)
-                shape.fill(on ? hue.opacity(0.14) : (hovering ? AOMColor.rowHover : AOMColor.surface.opacity(0.6)))
-                    .overlay(shape.strokeBorder(on ? hue.opacity(0.4) : Color.white.opacity(0.1), lineWidth: 0.75))
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .disabled(!enabled)
-        .opacity(enabled ? 1 : 0.5)
-        .onHover { hovering = $0 }
-        .accessibilityLabel(title)
-        .accessibilityValue(on ? "On" : "Off")
-        .accessibilityAddTraits(.isToggle)
-    }
 }
 

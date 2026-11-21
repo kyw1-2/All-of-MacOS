@@ -117,13 +117,6 @@ extension View {
         }
     }
 
-    /// A round button face in the content layer (Workspace quick actions,
-    /// capture modes): a quiet system fill, the accent when the action is
-    /// live. Not glass — content-layer controls stay opaque (HIG Materials).
-    @ViewBuilder func aomRoundGlass(tint: Color? = nil) -> some View {
-        background(tint ?? AOMColor.sunken, in: Circle())
-    }
-
     /// The one hero area of a page (the Workspace header): an ordinary
     /// content pane with the card fill.
     @ViewBuilder func aomGlassPanel(radius: CGFloat = AOMRadius.card) -> some View {

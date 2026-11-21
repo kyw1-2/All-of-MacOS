@@ -387,7 +387,7 @@ private struct OutputDeviceRow: View {
             .disabled(!canAdjustVolume)
             .accessibilityLabel("Output volume")
             .accessibilityValue("\(Int(volume.rounded())) percent")
-            .help(canAdjustVolume ? "Output volume" : "This output does not support volume control")
+            .help(canAdjustVolume ? "Output volume" : "Fixed-volume output: set the level on the device")
             RowValue(text: canAdjustVolume ? "\(Int(volume.rounded()))%" : "—")
             MagicBoostButton(isOn: service.allAppsBoostEnabled, label: "Magic Boost for the output") {
                 service.allAppsBoostEnabled.toggle()
@@ -555,7 +555,7 @@ private struct InputDeviceRow: View {
             }
             .disabled(!canMute)
             .accessibilityLabel(isMuted ? "Unmute microphone" : "Mute microphone")
-            .help(canMute ? (isMuted ? "Unmute microphone" : "Mute microphone") : "This input does not support mute")
+            .help(canMute ? (isMuted ? "Unmute microphone" : "Mute microphone") : "This input has no mute control")
             Slider(value: Binding(get: { volume }, set: { newValue in
                 volume = newValue
                 if AudioOutputService.setInputVolume(percent: newValue) {

@@ -659,7 +659,14 @@ final class AppAudioEngine {
                     let message = failure == .capture
                         ? "Audio capture stopped receiving app audio. Native playback restored; use Reconnect to retry."
                         : "Audio output stopped consuming app audio. Native playback restored; use Reconnect to retry."
-                    if session.isAirPlay && !session.isDirect { failAirPlay(session, message: message, recover: failure == .output) }
+                    // 7.3.1 (audit AUD-01): a Direct AirPlay session went to
+                    // fail(), whose retryAfter = .infinity kept the app off
+                    // the HomePod until a manual Reconnect. Every AirPlay
+                    // session now takes failAirPlay's bounded recovery
+                    // (three tries, 0.75/3/10 s, counter reset after 5 min),
+                    // still only for an output stall, so a capture that
+                    // keeps failing can't loop.
+                    if session.isAirPlay { failAirPlay(session, message: message, recover: failure == .output) }
                     else { fail(session, message: message) }
                 }
             }
@@ -1682,7 +1689,10 @@ final class AppAudioEngine {
             discard()
             return nil
         } catch {
-            errors[pid] = "The app audio format or selected output is unavailable."
+            // 7.3.1 (audit AUD-05): the error itself (and its OSStatus) is kept.
+            let code = (error as NSError).code
+            errors[pid] = "The app audio format or selected output is unavailable (\(code))."
+            GestureLog.shared.logFromAnyThread("Direct AirPlay setup for \(eventName) failed: \(error) (\(code))", level: .error)
             discard()
             return nil
         }

@@ -956,8 +956,12 @@ final class AudioUnitEffectHost {
     private func restore(_ data: Data) {
         guard let list = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) else { return }
         var info: CFPropertyList = list as CFPropertyList
-        _ = AudioUnitSetProperty(unit, kAudioUnitProperty_ClassInfo, kAudioUnitScope_Global, 0, &info,
-                                 UInt32(MemoryLayout<CFPropertyList>.size))
+        let status = AudioUnitSetProperty(unit, kAudioUnitProperty_ClassInfo, kAudioUnitScope_Global, 0, &info,
+                                          UInt32(MemoryLayout<CFPropertyList>.size))
+        // 7.3.1 (audit AUD-10): a refused restore was silent.
+        if status != noErr {
+            GestureLog.shared.logFromAnyThread("An audio effect's saved settings weren't restored (OSStatus \(status))", level: .error)
+        }
     }
 
     /// Render thread: the unit pulls the block it is given.

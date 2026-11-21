@@ -128,8 +128,6 @@ final class FilesShelfStore: ObservableObject {
         }
     }
 
-    func dismissProblem() { if problem?.blocksSaving == false { problem = nil } }
-
     private func save() {
         guard !blocksSaving else { return }
         let encoder = JSONEncoder()

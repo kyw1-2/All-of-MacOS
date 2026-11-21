@@ -218,7 +218,6 @@ struct PaletteNavigation: Equatable {
     @discardableResult
     mutating func pop() -> PaletteFrame? { frames.popLast() }
 
-    mutating func popToRoot() { frames.removeAll() }
 
     /// Titles for the search field's breadcrumb, root first.
     var breadcrumb: [String] { frames.filter { $0.route != .confirm }.map(\.route.title) }

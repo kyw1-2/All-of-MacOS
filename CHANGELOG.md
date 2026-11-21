@@ -1,3 +1,27 @@
+## [7.3.1] - 2026-11-21
+
+A code-hygiene and audio audit of 7.3 (teamwork_worker_m1, 71 items), taken selectively after a second opinion: every item was checked in the code first; the ones that would make audio worse or only reword old notes were left.
+
+### Audio
+- **A HomePod stall no longer stops app audio for good.** A Direct AirPlay session (the default) whose output stalled went to the path that set `retryAfter = .infinity`, so the app stayed on native playback until a manual Reconnect. It now gets the same bounded recovery as the queued path: three tries (0.75, 3 and 10 s, reset after five minutes), for an output stall only, so a capture that keeps failing can't loop.
+- **Clock jitter no longer dips the sound.** The direct path counted a slip of a single frame as an IO gap and restarted its fade-in. A gap is now at least half a cycle missing; the fade-in after a real gap (silence back to signal) is unchanged — the audit's proposal to ramp down from the last gain instead was not taken, since the output is already silent across a real gap.
+- The "Stable AirPlay dynamics" switch only acts on the queued AirPlay path, which the direct path never reads; it and its "Magic Boost bypassed" line now show only when the queued path is in use.
+- Swallowed errors are logged with their codes: an output engine that won't start, a Direct AirPlay setup failure (also shown with its code), an audio effect whose saved settings weren't restored.
+- Check HomePod Audio states the measurement ("6.2 GB of memory is swapped…", "Thermal state is serious…") instead of naming apps or guessing ("charging in the sun").
+
+### Fixed
+- **BTT import:** the compiler marked the loop that builds imported triggers "will never be executed" (it took a counter changed inside a nested function for always zero), which an optimised build may drop. The count now comes from the results; a test imports a trigger.
+- Clearer messages: a fixed-volume output and an input without mute say so; tab gestures in an app without tab support list the apps where they work; a Studio export that can't be MP4 names the other quality to choose.
+
+### Removed (no callers, checked including selectors, Info.plist and the scripting dictionary)
+- 31 unbound `@objc` capture selectors in AppDelegate, the 7.0-replaced menu bar tiles, launcher bar and footer, the old AI transcript view and SSE streamer, the unused EQ curve canvas and row state, the retired Time Machine helpers, `hideMainWindow`, `promptText`, `leftoverMatches`, `popToRoot`, `dismissProblem`, `aomRoundGlass`, `OutputBox`, `statusPopover` — about 450 lines.
+- Compiler warnings: a dead `default`, four unused `[weak self]` guards, eight discarded results, unused ScreenCaptureKit and Vision imports.
+
+### Not taken from the audit
+- The legacy queued AirPlay bridge and `AudioOutputRestore`'s timers stay: they are the fallback (`AOMAudioAirPlayDirect = false`) and an opt-in path, and are tested.
+- Rewording of code comments that explain why a guard exists (W01–W12), the tab support list (W16) and old release notes (W19–W36).
+- `previewPanelWindow` stays: it is written only, but it keeps the UI-preview window alive.
+
 ## [7.3.0] - 2026-11-21
 
 The Codex review of 7.2.3 (`AOM-7.2.3-통합검수와-개선보고서`, five bundles P0–P2) and the DeepSeek design v2 it reviewed (`AOM-7.2.2-통합설계-v2`, Oracle report 06, with the Ghidra/REA evidence on Input Source Pro, Yoink, Bunch and Espanso). Each Codex finding was checked against the 7.2.3 code first; where the two reports disagree, the Codex correction is followed. What was taken, changed and left: `docs/design-7.3.md`.

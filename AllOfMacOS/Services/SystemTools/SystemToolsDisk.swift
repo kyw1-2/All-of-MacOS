@@ -68,29 +68,12 @@ enum DiskTools {
                             progress: running && percent >= 0 ? min(1, percent) : nil)
     }
 
-    static func backupStatusText(_ status: BackupStatus) -> String {
-        guard status.running else { return "Not backing up" }
-        let phase = status.phase.map { " (\($0))" } ?? ""
-        if let progress = status.progress { return "Backing up\(phase), \(Int((progress * 100).rounded()))%" }
-        return "Backing up\(phase)"
-    }
-
-    /// `tmutil destinationinfo` says "No destinations configured" (exit 0 on
-    /// some versions, non-zero on others) when Time Machine isn't set up.
-    static func hasDestination(_ output: SystemToolsCommand.Output) -> Bool {
-        output.succeeded && !(output.stdout + output.stderr).localizedCaseInsensitiveContains("No destinations configured")
-            && (output.stdout.contains("Name") || output.stdout.contains("ID"))
-    }
-
     /// `tmutil listlocalsnapshots /`: a header, then one name per line.
     static func parseLocalSnapshots(_ text: String) -> [String] {
         text.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { $0.hasPrefix("com.apple.") }
     }
 
-    /// Snapshots Time Machine made (and can thin); the others belong to
-    /// macOS updates and are managed by macOS.
-    static func isTimeMachineSnapshot(_ name: String) -> Bool { name.hasPrefix("com.apple.TimeMachine.") }
 
     /// Asks macOS to purge up to 20 GB of Time Machine local snapshots now,
     /// at the highest urgency.

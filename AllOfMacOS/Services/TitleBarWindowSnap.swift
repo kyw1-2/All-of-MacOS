@@ -1432,7 +1432,7 @@ final class TitleBarWindowSnap {
             case .unsupported?:
                 plan = nil
                 present(nil)
-                if Self.flag(Self.previewKey, default: true) { GestureHUD.shared.show(title: "Tabs Not Supported Here") }
+                if Self.flag(Self.previewKey, default: true) { GestureHUD.shared.show(title: "Tab Gestures Aren't Available Here", detail: "They work in Finder, Preview and other native tabs, Safari, Chrome, Brave, Vivaldi, Arc, Dia, Orion, Xcode, VS Code and UPDF.") }
                 return
             case .detach?, nil:
                 break

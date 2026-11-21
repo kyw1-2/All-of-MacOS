@@ -658,11 +658,6 @@ enum AOMAILocalTools {
     }
 }
 
-/// The bytes a background read collected.
-final class OutputBox: @unchecked Sendable {
-    var data = Data()
-}
-
 /// The `limit` most recently modified of the paths seen, and how many were seen.
 final class NewestPaths: @unchecked Sendable {
     private let lock = NSLock()

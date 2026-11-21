@@ -682,66 +682,6 @@ enum AOMAIClient {
         return URLSession(configuration: configuration)
     }()
 
-    private static func sse(_ request: URLRequest,
-                            decode: @escaping @Sendable (String) -> AOMAISSE.Event) -> AsyncThrowingStream<AOMAIPiece, Error> {
-        AsyncThrowingStream { continuation in
-            let task = Task {
-                do {
-                    let (bytes, response) = try await session.bytes(for: request)
-                    let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-                    guard (200..<300).contains(status) else {
-                        var body = ""
-                        for try await line in bytes.lines {
-                            body += line + "\n"
-                            if body.count > 4000 { break }
-                        }
-                        throw AOMAIError(message: AOMAISSE.errorMessage(body, status: status))
-                    }
-                    var thinking = false
-                    for try await line in bytes.lines {
-                        try Task.checkCancellation()
-                        guard let payload = AOMAISSE.payload(line) else { continue }
-                        switch decode(payload) {
-                        case .text(let text):
-                            thinking = false
-                            continuation.yield(.text(text))
-                        case .thinking:
-                            if !thinking { thinking = true; continuation.yield(.thinking) }
-                        case .stop(let reason):
-                            if let notice = AOMAISSE.stopNotice(reason) { continuation.yield(.notice(notice)) }
-                        case .error(let message):
-                            throw AOMAIError(message: message)
-                        case .done:
-                            continuation.finish()
-                            return
-                        case .none:
-                            break
-                        }
-                    }
-                    continuation.finish()
-                } catch is CancellationError {
-                    continuation.finish()
-                } catch let error as URLError where error.code == .cancelled {
-                    continuation.finish()
-                } catch let error as URLError {
-                    let message: String
-                    switch error.code {
-                    case .notConnectedToInternet: message = "You're offline."
-                    case .cannotConnectToHost, .cannotFindHost:
-                        message = "Couldn't reach \(request.url?.host ?? "the server")."
-                            + AOMLocalProxy.unreachableHint(host: request.url?.host, port: request.url?.port)
-                    case .timedOut: message = "The model took too long to respond."
-                    default: message = error.localizedDescription
-                    }
-                    continuation.finish(throwing: AOMAIError(message: message))
-                } catch {
-                    continuation.finish(throwing: error)
-                }
-            }
-            continuation.onTermination = { _ in task.cancel() }
-        }
-    }
-
     /// Lists a provider's models (Anthropic, OpenAI-compatible `/models`).
     @MainActor
     static func fetchModels(_ provider: AOMAIProvider) async throws -> [AOMAIModelOption] {

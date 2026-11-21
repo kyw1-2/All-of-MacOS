@@ -271,8 +271,7 @@ final class CaptureCoordinator {
     }
 
     func captureFullscreen(completion: ((Bool) -> Void)? = nil) {
-        run(kind: .fullscreen, completion: completion) { [weak self] in
-            guard let self else { return nil }
+        run(kind: .fullscreen, completion: completion) {
             let displays = try await ScreenCaptureService.shared.shareableContentDisplays()
             guard let target = ScreenCaptureService.displayUnderPointer(in: displays) ?? displays.first else {
                 throw CaptureError.noDisplays
@@ -290,8 +289,7 @@ final class CaptureCoordinator {
             completion?(false)
             return
         }
-        run(kind: .previousArea, completion: completion) { [weak self] in
-            guard let self else { return nil }
+        run(kind: .previousArea, completion: completion) {
             let displays = try await ScreenCaptureService.shared.shareableContentDisplays()
             guard let display = displays.first(where: { $0.displayID == CaptureSettings.lastAreaDisplayID })
                     ?? ScreenCaptureService.displayUnderPointer(in: displays) ?? displays.first else {
@@ -324,8 +322,7 @@ final class CaptureCoordinator {
     }
 
     func captureActiveWindow(completion: ((Bool) -> Void)? = nil) {
-        run(kind: .window, completion: completion) { [weak self] in
-            guard let self else { return nil }
+        run(kind: .window, completion: completion) {
             let window = try await ScreenCaptureService.shared.frontmostCapturableWindow()
             let result = try await ScreenCaptureService.shared.captureWindow(window)
             return (result, CaptureKind.window)
@@ -333,8 +330,7 @@ final class CaptureCoordinator {
     }
 
     func captureWindowUnderCursor(completion: ((Bool) -> Void)? = nil) {
-        run(kind: .windowUnderCursor, completion: completion) { [weak self] in
-            guard let self else { return nil }
+        run(kind: .windowUnderCursor, completion: completion) {
             let window = try await ScreenCaptureService.shared.windowUnderCursor()
             let result = try await ScreenCaptureService.shared.captureWindow(window)
             return (result, CaptureKind.windowUnderCursor)

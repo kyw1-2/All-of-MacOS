@@ -117,7 +117,9 @@ enum RecordingExportService {
         }
         let url = outputURL(for: source, suffix: outputSuffix, extension: "mp4")
         guard exporter.supportedFileTypes.contains(.mp4) else {
-            throw ExportError.failed("The selected quality does not support MP4.")
+            // 7.3.1: say which choice works (the two Studio qualities).
+            let other: StudioQuality = quality == .high ? .compact : .high
+            throw ExportError.failed("\(quality.displayName) can't be saved as MP4 for this recording. Choose \(other.displayName) and export again.")
         }
         exporter.outputURL = url
         exporter.outputFileType = .mp4
