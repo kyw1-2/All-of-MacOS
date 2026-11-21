@@ -146,7 +146,8 @@ final class InputSourceBadge {
     var isRunning: Bool { token != nil }
 
     func refresh() {
-        if InputSourceBadgeSettings.isEnabled, !PresetManager.isRunningTests, !PresetManager.isUIPreview { start() } else { stop() }
+        if InputSourceBadgeSettings.isEnabled, AOMModuleSwitches.shared.isOn(.inputSources),
+           !PresetManager.isRunningTests, !PresetManager.isUIPreview { start() } else { stop() }
     }
 
     func start() {

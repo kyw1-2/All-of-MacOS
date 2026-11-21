@@ -112,7 +112,8 @@ final class AppInputSources: ObservableObject {
 
     /// Starts or stops observing to match the switch.
     func refresh() {
-        if settings.isEnabled { begin() } else { end() }
+        // 7.3: the Input Sources module switch wins over the setting.
+        if settings.isEnabled, AOMModuleSwitches.shared.isOn(.inputSources) { begin() } else { end() }
     }
 
     private func begin() {

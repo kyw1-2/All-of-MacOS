@@ -206,7 +206,8 @@ final class FolderRulesEngine: ObservableObject {
     private func startPass() {
         let folders = scheduledFolders
         scheduledFolders = []
-        guard config.isEnabled, !activeRules.isEmpty else { return }
+        // 7.3: a module switched off runs no pass (a timer or a late event included).
+        guard moduleOn, config.isEnabled, !activeRules.isEmpty else { return }
         guard gateIsOpen() else { deferredWhilePaused = true; refreshStatus(); return }
         guard !passRunning else {
             rerunRequested = true

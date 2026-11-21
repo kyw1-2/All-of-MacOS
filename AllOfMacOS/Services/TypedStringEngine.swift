@@ -62,7 +62,8 @@ final class TypedStringEngine {
         if buffer.last?.bundleID != bundleID || now - (buffer.last?.at ?? 0) > Self.gapSeconds { reset() }
         buffer.append(Entry(text: text, at: now, bundleID: bundleID))
         if buffer.count > 64 { buffer.removeFirst(buffer.count - 64) }
-        let lastTyped = Character(text.lowercased())
+        // Character(_:) would trap on a lowercase form of two characters.
+        guard let lastTyped = text.lowercased().last else { return nil }
         let possible = entries(registered, generation: generation).filter { $0.last == lastTyped }
         guard !possible.isEmpty else { return nil }
         let typed = buffer.map(\.text).joined().lowercased()
