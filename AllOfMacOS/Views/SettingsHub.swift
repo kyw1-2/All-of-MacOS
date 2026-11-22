@@ -367,7 +367,7 @@ struct LauncherThemeRow: View {
                 Picker("", selection: Binding(get: { look.theme.id },
                                               set: { look.setTheme(AOMLauncherTheme.named($0)) })) {
                     ForEach(AOMLauncherTheme.all) { theme in
-                        Label { Text(theme.name) } icon: { Image(nsImage: AOMLauncherThemeSwatch.image(theme)) }
+                        Label { Text(theme.name) } icon: { Image(nsImage: AOMLauncherThemeSwatch.image(theme, side: 14)) }
                             .tag(theme.id)
                     }
                 }

@@ -86,11 +86,13 @@ extension QuickCommandPalette {
 enum AOMLauncherThemeSwatch {
     @MainActor private static var cache: [String: NSImage] = [:]
 
-    @MainActor static func image(_ theme: AOMLauncherTheme) -> NSImage {
-        if let cached = cache[theme.id] { return cached }
-        let size = NSSize(width: 28, height: 28)
+    @MainActor static func image(_ theme: AOMLauncherTheme, side: CGFloat = 28) -> NSImage {
+        let key = "\(theme.id)@\(Int(side))"
+        if let cached = cache[key] { return cached }
+        let size = NSSize(width: side, height: side)
+        let dot = side * 0.36
         let image = NSImage(size: size, flipped: false) { rect in
-            let outer = NSBezierPath(roundedRect: rect.insetBy(dx: 1, dy: 1), xRadius: 7, yRadius: 7)
+            let outer = NSBezierPath(roundedRect: rect.insetBy(dx: 1, dy: 1), xRadius: side / 4, yRadius: side / 4)
             if theme.scheme == .system {
                 // Half light, half dark.
                 NSGraphicsContext.saveGraphicsState()
@@ -108,10 +110,10 @@ enum AOMLauncherThemeSwatch {
             outer.lineWidth = 1
             outer.stroke()
             (theme.accent ?? NSColor.controlAccentColor).setFill()
-            NSBezierPath(ovalIn: NSRect(x: rect.midX - 5, y: rect.midY - 5, width: 10, height: 10)).fill()
+            NSBezierPath(ovalIn: NSRect(x: rect.midX - dot / 2, y: rect.midY - dot / 2, width: dot, height: dot)).fill()
             return true
         }
-        cache[theme.id] = image
+        cache[key] = image
         return image
     }
 }

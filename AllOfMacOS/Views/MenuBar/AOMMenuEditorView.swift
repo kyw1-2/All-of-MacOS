@@ -138,12 +138,15 @@ struct AOMMenuEditorView: View {
     @State private var panelSelection: String?
     @State private var search = ""
     @State private var message: String?
+    /// The first menu (ME-03), made once per load so its rows keep their ids.
+    @State private var starter: [AOMStatusMenuLayout.Entry] = []
 
-    private var catalog: [AOMMenuCommand] { AOMMenuCommandCatalog.all() }
-    private var index: [String: AOMMenuCommand] { Dictionary(catalog.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a }) }
+    /// Read once per load (and when a menu bar item is renamed), not per row.
+    @State private var catalog: [AOMMenuCommand] = []
+    @State private var index: [String: AOMMenuCommand] = [:]
 
     private var menuEntries: [AOMStatusMenuLayout.Entry] {
-        draft.menu ?? AOMStatusMenuLayout.starter(quickActions: workspace.visibleQuickActions)
+        draft.menu ?? starter
     }
 
     private var followsWorkspace: Bool { draft.panel == nil }
@@ -198,6 +201,7 @@ struct AOMMenuEditorView: View {
             footer
         }
         .onAppear { if baseRevision < 0 { load() } }
+        .onReceive(aliases.$aliases) { _ in loadCatalog() }
     }
 
     // MARK: Columns
@@ -477,8 +481,15 @@ struct AOMMenuEditorView: View {
 
     // MARK: Edits
 
+    private func loadCatalog() {
+        catalog = AOMMenuCommandCatalog.all()
+        index = Dictionary(catalog.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+    }
+
     private func load() {
+        loadCatalog()
         draft = store.layout
+        starter = AOMStatusMenuLayout.starter(quickActions: workspace.visibleQuickActions)
         baseRevision = store.layout.revision
         selection = nil
         panelSelection = nil
