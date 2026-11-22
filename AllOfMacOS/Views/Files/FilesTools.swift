@@ -11,7 +11,8 @@ import UniformTypeIdentifiers
 final class FileToolsModel: ObservableObject {
     enum Tool: String, Identifiable {
         case pdfMerge, pdfCompress, pdfSplit, pdfExtract, pdfRemove, pdfRotate, pdfReorder, imagesToPDF,
-             pdfToImages, pdfProtect, pdfUnlock, pdfPageNumbers
+             pdfToImages, pdfProtect, pdfUnlock, pdfPageNumbers, pdfCompare
+        case zipExtract, folderCompare
         case convertImage, convertVideo, qrCode
         case batchRename, whatsUsing, fileHash
         var id: String { rawValue }
@@ -135,6 +136,9 @@ final class FileToolsModel: ObservableObject {
         case .pdfProtect: protectPDF()
         case .pdfUnlock: unlockPDF()
         case .pdfPageNumbers: addPageNumbers()
+        case .pdfCompare: AOMFileToolsLauncher.comparePDFs()
+        case .zipExtract: AOMFileToolsLauncher.openZip()
+        case .folderCompare: AOMFileToolsLauncher.compareFolders()
         case .convertImage: convertImage()
         case .convertVideo: convertVideo()
         case .qrCode: makeQR()
@@ -536,8 +540,8 @@ final class FileToolsModel: ObservableObject {
     }
 }
 
-/// The Files page's Tools menu and its three groups (PDF, Image & Video,
-/// File Info). Each item runs one tool; everything the tools open is a panel
+/// The Files page's Tools menu and its groups (PDF, Archives & Folders,
+/// Image & Video, File Info). Each item runs one tool; everything the tools open is a panel
 /// or a sheet over the page.
 struct FilesToolsMenu: View {
     @ObservedObject var model: FileToolsModel
@@ -546,7 +550,9 @@ struct FilesToolsMenu: View {
         ("PDF", [(.pdfMerge, "Merge PDFs…"), (.pdfCompress, "Compress PDF…"), (.pdfSplit, "Split PDF…"),
                  (.pdfExtract, "Extract Pages…"), (.pdfRemove, "Remove Pages…"), (.pdfRotate, "Rotate Pages…"),
                  (.pdfReorder, "Reorder Pages…"), (.imagesToPDF, "Images to PDF…"), (.pdfToImages, "PDF to Images…"),
-                 (.pdfProtect, "Add PDF Password…"), (.pdfUnlock, "Remove PDF Password…"), (.pdfPageNumbers, "Add Page Numbers…")]),
+                 (.pdfProtect, "Add PDF Password…"), (.pdfUnlock, "Remove PDF Password…"), (.pdfPageNumbers, "Add Page Numbers…"),
+                 (.pdfCompare, "Compare Two PDFs…")]),
+        ("Archives & Folders", [(.zipExtract, "Extract from ZIP…"), (.folderCompare, "Compare Folders…")]),
         ("Image & Video", [(.convertImage, "Convert Image…"), (.convertVideo, "Convert Video…"), (.qrCode, "QR Code…")]),
         ("File Info", [(.batchRename, "Batch Rename…"), (.whatsUsing, "What's Using a File…"), (.fileHash, "File SHA-256…")])
     ]
@@ -564,7 +570,7 @@ struct FilesToolsMenu: View {
         } label: {
             Label("Tools", systemImage: "wand.and.stars")
         }
-        .help("PDF, image, video and file information tools")
+        .help("PDF, ZIP, folder comparison, image, video and file information tools")
         .sheet(item: $model.processReview) { review in
             ProcessReviewSheet(review: review, onQuit: { model.quitProcess($0) },
                                onSort: { _ in }, onClose: { model.processReview = nil })

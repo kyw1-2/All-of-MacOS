@@ -652,14 +652,14 @@ class KeyboardMonitor: ObservableObject {
                 MainActor.assumeIsolated { engine.reset() }
                 return false
             }
-            let names = SnippetTemplate.argumentNames(tokens)
+            let fields = SnippetTemplate.fields(tokens)
             let front = NSWorkspace.shared.frontmostApplication
-            if !names.isEmpty {
+            if !fields.isEmpty {
                 // The last key goes through, so the whole abbreviation is in the buffer.
                 let typed = MainActor.assumeIsolated { engine.typedTail(spec.abbreviation.count) }
                 DispatchQueue.main.async {
                     engine.reset()
-                    PaletteSnippetForm.askFromTyping(snippetID: trigger.id, names: names, erase: spec.abbreviation.count, target: front, typed: typed)
+                    PaletteSnippetForm.askFromTyping(snippetID: trigger.id, fields: fields, erase: spec.abbreviation.count, target: front, typed: typed)
                 }
                 return false
             }

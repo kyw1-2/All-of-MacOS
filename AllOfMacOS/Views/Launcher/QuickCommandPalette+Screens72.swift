@@ -717,6 +717,22 @@ extension QuickCommandPalette {
         if !hit.isFolder {
             secondaries.append(PaletteAction(title: "Browse Enclosing Folder", symbol: "folder.badge.questionmark", effect: .push(.folder(parent))) {})
         }
+        // 7.5 (Codex F03, F07, F08): the same windows as the Files page's Tools menu.
+        if AOMModuleSwitches.shared.isOn(.files) {
+            switch (hit.isFolder, hit.url.pathExtension.lowercased()) {
+            case (false, "zip"):
+                secondaries.insert(PaletteAction(title: "Extract Files…", symbol: "doc.zipper") { AOMFileToolsLauncher.openZip(hit.url) }, at: 0)
+            case (false, "pdf"):
+                secondaries.insert(PaletteAction(title: "Compare With Another PDF…", symbol: "rectangle.split.2x1") {
+                    AOMFileToolsLauncher.comparePDFs([hit.url])
+                }, at: 0)
+            case (true, _):
+                secondaries.append(PaletteAction(title: "Compare With Another Folder…", symbol: "folder.badge.questionmark") {
+                    AOMFileToolsLauncher.compareFolders([hit.url])
+                })
+            default: break
+            }
+        }
         var row = screenRow("file.\(hit.url.path)", hit.name, folder, icon: hit.isFolder ? "folder" : "doc", group: group,
                             section: .files, primary: primary, secondaries: secondaries,
                             accessory: hit.date.map { AOMRelativeTime.string($0) }, image: session.icon(forPath: hit.url.path))
@@ -843,10 +859,10 @@ extension QuickCommandPalette {
         // 7.3: a snippet with placeholders shows what it would insert now
         // (the snippet test), or what is wrong with it.
         let preview = (snippet.usesPlaceholders ? PaletteSnippets.preview(snippet) : snippet.text).replacingOccurrences(of: "\n", with: " ⏎ ")
-        let names = snippet.argumentNames
-        let primary = !names.isEmpty
+        let fields = snippet.fields
+        let primary = !fields.isEmpty
             ? PaletteAction(title: "Fill In…", symbol: "keyboard", effect: .stay) {
-                PaletteSnippetForm.shared.begin(.init(snippetID: snippet.id, names: names))
+                PaletteSnippetForm.shared.begin(.init(snippetID: snippet.id, fields: fields))
                 push(.snippetArguments(snippet.id))
             }
             : PaletteAction(title: "Type Snippet", symbol: "keyboard") {
@@ -869,35 +885,65 @@ extension QuickCommandPalette {
     }
 
     /// 7.3: one row per field; ↩ takes the field's text and goes to the
-    /// next, the last one inserts the snippet.
+    /// next, the last one inserts the snippet. 7.5 (Codex F02): a choice
+    /// lists its options and an optional section Include / Leave Out, the
+    /// default first; typing narrows the options.
     func snippetArgumentItems(_ id: UUID) -> [PaletteItem] {
         guard let snippet = snippets.first(where: { $0.id == id }), let request = PaletteSnippetForm.shared.request,
-              request.snippetID == id, let name = request.currentName else {
+              request.snippetID == id, let field = request.currentField else {
             return [screenRow("snippetarg.gone", "This snippet isn't there any more", "Go back with esc", icon: "exclamationmark.triangle",
                               group: nil, primary: PaletteAction(title: "Back", effect: .stay) { pop() }, dimmed: true)]
         }
-        let value = query
-        let isLast = request.index == request.names.count - 1
-        var values = request.values
-        values[name] = value
-        let preview = PaletteSnippets.preview(snippet, arguments: values).replacingOccurrences(of: "\n", with: " ⏎ ")
-        let step = "\(request.index + 1) of \(request.names.count)"
-        let action = isLast
-            ? PaletteAction(title: "Insert", symbol: "keyboard") {
-                _ = PaletteSnippetForm.shared.submit(value)
-                if let done = PaletteSnippetForm.shared.finish() {
-                    insertSnippet(snippet, arguments: done.values, erase: done.erase, targetPID: done.targetPID, typed: done.typed)
+        let (number, total) = request.step
+        let group = "\(snippet.abbreviation) · \(number) of \(total)"
+        /// The row that answers the current field with `value`.
+        func answerRow(_ key: String, _ title: String, value: String, icon: String, accessory: String? = nil) -> PaletteItem {
+            var after = request
+            after.answer(value)
+            let isLast = after.isComplete
+            let preview = PaletteSnippets.preview(snippet, arguments: after.values).replacingOccurrences(of: "\n", with: " ⏎ ")
+            let action = isLast
+                ? PaletteAction(title: "Insert", symbol: "keyboard") {
+                    _ = PaletteSnippetForm.shared.submit(value)
+                    if let done = PaletteSnippetForm.shared.finish() {
+                        insertSnippet(snippet, arguments: done.values, erase: done.erase, targetPID: done.targetPID, typed: done.typed)
+                    }
                 }
+                : PaletteAction(title: "Next", symbol: "arrow.right", effect: .stay) {
+                    _ = PaletteSnippetForm.shared.submit(value)
+                    query = ""
+                    sourcesChanged()
+                }
+            var row = screenRow("snippetarg.\(request.index).\(key)", title, preview, icon: icon, group: group, primary: action)
+            row.accessory = accessory.map { "\($0) · ↩ \(isLast ? "Insert" : "Next")" } ?? (isLast ? "↩ Insert" : "↩ Next")
+            return row
+        }
+        switch field.kind {
+        case .text:
+            let value = query
+            return [answerRow("text", "\(field.name): \(value.isEmpty ? "…" : value)", value: value, icon: "character.cursor.ibeam")]
+        case .choice(let options, let defaultIndex):
+            let ordered = [defaultIndex] + options.indices.filter { $0 != defaultIndex }
+            let typed = query.trimmingCharacters(in: .whitespaces)
+            let shown = ordered.filter { typed.isEmpty || options[$0].localizedCaseInsensitiveContains(typed) }
+            guard !shown.isEmpty else {
+                return [screenRow("snippetarg.none", "No option matches “\(typed)”", "\(field.name) has \(options.map { $0.isEmpty ? "(nothing)" : $0 }.joined(separator: ", "))",
+                                  icon: "list.bullet", group: group, primary: PaletteAction(title: "Clear", effect: .stay) { query = ""; sourcesChanged() }, dimmed: true)]
             }
-            : PaletteAction(title: "Next Field", symbol: "arrow.right", effect: .stay) {
-                _ = PaletteSnippetForm.shared.submit(value)
-                query = ""
-                sourcesChanged()
+            return shown.map { index in
+                answerRow("option\(index)", "\(field.name): \(options[index].isEmpty ? "(nothing)" : options[index])", value: options[index],
+                          icon: "list.bullet", accessory: index == defaultIndex ? "Default" : nil)
             }
-        var row = screenRow("snippetarg.\(request.index)", "\(name): \(value.isEmpty ? "…" : value)", preview, icon: "character.cursor.ibeam",
-                            group: "\(snippet.abbreviation) · field \(step)", primary: action)
-        row.accessory = isLast ? "↩ Insert" : "↩ Next"
-        return [row]
+        case .optional(let defaultOn):
+            let include = answerRow("in", "Include “\(field.name)”", value: SnippetField.on, icon: "checkmark.square",
+                                    accessory: defaultOn ? "Default" : nil)
+            let leave = answerRow("out", "Leave Out “\(field.name)”", value: SnippetField.off, icon: "square",
+                                  accessory: defaultOn ? nil : "Default")
+            let rows = defaultOn ? [include, leave] : [leave, include]
+            let typed = query.trimmingCharacters(in: .whitespaces).lowercased()
+            guard !typed.isEmpty else { return rows }
+            return rows.filter { $0.title.lowercased().contains(typed) }
+        }
     }
 
     /// Renders and inserts a snippet with placeholders. From a typed

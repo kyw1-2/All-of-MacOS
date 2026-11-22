@@ -16,13 +16,44 @@ import Foundation
 // walked back; anything longer is pasted with the clipboard put back
 // afterwards — unless something else was copied meanwhile.
 
-enum SnippetToken: Equatable {
+// 7.5 (Codex F02, TextExpander's popup menus and optional sections):
+// {choice:Delivery|Courier|*Visit} asks to pick one option (the one marked
+// * is the default, else the first), and {optional:Signature} … {/optional}
+// (or {optional:Signature|off}) asks whether to put the text between in.
+// A section tag alone on its line takes the line with it, so a section left
+// out leaves no empty line. A field with the same name is asked once.
+
+indirect enum SnippetToken: Equatable {
     case text(String)
     case clipboard
     case date(String?)
     case time(String?)
     case cursor
     case arg(String)
+    /// Name, options, the default's index.
+    case choice(String, [String], Int)
+    /// Name, in by default, what it holds.
+    case section(String, Bool, [SnippetToken])
+}
+
+/// One question the snippet asks before it goes in.
+struct SnippetField: Equatable {
+    enum Kind: Equatable {
+        case text
+        case choice([String], defaultIndex: Int)
+        case optional(defaultOn: Bool)
+    }
+    let name: String
+    let kind: Kind
+    /// The optional section it sits in: asked only when that section is in.
+    let section: String?
+
+    static let on = "1", off = "0"
+    /// Pure: an optional section's answer.
+    static func isOn(_ value: String?, default defaultOn: Bool) -> Bool {
+        guard let value else { return defaultOn }
+        return ["1", "on", "yes", "true"].contains(value.lowercased())
+    }
 }
 
 struct SnippetTemplateError: Error, Equatable {
@@ -57,7 +88,32 @@ enum SnippetTemplate {
         var cursors = 0
         let characters = Array(template)
         var index = 0
+        /// The open optional section: its name, default, where it began and the tokens outside it.
+        var open: (name: String, on: Bool, offset: Int, outside: [SnippetToken])?
+        /// Each field name's kind, so one name is one question.
+        var kinds: [String: SnippetField.Kind] = [:]
         func flush() { if !literal.isEmpty { tokens.append(.text(literal)); literal = "" } }
+        func register(_ name: String, _ kind: SnippetField.Kind, at offset: Int) -> SnippetTemplateError? {
+            if let known = kinds[name], known != kind {
+                return SnippetTemplateError(offset: offset, message: "“\(name)” is already a different field; give this one another name")
+            }
+            kinds[name] = kind
+            return nil
+        }
+        /// A section tag alone on its line takes the line (its indent and line break) with it.
+        func standalone(from start: Int, to end: Int) -> Bool {
+            var before = start - 1
+            while before >= 0, characters[before] == " " || characters[before] == "\t" { before -= 1 }
+            guard before < 0 || characters[before] == "\n" else { return false }
+            var after = end + 1
+            while after < characters.count, characters[after] == " " || characters[after] == "\t" { after += 1 }
+            return after == characters.count || characters[after] == "\n"
+        }
+        func skipLine(after close: Int) -> Int {
+            var next = close + 1
+            while next < characters.count, characters[next] == " " || characters[next] == "\t" { next += 1 }
+            return next < characters.count ? next + 1 : next
+        }
         while index < characters.count {
             let character = characters[index]
             if character == "{" {
@@ -71,6 +127,38 @@ enum SnippetTemplate {
                 }
                 let name = body.split(separator: ":", maxSplits: 1).first.map(String.init)?.lowercased() ?? ""
                 let argument = body.contains(":") ? String(body[body.index(after: body.firstIndex(of: ":")!)...]) : nil
+                // Optional sections open and close a level instead of making a token.
+                if name == "optional" || name == "/optional" {
+                    let alone = standalone(from: index, to: close)
+                    if alone { while let last = literal.last, last == " " || last == "\t" { literal.removeLast() } }
+                    flush()
+                    if name == "optional" {
+                        guard open == nil else {
+                            return .failure(SnippetTemplateError(offset: index, message: "An optional section can't hold another; close the first with {/optional}"))
+                        }
+                        let parts = (argument ?? "").split(separator: "|", omittingEmptySubsequences: false).map { $0.trimmingCharacters(in: .whitespaces) }
+                        let label = parts.first ?? ""
+                        guard !label.isEmpty else {
+                            return .failure(SnippetTemplateError(offset: index, message: "Name the section: {optional:name} … {/optional}"))
+                        }
+                        let flag = parts.count > 1 ? parts[1].lowercased() : "on"
+                        guard ["on", "off"].contains(flag), parts.count <= 2 else {
+                            return .failure(SnippetTemplateError(offset: index, message: "Write {optional:\(label)} (in by default) or {optional:\(label)|off}"))
+                        }
+                        if let problem = register(label, .optional(defaultOn: flag == "on"), at: index) { return .failure(problem) }
+                        open = (label, flag == "on", index, tokens)
+                        tokens = []
+                    } else {
+                        guard let section = open, argument == nil else {
+                            return .failure(SnippetTemplateError(offset: index, message: "This {/optional} has no {optional:name} before it"))
+                        }
+                        let inside = tokens
+                        tokens = section.outside + [.section(section.name, section.on, inside)]
+                        open = nil
+                    }
+                    index = alone ? skipLine(after: close) : close + 1
+                    continue
+                }
                 let token: SnippetToken
                 switch name {
                 case "clipboard" where argument == nil: token = .clipboard
@@ -83,9 +171,27 @@ enum SnippetTemplate {
                 case "arg":
                     let label = (argument ?? "").trimmingCharacters(in: .whitespaces)
                     guard !label.isEmpty else { return .failure(SnippetTemplateError(offset: index, message: "Name the field: {arg:name}")) }
+                    if let problem = register(label, .text, at: index) { return .failure(problem) }
                     token = .arg(label)
+                case "choice":
+                    let parts = (argument ?? "").split(separator: "|", omittingEmptySubsequences: false).map { $0.trimmingCharacters(in: .whitespaces) }
+                    let label = parts.first ?? ""
+                    var options = Array(parts.dropFirst())
+                    guard !label.isEmpty, options.count >= 2 else {
+                        return .failure(SnippetTemplateError(offset: index, message: "A choice needs a name and two or more options: {choice:name|First|Second}"))
+                    }
+                    var defaultIndex = 0
+                    if let marked = options.firstIndex(where: { $0.hasPrefix("*") }) {
+                        defaultIndex = marked
+                        options[marked] = String(options[marked].dropFirst()).trimmingCharacters(in: .whitespaces)
+                    }
+                    guard options.filter({ $0.hasPrefix("*") }).isEmpty else {
+                        return .failure(SnippetTemplateError(offset: index, message: "Mark only one option with * as the default"))
+                    }
+                    if let problem = register(label, .choice(options, defaultIndex: defaultIndex), at: index) { return .failure(problem) }
+                    token = .choice(label, options, defaultIndex)
                 default:
-                    return .failure(SnippetTemplateError(offset: index, message: "Unknown placeholder {\(body)}; use {clipboard}, {date}, {time}, {cursor} or {arg:name}, and {{ for a brace"))
+                    return .failure(SnippetTemplateError(offset: index, message: "Unknown placeholder {\(body)}; use {clipboard}, {date}, {time}, {cursor}, {arg:name}, {choice:name|A|B} or {optional:name} … {/optional}, and {{ for a brace"))
                 }
                 flush()
                 tokens.append(token)
@@ -100,6 +206,9 @@ enum SnippetTemplate {
             index += 1
         }
         flush()
+        if let section = open {
+            return .failure(SnippetTemplateError(offset: section.offset, message: "{optional:\(section.name)} isn't closed; end the section with {/optional}"))
+        }
         return .success(tokens)
     }
 
@@ -111,9 +220,36 @@ enum SnippetTemplate {
 
     /// Pure: the {arg:…} names in order, each once.
     static func argumentNames(_ tokens: [SnippetToken]) -> [String] {
-        var names: [String] = []
-        for case .arg(let name) in tokens where !names.contains(name) { names.append(name) }
-        return names
+        fields(tokens).compactMap { $0.kind == .text ? $0.name : nil }
+    }
+
+    /// Pure: every question in order of first use, each name once. A field
+    /// used both inside and outside a section is always asked.
+    static func fields(_ tokens: [SnippetToken]) -> [SnippetField] {
+        var order: [String] = []
+        var kinds: [String: SnippetField.Kind] = [:]
+        var sections: [String: Set<String?>] = [:]
+        func walk(_ tokens: [SnippetToken], in section: String?) {
+            for token in tokens {
+                let found: (String, SnippetField.Kind)?
+                switch token {
+                case .arg(let name): found = (name, .text)
+                case .choice(let name, let options, let index): found = (name, .choice(options, defaultIndex: index))
+                case .section(let name, let on, _): found = (name, .optional(defaultOn: on))
+                default: found = nil
+                }
+                if let (name, kind) = found {
+                    if kinds[name] == nil { order.append(name); kinds[name] = kind }
+                    sections[name, default: []].insert(section)
+                }
+                if case .section(let name, _, let inner) = token { walk(inner, in: name) }
+            }
+        }
+        walk(tokens, in: nil)
+        return order.map { name in
+            let places = sections[name] ?? []
+            return SnippetField(name: name, kind: kinds[name] ?? .text, section: places.count == 1 ? places.first ?? nil : nil)
+        }
     }
 
     struct Context {
@@ -138,8 +274,12 @@ enum SnippetTemplate {
             formatter.dateFormat = pattern
             return formatter.string(from: context.now)
         }
+        func append(_ tokens: [SnippetToken]) {
         for token in tokens {
             switch token {
+            case .section(let name, let on, let inner):
+                if SnippetField.isOn(context.arguments[name], default: on) { append(inner) }
+            case .choice(let name, let options, let index): text += context.arguments[name] ?? options[index]
             case .text(let literal): text += literal
             case .clipboard:
                 if clipboardText == nil { clipboardText = .some(context.clipboard()) }
@@ -155,6 +295,8 @@ enum SnippetTemplate {
             case .arg(let name): text += context.arguments[name] ?? ""
             }
         }
+        }
+        append(tokens)
         let after = cursorCharacters.map { text.count - $0 }
         return SnippetRender(text: text, charactersAfterCursor: after == 0 ? nil : after, cursorUTF16: after == 0 ? nil : cursorUTF16, notes: notes)
     }
@@ -350,7 +492,8 @@ enum SnippetInserter {
     }
 }
 
-/// 7.3: a snippet's {arg:…} fields asked in the launcher, one per ↩.
+/// 7.3: a snippet's {arg:…} fields asked in the launcher, one per ↩
+/// (7.5: and its choices and optional sections, picked from rows).
 /// From a typed abbreviation, the abbreviation stays as typed until the
 /// last field is confirmed, and is replaced only if the same app is still
 /// in front; Esc leaves the text exactly as it was (Codex 7.2.3 report).
@@ -360,7 +503,8 @@ final class PaletteSnippetForm: ObservableObject {
 
     struct Request: Equatable {
         var snippetID: UUID
-        var names: [String]
+        /// 7.5: text fields, choices and optional sections, in order.
+        var fields: [SnippetField]
         var values: [String: String] = [:]
         var index = 0
         /// Characters of the typed abbreviation to erase first (0: from the launcher).
@@ -369,19 +513,43 @@ final class PaletteSnippetForm: ObservableObject {
         /// The abbreviation as typed (put back if the insert fails after the erase).
         var typed = ""
 
-        var currentName: String? { names.indices.contains(index) ? names[index] : nil }
-        var isComplete: Bool { index >= names.count }
+        var names: [String] { fields.map(\.name) }
+        var currentField: SnippetField? { fields.indices.contains(index) ? fields[index] : nil }
+        var currentName: String? { currentField?.name }
+        var isComplete: Bool { index >= fields.count }
+        /// The questions left to ask, counting this one (a section left out skips its fields).
+        var remaining: Int { fields[index...].filter { !skips($0) }.count }
+        var isLast: Bool { remaining <= 1 }
+        /// Step numbers for the header: this one of all that will be asked.
+        var step: (Int, Int) {
+            let asked = fields[..<min(index, fields.count)].filter { values[$0.name] != nil }.count
+            return (asked + 1, asked + remaining)
+        }
+
+        /// Pure: a field inside a section that was answered “leave out”.
+        func skips(_ field: SnippetField) -> Bool {
+            guard let section = field.section, let outer = fields.first(where: { $0.name == section }),
+                  case .optional(let on) = outer.kind else { return false }
+            return !SnippetField.isOn(values[section], default: on) && values[section] != nil
+        }
+
+        /// Takes the answer for the current field and moves to the next one asked.
+        mutating func answer(_ value: String) {
+            guard let field = currentField else { return }
+            values[field.name] = value
+            index += 1
+            while let next = currentField, skips(next) { index += 1 }
+        }
     }
 
     @Published private(set) var request: Request?
 
     func begin(_ request: Request) { self.request = request }
 
-    /// Takes the field's text for the current name; true when every field is filled.
+    /// Takes the answer for the current field; true when every field is answered.
     func submit(_ value: String) -> Bool {
-        guard var current = request, let name = current.currentName else { return true }
-        current.values[name] = value
-        current.index += 1
+        guard var current = request, current.currentField != nil else { return true }
+        current.answer(value)
         request = current
         return current.isComplete
     }
@@ -390,8 +558,8 @@ final class PaletteSnippetForm: ObservableObject {
     func finish() -> Request? { defer { request = nil }; return request }
 
     /// From a typed abbreviation (KeyboardMonitor): opens the launcher on the form.
-    static func askFromTyping(snippetID: UUID, names: [String], erase: Int, target: NSRunningApplication?, typed: String = "") {
-        shared.begin(Request(snippetID: snippetID, names: names, erase: erase, targetPID: target?.processIdentifier, typed: typed))
+    static func askFromTyping(snippetID: UUID, fields: [SnippetField], erase: Int, target: NSRunningApplication?, typed: String = "") {
+        shared.begin(Request(snippetID: snippetID, fields: fields, erase: erase, targetPID: target?.processIdentifier, typed: typed))
         AOMLauncherController.shared.show(route: .snippetArguments(snippetID))
     }
 }

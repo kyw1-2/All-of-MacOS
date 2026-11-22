@@ -21,9 +21,12 @@ enum PaletteSnippets {
         var usesPlaceholders: Bool { syntax == SnippetTemplate.currentSyntax }
 
         /// The {arg:…} fields it asks for, in order.
-        var argumentNames: [String] {
+        var argumentNames: [String] { fields.compactMap { $0.kind == .text ? $0.name : nil } }
+
+        /// 7.5: every question it asks (fields, choices, optional sections).
+        var fields: [SnippetField] {
             guard usesPlaceholders, case .success(let tokens) = SnippetTemplate.parse(text) else { return [] }
-            return SnippetTemplate.argumentNames(tokens)
+            return SnippetTemplate.fields(tokens)
         }
     }
 
@@ -69,7 +72,8 @@ enum PaletteSnippets {
         preview(text: snippet.text, syntax: snippet.syntax, arguments: arguments)
     }
 
-    /// Missing fields show as ‹name›, the clipboard as [clipboard], the cursor as ▏.
+    /// Missing fields show as ‹name›, the clipboard as [clipboard], the
+    /// cursor as ▏; choices and sections not answered yet show their defaults.
     static func preview(text: String, syntax: Int?, arguments: [String: String] = [:], now: Date = Date()) -> String {
         var filled = arguments
         if syntax == SnippetTemplate.currentSyntax, case .success(let tokens) = SnippetTemplate.parse(text) {

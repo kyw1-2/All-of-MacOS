@@ -127,7 +127,7 @@ enum PaletteRoute: Hashable {
         case .scripts: return "Search script commands…"
         case .scriptOutput: return "Filter the output…"
         case .scriptArgument: return "Type the argument, then ↩"
-        case .snippetArguments: return "Type the field, then ↩ (esc leaves the text as it was)"
+        case .snippetArguments: return "Type the field or pick a row, then ↩ (esc leaves the text as it was)"
         case .schedule: return "Search the next seven days…"
         case .contacts: return "Search names, companies, addresses or numbers…"
         case .sendTo: return "Where should it go?"

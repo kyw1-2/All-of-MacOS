@@ -201,7 +201,7 @@ extension AOMModuleSwitch {
     /// ("go.<tab>") and the module's own tools and rows.
     static func owner(ofPaletteItem id: String) -> AOMModuleSwitch? {
         if id.hasPrefix("rules.") || id.hasPrefix("ruleitem.") || id == "go.\(AOMMainTab.folderRules.rawValue)" { return .folderRules }
-        if id == "go.\(AOMMainTab.files.rawValue)" { return .files }
+        if id == "go.\(AOMMainTab.files.rawValue)" || id.hasPrefix("files.tool.") { return .files }
         if id == "go.\(AOMMainTab.textActions.rawValue)" { return .textActions }
         if id == "go.\(AOMMainTab.focus.rawValue)" { return .focus }
         return nil

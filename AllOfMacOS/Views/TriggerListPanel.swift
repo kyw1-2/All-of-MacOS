@@ -718,11 +718,27 @@ struct AddTriggerSheet: View {
                 .textFieldStyle(.roundedBorder)
             HStack(spacing: AOMSpace.x2) {
                 Toggle("Placeholders", isOn: $typedPlaceholders)
-                    .help("Read {clipboard}, {date}, {time}, {cursor} and {arg:name} in the text; {{ and }} type braces")
+                    .help("Read {clipboard}, {date}, {time}, {cursor}, {arg:name}, {choice:name|A|B} and {optional:name} … {/optional} in the text; {{ and }} type braces")
                 Menu("Insert") {
                     ForEach([("Clipboard text", "{clipboard}"), ("Today (2026-11-21)", "{date}"), ("Date, your format", "{date:yyyy.MM.dd}"),
                              ("Time (14:05)", "{time}"), ("Cursor here", "{cursor}"), ("Ask for a field", "{arg:name}")], id: \.1) { title, token in
                         Button(title) { typedPlaceholders = true; typedReplacement += token }
+                    }
+                    // 7.5 (Codex F02): TextExpander's popup menu and optional section.
+                    Divider()
+                    Button("Choice (pick one; * marks the default)") {
+                        typedPlaceholders = true
+                        typedReplacement += "{choice:Delivery|*Courier|Visit}"
+                    }
+                    Button("Optional section (in by default)") {
+                        typedPlaceholders = true
+                        typedReplacement += (typedReplacement.isEmpty || typedReplacement.hasSuffix("\n") ? "" : "\n")
+                            + "{optional:Signature}\n--\nYour name\n{/optional}"
+                    }
+                    Button("Optional section (left out by default)") {
+                        typedPlaceholders = true
+                        typedReplacement += (typedReplacement.isEmpty || typedReplacement.hasSuffix("\n") ? "" : "\n")
+                            + "{optional:P.S.|off}\nP.S. \n{/optional}"
                     }
                 }
                 .fixedSize()
@@ -736,7 +752,7 @@ struct AddTriggerSheet: View {
                     .lineLimit(4)
                     .textSelection(.enabled)
             }
-            AOMEditorNote(typedPlaceholders ? "Never expands in password fields. Fields ({arg:…}) are asked in the launcher; esc leaves your text as typed." : "Never expands in password fields.")
+            AOMEditorNote(typedPlaceholders ? "Never expands in password fields. Fields, choices and optional sections are asked in the launcher, each name once; esc leaves your text as typed." : "Never expands in password fields.")
         }
     }
 

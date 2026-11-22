@@ -28,7 +28,9 @@ struct FreeUpSpaceSheet: View {
                 .listStyle(.sidebar)
                 .frame(width: 170)
                 Group {
-                    if let review = model.cleanupReview {
+                    if let map = model.storageMap, model.cleanupScan == .folderSizes {
+                        StorageMapView(model: map, onClose: { map.cancel(); model.storageMap = nil })
+                    } else if let review = model.cleanupReview {
                         CleanupReviewContent(review: review,
                                              onTrash: { model.trashSelected($0) },
                                              onCancel: { model.cleanupReview = nil })
@@ -53,7 +55,7 @@ struct FreeUpSpaceSheet: View {
             }
         }
         .padding(AOMSpace.x4)
-        .frame(width: 780, height: 560)
+        .frame(width: model.storageMap == nil ? 780 : 1000, height: model.storageMap == nil ? 560 : 660)
         .background(AOMColor.canvas)
         .aomToast(model.toasts)
         .onExitCommand { dismiss() }

@@ -90,6 +90,8 @@ final class SystemToolsModel: ObservableObject {
     }
     /// A cleanup scan waiting for the user's review, and the tool reporting it.
     @Published var cleanupReview: CleanupReview?
+    /// 7.5 (Codex F06): Folder Sizes' map, shown in place in Free Up Space.
+    @Published var storageMap: StorageMapModel?
     var cleanupTool: SystemToolID = .freeUpSpace
     /// The Free Up Space sheet's chosen scan and its preview.
     @Published var showFreeUpSpace = false
@@ -1034,6 +1036,8 @@ final class SystemToolsModel: ObservableObject {
         guard scan != cleanupScan else { return }
         cleanupScan = scan
         cleanupReview = nil
+        storageMap?.cancel()
+        storageMap = nil
     }
 
     /// Starts one scan of the Free Up Space sheet.
@@ -1203,22 +1207,13 @@ final class SystemToolsModel: ObservableObject {
         }
     }
 
+    /// 7.5 (Codex F06): the folder measured once, then walked down as a map.
     private func scanFolderSizes() {
-        guard let folder = pickFolder(message: "Choose a folder; AOM adds up what each item in it takes on disk.") else { return }
-        toast = "Measuring \(folder.lastPathComponent)…"
-        runInBackground(.freeUpSpace, { FileTools.folderSizes(in: folder) }) { sizes in
-            guard !sizes.isEmpty else { self.succeed(.freeUpSpace, "\(folder.lastPathComponent) is empty or unreadable"); return }
-            let total = sizes.reduce(0) { $0 + $1.size }
-            let items = sizes.prefix(200).map {
-                CleanupCandidate(url: folder.appendingPathComponent($0.name), size: $0.size,
-                                 note: "\($0.files) file\($0.files == 1 ? "" : "s") · \(total > 0 ? Int((Double($0.size) / Double(total) * 100).rounded()) : 0)% of the folder")
-            }
-            self.lastResult = ToolResult(tool: .freeUpSpace, message: "\(folder.lastPathComponent): \(SystemStatus.size(total))", succeeded: true, date: Date())
-            self.cleanupTool = .freeUpSpace
-            self.cleanupReview = CleanupReview(title: "\(folder.lastPathComponent) · \(SystemStatus.size(total))",
-                                               detail: "Biggest first, measured as allocated space (packages included). Use Show in Finder to look inside; nothing is changed here.",
-                                               candidates: Array(items), selected: [], allowsTrash: false)
-        }
+        guard let folder = pickFolder(message: "Choose a folder; AOM measures everything in it so you can follow the space down.") else { return }
+        storageMap?.cancel()
+        let map = StorageMapModel(root: folder)
+        storageMap = map
+        map.start()
     }
 
     private func clearCaches() {

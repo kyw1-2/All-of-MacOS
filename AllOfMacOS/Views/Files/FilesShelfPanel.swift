@@ -708,6 +708,9 @@ struct FilesShelfView: View {
             Button("Quick Look") { model.selection = [item.id]; controller.quickLook() }.disabled(!exists)
             Button("Show in Finder") { FilesFileActions.reveal([item.url]) }.disabled(!exists)
             Button("Copy Path") { FilesFileActions.copyPaths([item.url]) }
+            if item.url.pathExtension.lowercased() == "zip" {
+                Button("Extract Files…") { AOMFileToolsLauncher.openZip(item.url) }.disabled(!exists)
+            }
             Divider()
             Button("Remove from Shelf") { controller.remove([item.id]) }
         }
@@ -790,6 +793,16 @@ struct FilesShelfView: View {
                 Button("Move To…") { controller.moveTo() }
                 Button("Copy To…") { controller.copyTo() }
                 Button("Show in Finder") { controller.reveal() }
+                // 7.5 (Codex F03, F07, F08): the selection (or the whole shelf) opened in a tool.
+                let pdfs = urls.filter { $0.pathExtension.lowercased() == "pdf" }
+                let zips = urls.filter { $0.pathExtension.lowercased() == "zip" }
+                let folders = urls.filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true && $0.pathExtension.isEmpty }
+                if pdfs.count == 2 || zips.count == 1 || folders.count == 2 {
+                    Divider()
+                    if pdfs.count == 2 { Button("Compare the Two PDFs") { AOMFileToolsLauncher.comparePDFs(pdfs) } }
+                    if zips.count == 1 { Button("Extract Files from \(zips[0].lastPathComponent)…") { AOMFileToolsLauncher.openZip(zips[0]) } }
+                    if folders.count == 2 { Button("Compare the Two Folders") { AOMFileToolsLauncher.compareFolders(folders) } }
+                }
                 Divider()
                 Button(model.selection.isEmpty ? "Select All" : "Deselect All") {
                     if model.selection.isEmpty { controller.selectAll() } else { model.selection = [] }

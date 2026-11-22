@@ -581,6 +581,13 @@ struct QuickCommandPalette: View {
         }
         // Keycaps mirror the user's real bindings; unbound commands show none.
         // Capture Text resolves to the OCR binding, as in CaptureMenu.
+        // 7.5 (Codex F03, F07, F08): the Files module's comparison and archive windows.
+        command("files.tool.comparePDFs", "Compare PDFs", "Two PDFs side by side, pages linked · PDF 비교", "rectangle.split.2x1",
+                keywords: "compare pdf diff side by side contract draft 비교 대조 계약서") { AOMFileToolsLauncher.comparePDFs() }
+        command("files.tool.compareFolders", "Compare Folders", "What one folder has that the other doesn't, then copy it · 폴더 비교", "folder.badge.questionmark",
+                keywords: "compare folders sync backup external drive missing files diff 폴더 비교 동기화 백업 누락") { AOMFileToolsLauncher.compareFolders() }
+        command("files.tool.zipExtract", "Extract from ZIP", "Search a ZIP and take out only the files you pick · 압축 일부 풀기", "doc.zipper",
+                keywords: "unzip archive extract selected files zip 압축 풀기 압축해제 일부") { AOMFileToolsLauncher.openZip() }
         command("capture.area", "Capture Area", "Drag a region to capture", "viewfinder",
                 keys: captureKeys(.captureArea)) { CaptureCoordinator.shared.captureArea() }
         command("capture.window", "Capture Window", "Pick a window to capture", "macwindow",
