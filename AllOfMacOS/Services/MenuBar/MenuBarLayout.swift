@@ -68,9 +68,16 @@ enum MenuBarLayoutPolicy {
         return .hidden
     }
 
+    /// AOM's own chevron and dividers: they are the lanes' edges, not items.
+    static func isHiderControl(_ item: AOMMenuShelfItem, ownPID: pid_t) -> Bool {
+        guard item.pid == ownPID else { return false }
+        let text = (item.title + " " + item.axDescription).lowercased()
+        return text.contains("divider") || text.contains("hidden menu bar items") || text.contains("hide menu bar items")
+    }
+
     /// Items macOS keeps at the right end; they can't change lanes.
     static func lockedReason(_ item: AOMMenuShelfItem, ownPID: pid_t) -> String? {
-        if item.pid == ownPID { return "AOM's own control" }
+        if isHiderControl(item, ownPID: ownPID) { return "AOM's own control" }
         switch item.identity?.name {
         case "Clock", "Control Center": return "macOS keeps it at the right end"
         default: return nil
@@ -207,6 +214,7 @@ final class MenuBarLayoutModel: ObservableObject {
     @Published private(set) var lastRefresh: Date?
     /// True in an isolated preview filled with sample items.
     @Published private(set) var isSample = false
+    private var lastReveal = Date.distantPast
 
     private let worker = DispatchQueue(label: "com.kyw.aom.menubar-layout", qos: .userInitiated)
     private var generation = 0
@@ -272,7 +280,12 @@ final class MenuBarLayoutModel: ObservableObject {
         busy = true
         if !quietly { status = nil }
         let hider = MenuBarHider.shared
-        let reveal = allowReveal && hider.isRunning && hider.isCollapsed
+        // Hidden items are read where they are (off screen); they are shown
+        // for a moment only to take pictures still missing or 30 minutes old.
+        let needsPictures = items.isEmpty || items.contains { $0.section != .shown && images[$0.imageKey] == nil }
+            || Date().timeIntervalSince(lastReveal) > 30 * 60
+        let reveal = allowReveal && needsPictures && hider.isRunning && hider.isCollapsed
+        if reveal { lastReveal = Date() }
         if reveal { hider.revealForInspection() }
         DispatchQueue.main.asyncAfter(deadline: .now() + (reveal ? 0.45 : 0)) { [weak self] in
             self?.scan(ticket: ticket) { [weak self] in
@@ -292,7 +305,9 @@ final class MenuBarLayoutModel: ObservableObject {
             DispatchQueue.main.async { [weak self] in
                 MainActor.assumeIsolated {
                     guard let self, ticket == self.generation else { done(); return }
-                    let laid = snapshot.items.filter { $0.pid != own }.map { item in
+                    // AOM's own icons (its menu, weather) are items like any other;
+                    // only the Hider's chevron and dividers are left out.
+                    let laid = snapshot.items.filter { !MenuBarLayoutPolicy.isHiderControl($0, ownPID: own) }.map { item in
                         MenuBarLayoutItem(item: item,
                                           section: MenuBarLayoutPolicy.section(of: item.frame, divider: hiderFrames.divider, always: hiderFrames.always),
                                           lockedReason: MenuBarLayoutPolicy.lockedReason(item, ownPID: own))

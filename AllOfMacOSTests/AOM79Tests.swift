@@ -37,7 +37,9 @@ final class AOM79Tests: XCTestCase {
         XCTAssertEqual(MenuBarLayoutPolicy.lanes(items)[.alwaysHidden]?.count, 0)
         let clock = item("Clock", x: 1, id: "com.apple.menuextra.clock", owner: "com.apple.MenuBarAgent")
         XCTAssertNotNil(MenuBarLayoutPolicy.lockedReason(clock, ownPID: own))
-        XCTAssertNotNil(MenuBarLayoutPolicy.lockedReason(item("Mine", x: 1, pid: own), ownPID: own))
+        XCTAssertNotNil(MenuBarLayoutPolicy.lockedReason(item("Menu Bar Hider divider", x: 1, pid: own), ownPID: own))
+        XCTAssertTrue(MenuBarLayoutPolicy.isHiderControl(item("Show hidden menu bar items", x: 1, pid: own), ownPID: own))
+        XCTAssertNil(MenuBarLayoutPolicy.lockedReason(item("Weather", x: 1, pid: own), ownPID: own), "AOM's own icons move like any other")
         XCTAssertNil(MenuBarLayoutPolicy.lockedReason(item("Dropbox", x: 1), ownPID: own))
     }
 

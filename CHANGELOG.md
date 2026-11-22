@@ -1,3 +1,23 @@
+## [7.9.0] - 2026-11-22
+
+The Menu Bar page is rebuilt after Bartender, Ice and Hidden Bar (the Oracle analyses of Bartender 7.1, Ice 0.11.12 and Hidden Bar 1.11.1), the weather card is redesigned, and the words that showed through the window in 7.8 are gone. Details: `docs/design-7.9.md`.
+
+### Menu bar layout (Bartender's Layout)
+- The real menu bar, **pulled down into three lanes** — Shown, Hidden, Always Hidden — each drawn like a strip of the menu bar with every item's own picture. **Drag an icon to another lane** (or onto an icon to put it before that one) and AOM moves the real item: it shows everything for a moment, reads fresh positions, does the ⌘-drag you would, checks where macOS put it, and hides again. Clock and Control Center show a lock: macOS keeps them at the right.
+- Click an icon to rename it, open its menu or move it from a menu; double-click opens its menu. AOM's own icons (its menu, weather) arrange like any other.
+- Pictures come from Screen Recording (without it, symbols and app icons stand in) and are kept on disk, so the Bar has real icons from the start. Hidden items are shown for a moment only when a picture is missing or 30 minutes old.
+
+### The Bar (Bartender Bar) and hiding (Hidden Bar)
+- **The Bar**: hidden icons in a strip under the menu bar, right-aligned below ❮, pictures only — hover names one, a click opens its menu (a hidden item comes back into the menu bar for that click and hides again on the timer, which waits while its menu is open). ← → ↩, 1–9 and esc work.
+- **Show hidden icons in the menu bar or in the Bar**, **Reveal on hover** over ❮, and the top-centre hover now opens the Bar. All in the page and in ❮'s right-click menu.
+- The page is one card per job — Layout, Hidden icons, Bar, Weather, AOM menu, Icon spacing — with one line of help where a control needs it.
+
+### Weather
+- The card shows the city and condition, the temperature large with today's high, low and feels-like, **humidity, wind, UV, rain chance, sunrise and sunset**, **the next eight hours** with icons and rain chance, and **the week** with range bars on one scale (today's dot is now) — coloured symbols, tight spacing, from the same single request. Settings shows the same card live next to its controls.
+
+### Window
+- **No more ghost words**: 7.8's lighter "sidebar" blur let the text of windows behind show through the Menu Bar page. Every Window glass level now uses the heavy blur that passes the desktop's colour but not its detail; Balanced and Clear still let more colour through than 7.7.
+
 ## [7.8.0] - 2026-11-22
 
 Codex's spec for the menu bar and the window (기능명세서, 2026-11-22) is implemented where it found what people see wrong, and the ⌥Space launcher gets themes. Details and what is still open: `docs/design-7.8.md`.
