@@ -1726,6 +1726,8 @@ extension QuickCommandPalette {
         // 7.4
         case "browserTabs": return .browserTabs
         case "system": return .system
+        // 7.8
+        case "themes": return .themes
         default: return nil
         }
     }

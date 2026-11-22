@@ -357,6 +357,31 @@ struct HubActionRow<Actions: View>: View {
 
 // MARK: - Special rows
 
+/// 7.8: the launcher theme, with each theme's swatch, and a way to see it.
+struct LauncherThemeRow: View {
+    @ObservedObject private var look = AOMLauncherAppearance.shared
+
+    var body: some View {
+        HubRowShell(icon: "paintpalette", tint: .indigo, title: "Launcher theme", subtitle: look.theme.schemeLabel) {
+            HStack(spacing: AOMSpace.x2) {
+                Picker("", selection: Binding(get: { look.theme.id },
+                                              set: { look.setTheme(AOMLauncherTheme.named($0)) })) {
+                    ForEach(AOMLauncherTheme.all) { theme in
+                        Label { Text(theme.name) } icon: { Image(nsImage: AOMLauncherThemeSwatch.image(theme)) }
+                            .tag(theme.id)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .fixedSize()
+                .accessibilityLabel("Launcher theme")
+                Button("Try in Launcher") { AOMLauncherController.shared.show(route: .themes) }
+                    .help("Opens the launcher's Theme screen: ↑↓ tries each theme")
+            }
+        }
+    }
+}
+
 struct LaunchAtLoginRow: View {
     @State private var enabled = SMAppService.mainApp.status == .enabled
 
@@ -447,6 +472,8 @@ enum SettingsCatalog {
     private static let groups: [String: String] = [
         "launchAtLogin": "Startup", "showMenuBarIcon": "Startup",
         "appearance": "Appearance", "accentColor": "Appearance", "translucentWindow": "Appearance",
+        "translucentLevel": "Appearance",
+        "launcherTheme": "Launcher", "launcherOpacity": "Launcher", "launcherMaterial": "Launcher",
         "hud": "Feedback", "hudOpacity": "Feedback",
         "inputSourcesSwitch": "Input sources", "inputSourcesRules": "Input sources",
         "inputSourcesRemember": "Input sources", "inputSourcesFallback": "Input sources",
@@ -490,7 +517,13 @@ enum SettingsCatalog {
             item("showMenuBarIcon", .general, "Menu bar icon", "Keep quick controls in the menu bar", ["메뉴바", "menubar", "아이콘"], AnyView(HubToggleRow(icon: "menubar.rectangle", tint: .purple, title: "Menu bar icon", subtitle: "", key: "showMenuBarIcon", fallback: true))),
             item("appearance", .general, "Appearance", "Match the system or choose a theme", ["테마", "다크", "라이트", "theme"], AnyView(HubChoiceRow(icon: "circle.lefthalf.filled", tint: .indigo, title: "Appearance", subtitle: "", key: "AOMAppearance", fallback: "system", options: [("System", "system"), ("Light", "light"), ("Dark", "dark")], width: 150))),
             // 6.5: the main window as one glass sheet over the desktop (Raycast).
-            item("translucentWindow", .general, "Translucent window", "Let the desktop show through the main window", ["투명", "반투명", "유리", "glass", "vibrancy", "translucent", "raycast"], AnyView(HubToggleRow(icon: "square.on.square.dashed", tint: .indigo, title: "Translucent window", subtitle: "Off with Reduce Transparency or Increase Contrast", key: AOMTranslucency.defaultsKey, fallback: AOMTranslucency.defaultOn))),
+            item("translucentWindow", .general, "Translucent window", "Let the desktop show through the main window", ["투명", "반투명", "유리", "glass", "vibrancy", "translucent", "raycast"], AnyView(HubToggleRow(icon: "square.on.square.dashed", tint: .indigo, title: "Translucent window", subtitle: AOMTranslucency.accessibilityForcesSolid ? "Shown solid now: Reduce Transparency or Increase Contrast is on in Accessibility settings" : "The desktop's colour shows through the main window", key: AOMTranslucency.defaultsKey, fallback: AOMTranslucency.defaultOn))),
+            // 7.8 (Codex WIN-01): how much of the desktop comes through.
+            item("translucentLevel", .general, "Window glass", "How much of the desktop shows through the main window", ["투명도", "유리", "glass", "opacity", "투명", "clear", "subtle"], AnyView(HubChoiceRow(icon: "circle.lefthalf.striped.horizontal", tint: .indigo, title: "Window glass", subtitle: "Subtle is 7.7's look; Clear shows the most", key: AOMTranslucency.levelKey, fallback: AOMTranslucency.Level.balanced.rawValue, options: AOMTranslucency.Level.allCases.map { ($0.title, $0.rawValue) }))),
+            // 7.8: the launcher's theme (Raycast), opacity and material.
+            item("launcherTheme", .general, "Launcher theme", "Colours of the ⌥Space launcher", ["theme", "테마", "런처", "launcher", "raycast", "dark", "light", "midnight", "ocean", "다크", "라이트"], AnyView(LauncherThemeRow())),
+            item("launcherOpacity", .general, "Launcher opacity", "How much of the theme colour lies over the blurred desktop", ["투명도", "불투명도", "opacity", "transparency", "런처", "launcher", "blur", "블러"], AnyView(HubSliderRow(icon: "square.lefthalf.filled", tint: .indigo, title: "Launcher opacity", subtitle: "Lower shows more of the desktop behind", key: AOMLauncherAppearance.opacityKey, fallback: AOMLauncherAppearance.defaultOpacity, range: AOMLauncherAppearance.opacityRange, step: 0.02, percent: true))),
+            item("launcherMaterial", .general, "Launcher material", "Frosted blur or Liquid Glass", ["glass", "liquid glass", "frosted", "blur", "유리", "블러", "런처", "launcher"], AnyView(HubChoiceRow(icon: "drop.halffull", tint: .indigo, title: "Launcher material", subtitle: "Liquid Glass needs macOS 26", key: AOMLauncherAppearance.materialKey, fallback: AOMLauncherMaterial.frosted.rawValue, options: AOMLauncherMaterial.allCases.map { ($0.title, $0.rawValue) }))),
             item("accentColor", .general, "Highlight color", "Accent for buttons and selections", ["색", "컬러", "accent"], AnyView(AccentColorRow())),
             item("hud", .general, "On-screen HUD", "Show feedback when actions run", ["hud", "오버레이", "알림"], AnyView(HubToggleRow(icon: "rectangle.on.rectangle", tint: .teal, title: "On-screen HUD", subtitle: "Show feedback when actions run", key: "AOMHUDEnabled", fallback: true))),
             item("hudNotch", .general, "HUD at the Notch", "On a display with a notch, the HUD grows out of it", ["notch", "노치", "hud"], AnyView(HubToggleRow(icon: "rectangle.topthird.inset.filled", tint: .teal, title: "HUD at the Notch", subtitle: "On a display with a notch, the HUD grows out of it", key: GestureHUD.atNotchKey, fallback: false))),

@@ -161,7 +161,7 @@ struct AddTriggerSheet: View {
             }
             .padding(.horizontal, AOMSpace.x5)
             .padding(.vertical, AOMSpace.x3)
-            .background(AOMColor.pageBackground)
+            .background(AOMPageTint())
         }
         .frame(width: (category == .drawings ? AOMEditorSize.drawingSheet : AOMEditorSize.triggerSheet) + 200)
     }
@@ -210,7 +210,7 @@ struct AddTriggerSheet: View {
         .padding(AOMSpace.x3)
         .frame(width: 200)
         .frame(maxHeight: .infinity, alignment: .top)
-        .background(AOMColor.pageBackground)
+        .background(AOMPageTint())
     }
 
     static func railSymbol(_ category: TriggerCategory) -> String {

@@ -32,7 +32,10 @@ final class MenuBarHider: NSObject {
     /// The check that the chevron stayed on its display (cancelled by any change).
     private var visibilityCheck: DispatchWorkItem?
     private(set) var isCollapsed = false
-    private var rehide: DispatchWorkItem?
+    /// 7.8 (Codex HB-01): the countdown to hiding again, checked twice a
+    /// second; it starts over while the menu bar is in use.
+    private var rehideTimer: Timer?
+    private var rehideDeadline: TimeInterval = 0
     /// 7.6 (Codex MB04): the delayed collapse after a start, cancelled by stop.
     private var startCollapse: DispatchWorkItem?
 
@@ -84,7 +87,7 @@ final class MenuBarHider: NSObject {
     func stop() {
         startCollapse?.cancel()
         startCollapse = nil
-        rehide?.cancel()
+        cancelRehide()
         visibilityCheck?.cancel()
         for item in [toggle, divider, always].compactMap({ $0 }) { NSStatusBar.system.removeStatusItem(item) }
         always = nil
@@ -181,7 +184,7 @@ final class MenuBarHider: NSObject {
     @objc private func toggleAlwaysSection() { setAlwaysSection(!Self.alwaysSectionOn) }
     @objc private func openManagement() { MenuBarNavigation.open() }
     @objc private func showEverything() { expand(all: true) }
-    @objc private func keepOpen() { rehide?.cancel() }
+    @objc private func keepOpen() { cancelRehide() }
     @objc private func pickRehide(_ sender: NSMenuItem) { setRehideSeconds(sender.representedObject as? Double ?? 15) }
 
     func setRehideSeconds(_ seconds: Double) {
@@ -251,7 +254,7 @@ final class MenuBarHider: NSObject {
             updateAppearance()
             return
         }
-        rehide?.cancel()
+        cancelRehide()
         UserDefaults.standard.set(true, forKey: Self.usedKey)
         isCollapsed = true
         showsAll = false
@@ -266,12 +269,66 @@ final class MenuBarHider: NSObject {
         isCollapsed = false
         showsAll = all
         apply()
-        if holdOpen { rehide?.cancel(); return }
-        rehide?.cancel()
+        cancelRehide()
+        if holdOpen { return }
         let seconds = Self.rehideSeconds
         guard seconds > 0 else { return }
-        let work = DispatchWorkItem { [weak self] in self?.collapse() }
-        rehide = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: work)
+        rehideDeadline = ProcessInfo.processInfo.systemUptime + seconds
+        let timer = Timer(timeInterval: 0.5, repeats: true) { _ in
+            MainActor.assumeIsolated { MenuBarHider.shared.tickRehide() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        rehideTimer = timer
+    }
+
+    private func cancelRehide() {
+        rehideTimer?.invalidate()
+        rehideTimer = nil
+    }
+
+    /// Hides again once the countdown ran out with nobody using the menu bar:
+    /// the pointer on it, a menu open (theirs or another app's) or a mouse
+    /// button held (a ⌘-drag) restart it from the full time.
+    private func tickRehide() {
+        guard !isCollapsed, toggle != nil else { cancelRehide(); return }
+        let now = ProcessInfo.processInfo.systemUptime
+        let busy = MenuBarRehidePolicy.isBusy(pointerInMenuBar: Self.pointerInMenuBar(),
+                                               menuOpen: Self.menuIsOpen(),
+                                               buttonsDown: NSEvent.pressedMouseButtons != 0)
+        rehideDeadline = MenuBarRehidePolicy.deadline(now: now, current: rehideDeadline, busy: busy, seconds: Self.rehideSeconds)
+        if MenuBarRehidePolicy.shouldCollapse(now: now, deadline: rehideDeadline, busy: busy) {
+            cancelRehide()
+            collapse()
+        }
+    }
+
+    private static func pointerInMenuBar() -> Bool {
+        let point = NSEvent.mouseLocation
+        guard let screen = NSScreen.screens.first(where: { NSMouseInRect(point, $0.frame, false) }) else { return false }
+        let height = max(24, screen.frame.maxY - screen.visibleFrame.maxY)
+        return point.y >= screen.frame.maxY - height
+    }
+
+    /// Any app's menu on screen (menus sit at the pop-up menu window level).
+    private static func menuIsOpen() -> Bool {
+        let level = Int(CGWindowLevelForKey(.popUpMenuWindow))
+        guard let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return false }
+        return windows.contains { ($0[kCGWindowLayer as String] as? Int) == level }
+    }
+}
+
+/// Pure (Codex HB-01): when the shown items hide again.
+enum MenuBarRehidePolicy {
+    static func isBusy(pointerInMenuBar: Bool, menuOpen: Bool, buttonsDown: Bool) -> Bool {
+        pointerInMenuBar || menuOpen || buttonsDown
+    }
+
+    /// While busy the countdown restarts from the full time.
+    static func deadline(now: TimeInterval, current: TimeInterval, busy: Bool, seconds: Double) -> TimeInterval {
+        busy ? max(current, now + seconds) : current
+    }
+
+    static func shouldCollapse(now: TimeInterval, deadline: TimeInterval, busy: Bool) -> Bool {
+        !busy && now >= deadline
     }
 }

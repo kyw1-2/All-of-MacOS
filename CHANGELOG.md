@@ -1,3 +1,26 @@
+## [7.8.0] - 2026-11-22
+
+Codex's spec for the menu bar and the window (기능명세서, 2026-11-22) is implemented where it found what people see wrong, and the ⌥Space launcher gets themes. Details and what is still open: `docs/design-7.8.md`.
+
+### Launcher themes
+- **13 themes** — Follow System, Light, Dark, Midnight, Graphite, Ocean, Forest, Plum, Ember, Paper, Mint, Rose and Sky — set the launcher's ink, background tint, selection and highlight colour. Type "theme" in the launcher: ↑↓ tries each theme on the panel itself, ↩ keeps it, esc goes back to the one you had.
+- **More of the desktop shows through**: a frosted blur of what's behind the panel under the theme's tint at 68 % (7.7 laid an 86 % pale base over the glass, so it read as a flat sheet). **Opacity** (30–100 %) and **Material** (Frosted blur or Liquid Glass) are in the same screen and in Settings › General › Launcher. Reduce Transparency and Increase Contrast get the theme's colour, opaque.
+
+### Menu bar items (MB-01, MB-02)
+- macOS 27 keeps Battery, Sound, Control Center and the clock one level inside nameless containers; AOM listed the containers, so Settings showed four identical "MenuBarAgent" rows. It now walks into them: each item has its own name and symbol, and **Open** shows its own menu (AXShowMenu, else one click).
+- **Name, symbol and group of your own** for any item with a lasting identity (pencil on its row, or right-click › Rename…). They show in the Shelf, the Strip, the launcher's Menu Bar Items and AOM's menu; a volume or battery value changing keeps the name. An item that isn't there now, or that two items match, is never pressed in its place.
+
+### AOM's menu, your way (ME-01…03)
+- **Edit Menu…** (in the icon's menu, the panel's pencil, or Menu Bar › AOM menu) arranges the **right-click menu** — commands, separators, groups, renamed items, named menu bar items, Scenes — and the **click panel's** quick commands, 1–4 a row with the rest under More. The first draft starts from Workspace's quick actions; nothing runs while editing; Apply saves it all at once, Cancel and Restore Default put things back, and two editors can't overwrite each other.
+- All Commands (the full menu), Edit Menu… and Quit always follow your items, and a running recording's Stop comes first.
+
+### Menu Bar Hider (HB-01)
+- Shown items no longer hide while you're using the menu bar: the pointer on it, any app's menu open or a mouse button held (a ⌘-drag) starts the countdown again from the full time.
+
+### Window (WIN-01, UI-01)
+- **Translucent window** now lets the desktop's colour through: Codex measured 2/255 of change on a card with a blue and an orange window behind. The default ("Balanced") uses a lighter blur, a 32 % page tint and 60 % cards; **Window glass** in Settings › General picks Subtle (7.7's look), Balanced or Clear, and switching either applies to the open window at once. Settings says when Reduce Transparency or Increase Contrast is keeping it solid.
+- **Rounded corners**: a card of rows clips its rows to its own curve, so a first or last row's hover or selection no longer squares the corners (Workspace's recent activity and the others); the annotation layers, the Menu Bar Strip and the Shelf use one continuous shape for fill, clip and rim. Folder Rules no longer lays its page tint twice.
+
 ## 7.7.0 — Menu Bar control center (2026-11-22)
 
 - A dedicated **Menu Bar** page now appears in the main window's left sidebar, without changing existing ⌘1–⌘9 page shortcuts. The launcher and feature-directory search also find it by Menu Bar, weather, Ice, Bartender or 메뉴바.

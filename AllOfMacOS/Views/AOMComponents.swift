@@ -64,7 +64,7 @@ struct AOMPage<Content: View>: View {
         .scrollIndicators(.automatic)
         .defaultScrollAnchor(AOMPreviewHooks.scrollAnchor)
         .aomScrollEdge()
-        .background(AOMColor.pageBackground)
+        .background(AOMPageTint())
     }
 }
 

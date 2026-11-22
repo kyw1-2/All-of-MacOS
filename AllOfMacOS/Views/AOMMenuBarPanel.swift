@@ -103,6 +103,8 @@ struct AOMMenuBarPanel: View {
     /// 6.8 (6.7 report §5): the first three quick actions of the user's own
     /// Workspace order (Customize Workspace), labelled — not a fixed six.
     @ObservedObject private var layout = AOMWorkspaceLayout.shared
+    /// 7.8 (ME-02): the person's own quick commands and how many a row.
+    @ObservedObject private var menuStore = AOMStatusMenuStore.shared
 
     /// 7.0: drawn by the craft panel (Control Center 26): live sessions on
     /// top, tinted tiles, labelled quick actions with More for the rest,
@@ -112,12 +114,13 @@ struct AOMMenuBarPanel: View {
             isEngineRunning: model.engineOn,
             liveSessions: liveSessions,
             toggles: tiles,
-            quickActions: layout.visibleQuickActions.map { kind in
-                AOMMenuBarCraftPanel.QuickAction(id: kind.id, title: kind.title, symbol: kind.symbol) {
+            quickActions: menuStore.panelCommands().map { command in
+                AOMMenuBarCraftPanel.QuickAction(id: command.id, title: command.title, symbol: command.symbol) {
                     actions.close()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { kind.run() }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { command.run() }
                 }
             },
+            quickPerRow: AOMStatusMenuLayout.clampedPerRow(menuStore.layout.panelPerRow),
             launcherShortcutText: AOMLauncherShortcut.isRegistered ? AOMLauncherShortcut.current.displayString : nil,
             onToggleMaster: model.toggleEngine,
             onOpenLauncher: {
@@ -127,6 +130,10 @@ struct AOMMenuBarPanel: View {
             onOpenMainWindow: { actions.close(); actions.openWindow() },
             onOpenSettings: { actions.close(); actions.openSettings() },
             onShowClassicMenu: actions.showAllCommands,
+            onEditMenu: {
+                actions.close()
+                DispatchQueue.main.async { AOMMenuEditorNavigation.open() }
+            },
             accessory: battery.power?.percent != nil ? AnyView(batteryRow) : nil)
         .aomButtonDefaults()
         .onAppear { model.refresh(); battery.refreshBattery() }

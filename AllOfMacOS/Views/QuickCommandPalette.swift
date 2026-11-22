@@ -30,6 +30,11 @@ struct QuickCommandPalette: View {
     @StateObject private var recentFiles = PaletteRecentFiles()
     @Environment(\.openSettings) private var openSettings
     @Environment(\.colorSchemeContrast) var contrast
+    /// 7.8: the launcher theme (the Actions panel sits inside the surface
+    /// but is built here, so it reads the theme itself).
+    @ObservedObject var launcherLook = AOMLauncherAppearance.shared
+    var launcherSelection: Color { launcherLook.shown.selection }
+    var launcherOpaqueBase: Color { launcherLook.shown.base(opacity: 1) }
 
     @State var query = ""
     @State var selectedID: String?
@@ -391,6 +396,11 @@ struct QuickCommandPalette: View {
               subtitle: "Safari, Chrome, Arc, Edge, Brave and Vivaldi · ↩ brings the tab forward · 브라우저 탭",
               aliases: ["tabs", "browser tabs", "search tabs", "탭", "탭 검색", "브라우저 탭"],
               keywords: "safari chrome arc edge brave vivaldi tab 사파리 크롬"),
+        .init(id: "launcher.screen.themes", route: .themes,
+              subtitle: "Theme, opacity and blur of this launcher · 런처 테마",
+              aliases: ["theme", "themes", "change theme", "launcher theme", "launcher opacity", "launcher transparency",
+                        "테마", "런처 테마", "런처 투명도", "투명도"],
+              keywords: "dark light midnight ocean forest plum rose mint glass blur opacity 유리 블러 불투명도 다크 라이트"),
         .init(id: "system.screen.menubar", route: .menuBarItems,
               subtitle: "Find any app's menu bar icon, even behind the notch, and open it · 메뉴바 아이콘",
               aliases: ["menu bar", "menubar", "menu bar items", "status items", "메뉴바", "메뉴 막대", "ice", "bartender"],
@@ -1168,8 +1178,14 @@ struct QuickCommandPalette: View {
     func push(_ route: PaletteRoute) {
         navigation.push(route, query: query, selection: selectedID ?? results.first?.id)
         pendingSelection = nil
+        let hadQuery = !query.isEmpty
         query = ""
         selectedID = nil
+        // 7.8: the Theme screen opens on the theme in use.
+        if route == .themes {
+            let current = Self.themeRowPrefix + AOMLauncherAppearance.shared.theme.id
+            if hadQuery { pendingSelection = current } else { selectedID = current }
+        }
         showsActions = false
         enter(route)
         isFieldFocused = true
@@ -1202,7 +1218,7 @@ struct QuickCommandPalette: View {
                 if !term.isEmpty { brew.whenIdle { if brew.searchText == term, brew.tab == .search { brew.search() } } }
             }
         case .tool, .automationCatalog, .folder, .rulePreview, .emoji, .snippets, .newSnippet, .scripts, .scriptOutput,
-             .scriptArgument, .snippetArguments, .schedule, .contacts, .sendTo, .hotkey: break
+             .scriptArgument, .snippetArguments, .schedule, .contacts, .sendTo, .hotkey, .themes: break
         case .hotkeyFinder: PaletteHotkeyFinder.shared.shortcut = nil
         case .killApps: screens.watchApps(true)
         case .uninstallReview(let app): screens.beginUninstall(app)
@@ -1231,6 +1247,9 @@ struct QuickCommandPalette: View {
             screens.clearSound()
         case .confirm:
             confirmation = nil
+        case .themes:
+            // A theme only tried on goes back to the saved one.
+            AOMLauncherAppearance.shared.preview(nil)
         default:
             break
         }
@@ -1644,6 +1663,7 @@ struct QuickCommandPalette: View {
         case .sendTo(let payload): return sendToItems(payload)
         case .hotkey(let itemID, let title): return hotkeyItems(itemID: itemID, title: title)
         case .hotkeyFinder: return hotkeyFinderItems()
+        case .themes: return themeItems()
         }
     }
 
@@ -2112,7 +2132,7 @@ struct QuickCommandPalette: View {
     private func menuBarItemRows() -> [PaletteItem] {
         guard let items = screens.menuBarItems else { return [] }
         return items.map { item in
-            var row = screenRow(item.id, item.title, item.appName, icon: "menubar.rectangle",
+            var row = screenRow(item.id, item.title, [item.appName, item.detail].compactMap { $0 }.joined(separator: " · "), icon: "menubar.rectangle",
                                 group: item.x > 0 ? "Menu bar, right to left" : "Not placed on screen",
                                 primary: PaletteAction(title: "Open Its Menu", symbol: "cursorarrow.click") {
                                     if !PaletteMenuBarItems.press(item) {
@@ -2797,6 +2817,7 @@ struct QuickCommandPalette: View {
             }
             .onChange(of: selectedID) { _, id in
                 if let id { proxy.scrollTo(id, anchor: nil) }
+                previewTheme(forSelection: id)
             }
         }
     }
@@ -3070,7 +3091,7 @@ struct QuickCommandPalette: View {
                     }
                     .padding(.horizontal, AOMSpace.x2 + 2)
                     .frame(height: 32)
-                    .background(isCurrent ? AOMCraftColor.selection : .clear,
+                    .background(isCurrent ? launcherSelection : .clear,
                                 in: RoundedRectangle(cornerRadius: AOMCraftRadius.control, style: .continuous))
                     .contentShape(Rectangle())
                 }
@@ -3082,7 +3103,7 @@ struct QuickCommandPalette: View {
         }
         .padding(.bottom, AOMSpace.x1 + 2)
         .frame(width: PaletteMetrics.actionPanelWidth, alignment: .leading)
-        .background(AOMCraftColor.launcherBaseOpaque, in: RoundedRectangle(cornerRadius: AOMCraftRadius.actionPopover, style: .continuous))
+        .background(launcherOpaqueBase, in: RoundedRectangle(cornerRadius: AOMCraftRadius.actionPopover, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: AOMCraftRadius.actionPopover, style: .continuous)
                 .strokeBorder(contrast == .increased ? AOMColor.strongLine : AOMCraftColor.hairline,
@@ -3250,6 +3271,7 @@ private struct PaletteRowButton<Label: View>: View {
     @State private var hovering = false
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.aomLauncherSelection) private var launcherSelection
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: PaletteMetrics.rowRadius, style: .continuous)
@@ -3261,7 +3283,7 @@ private struct PaletteRowButton<Label: View>: View {
                         EmptyView()
                     } else if selected {
                         // Raycast v2: a quiet neutral fill and a hairline, never the accent.
-                        shape.fill(tint.map { $0.opacity(0.14) } ?? AOMCraftColor.selection)
+                        shape.fill(tint.map { $0.opacity(0.14) } ?? launcherSelection)
                             .overlay(shape.strokeBorder(contrast == .increased ? AOMColor.strongLine : AOMCraftColor.selectionEdge,
                                                         lineWidth: contrast == .increased ? 1 : 0.5))
                     } else if hovering {

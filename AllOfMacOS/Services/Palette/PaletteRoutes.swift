@@ -63,6 +63,8 @@ enum PaletteRoute: Hashable {
     case hotkey(itemID: String, title: String)
     /// 7.3: press a key combination to see everything that uses it.
     case hotkeyFinder
+    /// 7.8: the launcher's own look (theme, opacity, material).
+    case themes
 
     var title: String {
         switch self {
@@ -97,6 +99,7 @@ enum PaletteRoute: Hashable {
         case .sendTo: return "Send To"
         case .hotkey: return "Set Hotkey"
         case .hotkeyFinder: return "Find a Shortcut"
+        case .themes: return "Launcher Theme"
         }
     }
 
@@ -133,6 +136,7 @@ enum PaletteRoute: Hashable {
         case .sendTo: return "Where should it go?"
         case .hotkey: return "Press the new shortcut (esc cancels)"
         case .hotkeyFinder: return "Press a shortcut to see what uses it (esc goes back)"
+        case .themes: return "↑↓ tries a theme on the launcher, ↩ keeps it"
         }
     }
 
@@ -163,6 +167,7 @@ enum PaletteRoute: Hashable {
         case .contacts: return "person.crop.circle"
         case .sendTo: return "paperplane"
         case .hotkey, .hotkeyFinder: return "keyboard"
+        case .themes: return "paintpalette"
         }
     }
 
@@ -911,21 +916,27 @@ enum PaletteMenuBarItems {
         /// Its index among the app's extras, to find it again when pressed.
         let index: Int
         let x: CGFloat
+        /// 7.8: the item's changing value (80 %, 18°C), when not its name.
+        var detail: String? = nil
         var id: String { "menubar.\(pid).\(index)" }
     }
 
     /// Reads off the main thread; each app answers within a short timeout.
+    /// 7.8 (Codex MB-01): the Shelf's walk, so Battery, Sound, Control
+    /// Center and the clock are four named rows, not four "MenuBarAgent".
     static func scan() async -> [Item] {
-        await Task.detached(priority: .userInitiated) { () -> [Item] in
+        let aliases = await MainActor.run { AOMMenuBarAliasStore.shared.aliases }
+        return await Task.detached(priority: .userInitiated) { () -> [Item] in
             guard AXIsProcessTrusted() else { return [] }
             let own = ProcessInfo.processInfo.processIdentifier
             var items: [Item] = []
             for app in NSWorkspace.shared.runningApplications where !app.isTerminated && app.processIdentifier != own {
-                let element = AXUIElementCreateApplication(app.processIdentifier)
-                AXUIElementSetMessagingTimeout(element, 0.15)
-                for (index, child) in extras(of: element).enumerated() {
-                    let title = [kAXTitleAttribute, kAXDescriptionAttribute, kAXHelpAttribute]
-                        .lazy.compactMap { string(child, $0) }.first { !$0.isEmpty }
+                let flat = AOMMenuShelfProbe.flatItems(pid: app.processIdentifier).items
+                var counts: [String: Int] = [:]
+                for entry in flat where !entry.node.identifier.isEmpty { counts[entry.node.identifier, default: 0] += 1 }
+                for (index, entry) in flat.enumerated() {
+                    let child = entry.element
+                    let raw = [entry.node.title, entry.node.description, string(child, kAXHelpAttribute) ?? ""].first { !$0.isEmpty }
                     var position: CFTypeRef?
                     var point = CGPoint.zero
                     if AXUIElementCopyAttributeValue(child, kAXPositionAttribute as CFString, &position) == .success,
@@ -933,22 +944,20 @@ enum PaletteMenuBarItems {
                         AXValueGetValue(value as! AXValue, .cgPoint, &point)
                     }
                     let name = app.localizedName ?? app.bundleIdentifier ?? "App"
+                    let shelf = AOMMenuShelfItem(pid: app.processIdentifier, ownerBundleID: app.bundleIdentifier ?? "pid:\(app.processIdentifier)",
+                                                 ownerName: name, title: raw ?? name, axIdentifier: entry.node.identifier,
+                                                 ordinal: index, siblings: flat.count,
+                                                 identifierIsUnique: (counts[entry.node.identifier] ?? 0) <= 1,
+                                                 axDescription: entry.node.description)
+                    let alias = shelf.stableKey.flatMap { aliases[$0]?.name }.flatMap { $0.isEmpty ? nil : $0 }
                     items.append(Item(pid: app.processIdentifier, appName: name, bundleID: app.bundleIdentifier,
-                                      title: title ?? name, index: index, x: point.x))
+                                      title: alias ?? shelf.baseName, index: index, x: point.x,
+                                      detail: shelf.detail))
                 }
             }
             // Right to left, as they sit in the menu bar.
             return items.sorted { $0.x > $1.x }
         }.value
-    }
-
-    private static func extras(of app: AXUIElement) -> [AXUIElement] {
-        var bar: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(app, "AXExtrasMenuBar" as CFString, &bar) == .success, let bar,
-              CFGetTypeID(bar) == AXUIElementGetTypeID() else { return [] }
-        var children: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(bar as! AXUIElement, kAXChildrenAttribute as CFString, &children) == .success else { return [] }
-        return children as? [AXUIElement] ?? []
     }
 
     private static func string(_ element: AXUIElement, _ attribute: String) -> String? {
@@ -957,13 +966,15 @@ enum PaletteMenuBarItems {
         return value as? String
     }
 
-    /// Opens the item's menu, found again by app and position in its list.
+    /// Opens the item's menu, found again by app and position in its list
+    /// (AXShowMenu where the item offers it, else one press).
     @discardableResult
     static func press(_ item: Item) -> Bool {
-        let element = AXUIElementCreateApplication(item.pid)
-        AXUIElementSetMessagingTimeout(element, 0.5)
-        let list = extras(of: element)
+        let list = AOMMenuShelfProbe.flatItems(pid: item.pid).items
         guard list.indices.contains(item.index) else { return false }
-        return AXUIElementPerformAction(list[item.index], kAXPressAction as CFString) == .success
+        let target = list[item.index]
+        AXUIElementSetMessagingTimeout(target.element, 0.5)
+        let action = target.node.actions.contains("AXShowMenu") ? "AXShowMenu" : kAXPressAction as String
+        return AXUIElementPerformAction(target.element, action as CFString) == .success
     }
 }

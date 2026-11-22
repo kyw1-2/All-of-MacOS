@@ -115,32 +115,21 @@ struct MenuBarControlPage: View {
                     if let spacingMessage { Text(spacingMessage).font(AOMFont.caption) }
                 }
             }
-            AOMSection("Favorite individual items", detail: "Accessibility inventory · on demand", padding: 12) {
+            AOMSection("Menu bar items", detail: "Name, symbol and group of your own", padding: 12) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Pin items to show first in the Shelf; this is not a per-app hide switch. Other apps' status items cannot be reliably hidden through supported macOS APIs.")
+                    Text("Each item as macOS's own name (Battery, Sound, Control Center, Clock) or the name you give it. Open shows its own menu; favorites come first in the Shelf and Strip. Other apps' icons stay where macOS puts them.")
                         .font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                     if shelf.items.isEmpty { Text("Refresh above to find accessible icons.").font(AOMFont.caption) }
-                    ForEach(Array(shelf.visibleItems.prefix(24))) { item in
-                        HStack(spacing: 10) {
-                            if let icon = NSRunningApplication(processIdentifier: item.pid)?.icon {
-                                Image(nsImage: icon).resizable().scaledToFit().frame(width: 20, height: 20)
-                            } else { Image(systemName: "app").frame(width: 20) }
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(item.ownerName).font(.system(size: 12, weight: .semibold))
-                                Text(item.title).font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary).lineLimit(1)
-                            }
-                            Spacer()
-                            Button { shelf.togglePinned(item) } label: {
-                                Image(systemName: shelf.pinned.contains(item.pinKey) ? "star.fill" : "star")
-                            }.buttonStyle(.borderless).help("Favorite")
-                            Button("Open") { shelf.activate(item) }.controlSize(.small)
-                        }
+                    ForEach(Array(shelf.visibleItems.prefix(40))) { item in
+                        MenuBarItemRow(item: item, shelf: shelf)
                     }
-                    if shelf.visibleItems.count > 24 {
-                        Text("24 of \(shelf.visibleItems.count) shown. Search the rest in the Shelf.").font(AOMFont.caption)
+                    if shelf.visibleItems.count > 40 {
+                        Text("40 of \(shelf.visibleItems.count) shown. Search the rest in the Shelf.").font(AOMFont.caption)
                     }
                 }
             }
+            AOMMenuEditorSection()
         }
         .aomPage("Menu Bar")
         .aomPageLifecycle(minimumInterval: 20, onActivate: {

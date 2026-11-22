@@ -305,7 +305,7 @@ struct ClipboardStudioView: View {
                     .padding(.horizontal, AOMSpace.pageMargin)
                     .padding(.vertical, AOMSpace.x4)
                 }
-                .background(AOMColor.pageBackground)
+                .background(AOMPageTint())
             } else {
                 // The list + detail template (b.2) without `AOMListDetail`: its
                 // `.inspector` gives the panes a toolbar inset, which blurred the
@@ -357,7 +357,7 @@ struct ClipboardStudioView: View {
                     }
                     .frame(minWidth: AOMSize.detailMinimum, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 }
-                .background(AOMColor.pageBackground)
+                .background(AOMPageTint())
                 // The detail always shows the highlighted row: the first item
                 // is selected until another one is (and after a delete).
                 .onAppear { selectFirstIfNeeded(entries) }
@@ -482,7 +482,7 @@ struct ClipboardStudioView: View {
             .frame(maxWidth: AOMSize.readableWidth, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .background(AOMColor.pageBackground)
+        .background(AOMPageTint())
         .id(entry.id)
         .task(id: entry.contentVersion) {
             let content = await ClipboardPreviewCache.shared.content(for: entry)

@@ -159,7 +159,7 @@ struct ModernWindowSnappingView: View {
             .aomScrollEdge()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(AOMColor.pageBackground)
+        .background(AOMPageTint())
         .aomPageToolbar {
             ToolbarItemGroup(placement: .automatic) {
                 Button {

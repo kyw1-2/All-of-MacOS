@@ -215,31 +215,41 @@ private struct MenuBarStripView: View {
         }
         .padding(.horizontal, 12).padding(.vertical, 8)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+        // 7.8 (Codex UI-01): one continuous shape for the fill, the clip of
+        // the scrolled chips and the rim, so nothing squares the corners.
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: AOMCraftRadius.floatingPanel - 6, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: AOMCraftRadius.floatingPanel - 6, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: AOMCraftRadius.floatingPanel - 6, style: .continuous)
+            .strokeBorder(AOMCraftColor.hairline, lineWidth: 0.5).allowsHitTesting(false))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Menu bar items")
     }
 
     private func chip(_ placed: MenuBarStripPolicy.Placed, selected: Bool) -> some View {
         HStack(spacing: 6) {
-            if let icon = controller.icons[placed.item.pid] {
+            if let symbol = placed.item.displaySymbol {
+                Image(systemName: symbol).font(.system(size: 13, weight: .medium)).frame(width: 18, height: 18)
+            } else if let icon = controller.icons[placed.item.pid] {
                 Image(nsImage: icon).resizable().frame(width: 18, height: 18)
             } else {
                 Image(systemName: "app").frame(width: 18, height: 18)
             }
             VStack(alignment: .leading, spacing: 0) {
-                Text(placed.item.title).font(.system(size: 12)).lineLimit(1)
+                Text(placed.item.displayName).font(.system(size: 12)).lineLimit(1)
                 Text(placed.hidden ? "\(placed.item.ownerName) · hidden" : placed.item.ownerName)
                     .font(.system(size: 10)).foregroundStyle(placed.hidden ? Color.orange : .secondary).lineLimit(1)
             }
             .frame(maxWidth: 160, alignment: .leading)
         }
         .padding(.horizontal, 8).padding(.vertical, 6)
-        .background(selected ? Color.accentColor.opacity(0.28) : Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(selected ? Color.accentColor : .clear, lineWidth: 1.5))
-        .contentShape(Rectangle())
+        .background(selected ? Color.accentColor.opacity(0.28) : Color.primary.opacity(0.06),
+                    in: RoundedRectangle(cornerRadius: AOMCraftRadius.control, style: .continuous))
+        // Inside the chip's edge (a centred stroke drew half outside it).
+        .overlay(RoundedRectangle(cornerRadius: AOMCraftRadius.control, style: .continuous)
+            .strokeBorder(selected ? Color.accentColor : .clear, lineWidth: 1.5))
+        .contentShape(RoundedRectangle(cornerRadius: AOMCraftRadius.control, style: .continuous))
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(placed.item.title), \(placed.item.ownerName)\(placed.hidden ? ", hidden" : "")")
+        .accessibilityLabel("\(placed.item.displayName), \(placed.item.ownerName)\(placed.hidden ? ", hidden" : "")")
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }

@@ -81,7 +81,7 @@ struct FolderRulesPage: View {
             AOMDivider()
             columns
         }
-        .background(AOMColor.pageBackground)
+        .background(AOMPageTint())
     }
 
     /// b.2's list + detail + inspector as plain columns. Below this page
@@ -108,7 +108,8 @@ struct FolderRulesPage: View {
                 .accessibilityLabel("Inspector")
             }
         }
-        .background(AOMColor.pageBackground)
+        // 7.8 (Codex WIN-01): the page below already lays the tint; a second
+        // one here doubled it under the columns.
     }
 
     /// "3 of 5 rules on"; with no rules the header alone says so.

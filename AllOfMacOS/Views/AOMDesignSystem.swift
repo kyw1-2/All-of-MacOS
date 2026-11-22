@@ -21,6 +21,7 @@ struct AOMWorkspaceBackground: View {
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.colorScheme) private var colorScheme
     @AppStorage(AOMTranslucency.defaultsKey) private var translucent = AOMTranslucency.defaultOn
+    @AppStorage(AOMTranslucency.levelKey) private var levelName = AOMTranslucency.Level.balanced.rawValue
 
     /// 6.5 (Raycast's window): the desktop seen through the window, a soft
     /// accent light from the top corner; the pages lay their canvas tint on
@@ -29,8 +30,8 @@ struct AOMWorkspaceBackground: View {
         Group {
             if translucent && !reduceTransparency && contrast != .increased {
                 ZStack {
-                    VisualEffectBackground(material: .underWindowBackground, blendingMode: .behindWindow,
-                                           state: .followsWindowActiveState)
+                    VisualEffectBackground(material: (AOMTranslucency.Level(rawValue: levelName) ?? .balanced).material,
+                                           blendingMode: .behindWindow, state: .followsWindowActiveState)
                     RadialGradient(colors: [AOMColor.accent.opacity(colorScheme == .dark ? 0.16 : 0.09), .clear],
                                    center: .topTrailing, startRadius: 24, endRadius: 620)
                     RadialGradient(colors: [AOMBrand.start.opacity(colorScheme == .dark ? 0.10 : 0.05), .clear],
@@ -42,6 +43,30 @@ struct AOMWorkspaceBackground: View {
         }
         .ignoresSafeArea()
         .accessibilityHidden(true)
+    }
+}
+
+/// 7.8 (Codex WIN-01): the page's canvas tint over the window's blur, as a
+/// view that re-reads Translucent window and its level — so switching either
+/// in Settings changes an open window at once (the shared dynamic colour was
+/// resolved once and kept). Opaque with Reduce Transparency or Increase
+/// Contrast; the user's own setting returns when those are turned off.
+struct AOMPageTint: View {
+    @AppStorage(AOMTranslucency.defaultsKey) private var translucent = AOMTranslucency.defaultOn
+    @AppStorage(AOMTranslucency.levelKey) private var levelName = AOMTranslucency.Level.balanced.rawValue
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    var body: some View {
+        let dark = colorScheme == .dark
+        let base = dark ? NSColor(srgbRed: 0.094, green: 0.094, blue: 0.102, alpha: 1)
+                        : NSColor(srgbRed: 0.969, green: 0.965, blue: 0.953, alpha: 1)
+        let alpha = AOMTranslucency.pageAlpha(enabled: translucent, reduceTransparency: reduceTransparency,
+                                              increaseContrast: contrast == .increased, dark: dark,
+                                              level: AOMTranslucency.Level(rawValue: levelName) ?? .balanced)
+        Color(nsColor: base.withAlphaComponent(alpha))
+            .accessibilityHidden(true)
     }
 }
 

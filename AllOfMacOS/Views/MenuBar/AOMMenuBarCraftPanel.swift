@@ -31,7 +31,9 @@ struct AOMMenuBarCraftPanel: View {
     let isEngineRunning: Bool
     let liveSessions: [LiveSession]
     let toggles: [ToggleTile]
-    let quickActions: [QuickAction] // Workspace 상위 3개
+    let quickActions: [QuickAction]
+    /// 7.8 (ME-02): how many quick commands one row shows (1–4); the rest are under More.
+    var quickPerRow = 3
     let launcherShortcutText: String?
 
     let onToggleMaster: () -> Void
@@ -39,6 +41,8 @@ struct AOMMenuBarCraftPanel: View {
     let onOpenMainWindow: () -> Void
     let onOpenSettings: () -> Void
     let onShowClassicMenu: () -> Void
+    /// 7.8 (ME-01): the pencil opens the menu editor.
+    var onEditMenu: () -> Void = {}
     /// 7.0: a row of the host's own under the tiles (AOM's battery line).
     var accessory: AnyView? = nil
 
@@ -125,7 +129,7 @@ struct AOMMenuBarCraftPanel: View {
 
             // 4. 라벨을 갖춘 Quick Actions 3개
             HStack(spacing: 8) {
-                ForEach(quickActions.prefix(3)) { item in
+                ForEach(quickActions.prefix(quickPerRow)) { item in
                     Button(action: item.onRun) {
                         VStack(spacing: 5) {
                             Image(systemName: item.symbol)
@@ -180,15 +184,26 @@ struct AOMMenuBarCraftPanel: View {
 
                 Spacer()
 
-                if quickActions.count > 3 {
+                if quickActions.count > quickPerRow {
                     Menu("More Actions") {
-                        ForEach(quickActions.dropFirst(3)) { item in
+                        ForEach(quickActions.dropFirst(quickPerRow)) { item in
                             Button(item.title, action: item.onRun)
                         }
                     }
                     .menuStyle(.borderlessButton)
                     .fixedSize()
                 }
+
+                Button(action: onEditMenu) {
+                    Image(systemName: "pencil")
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(AOMCraftColor.inkSecondary)
+                        .frame(width: 26, height: 24)
+                }
+                .buttonStyle(.plain)
+                .aomCalmHover(radius: 6)
+                .accessibilityLabel("Edit This Panel and Menu")
+                .help("Edit this panel and the right-click menu")
 
                 Button(action: onOpenSettings) {
                     Image(systemName: "gearshape")

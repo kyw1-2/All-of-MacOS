@@ -71,7 +71,7 @@ struct AOMMainShell<Content: View>: View {
                         AOMDivider(axis: .vertical)
                         DiagnosticDrawerView(showLog: $showLog, showTouchVisualizer: $showTouchVisualizer)
                             .frame(width: drawerWidth)
-                            .background(AOMColor.pageBackground)
+                            .background(AOMPageTint())
                             .font(AOMFont.body)
                     }
                 }

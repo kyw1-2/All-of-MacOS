@@ -106,13 +106,14 @@ final class AOMLauncherController: NSObject, NSWindowDelegate {
         panelSize = Self.size(fitting: Self.screenUnderPointer()?.visibleFrame ?? CGRect(origin: .zero, size: Self.size))
         let presented = Binding<Bool>(get: { [weak self] in self?.isVisible ?? false },
                                       set: { [weak self] open in if !open { self?.dismiss(restoringFocus: true) } })
-        let root = QuickCommandPalette(isPresented: presented, host: .launcher, initialRoute: initialRoute, runItem: runItem)
-            .environmentObject(appState)
-            .accentColor(appState.accentColorChoice.color)
-            .tint(appState.accentColorChoice.color)
+        let root = AOMLauncherThemedRoot(appAccent: appState.accentColorChoice.color) {
+            QuickCommandPalette(isPresented: presented, host: .launcher, initialRoute: initialRoute, runItem: runItem)
+                .environmentObject(appState)
+        }
         let hosting = NSHostingView(rootView: root)
         hosting.frame = NSRect(origin: .zero, size: panelSize)
         panel.contentView = hosting
+        panel.appearance = AOMLauncherAppearance.shared.shown.appearance
         place(panel)
         panel.alphaValue = 0
         // A non-activating panel takes the keyboard (and the input method)
@@ -138,6 +139,8 @@ final class AOMLauncherController: NSObject, NSWindowDelegate {
         guard let panel, panel.isVisible, !hiding else { then?(); return }
         hiding = true
         stopWatchingClicks()
+        // 7.8: a theme only tried on in the Theme screen isn't kept.
+        AOMLauncherAppearance.shared.preview(nil)
         // The input source comes back only on a plain cancel to the app you
         // were in; an action may open another app, which keeps English.
         let restoresInput = restoringFocus && then == nil
@@ -180,10 +183,20 @@ final class AOMLauncherController: NSObject, NSWindowDelegate {
         presentation &+= 1
         hiding = false
         stopWatchingClicks()
+        AOMLauncherAppearance.shared.preview(nil)
         PaletteInputSource.forget()
         panel.orderOut(nil)
         panel.alphaValue = 1
         panel.contentView = nil
+    }
+
+    /// 7.8: the theme's appearance on the panel, so the launcher ink and
+    /// every system colour inside resolve light or dark for it (live while
+    /// arrowing through the theme screen).
+    func applyAppearance() {
+        let look = AOMLauncherAppearance.shared
+        panel?.appearance = look.shown.appearance
+        panel?.invalidateShadow()
     }
 
     private func makePanel() -> AOMLauncherPanel {
@@ -252,5 +265,20 @@ final class AOMLauncherController: NSObject, NSWindowDelegate {
         // A sheet of the palette (Quicklinks, Link Rules) takes key on purpose.
         guard isVisible, !showingToolAlert, panel?.attachedSheet == nil, !PresetManager.isUIPreview else { return }
         dismiss(restoringFocus: false)
+    }
+}
+
+/// 7.8: the launcher's root — the theme's accent (or the app's) for tints,
+/// re-read when the theme changes while the panel is open.
+struct AOMLauncherThemedRoot<Content: View>: View {
+    let appAccent: Color
+    @ViewBuilder let content: () -> Content
+    @ObservedObject private var look = AOMLauncherAppearance.shared
+
+    var body: some View {
+        let accent = look.shown.accentColor ?? appAccent
+        content()
+            .accentColor(accent)
+            .tint(accent)
     }
 }

@@ -565,11 +565,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             MainActor.assumeIsolated { toggleStatusPanel() }
             return
         }
-        showClassicStatusMenu()
+        showClassicStatusMenu(full: false)
     }
 
-    private func showClassicStatusMenu() {
-        let menu = makeStatusMenu()
+    /// 7.8 (ME-02): the right-click menu is the person's own once they've
+    /// applied one; "All Commands" (the panel's ⋯) is always the full menu.
+    private func showClassicStatusMenu(full: Bool = true) {
+        let menu = (full ? nil : MainActor.assumeIsolated { makeUserStatusMenu() }) ?? makeStatusMenu()
         // Show the menu
         statusItem?.menu = menu
         statusItem?.button?.performClick(nil)
@@ -591,7 +593,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             openSettings: { [weak self] in self?.openSettings() },
             showAllCommands: { [weak self] in
                 controller.close()
-                DispatchQueue.main.async { self?.showClassicStatusMenu() }
+                DispatchQueue.main.async { self?.showClassicStatusMenu(full: true) }
             },
             quit: { NSApp.terminate(nil) },
             close: { controller.close() },
@@ -744,10 +746,62 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.addItem(more)
         menu.addItem(.separator())
 
+        // 7.8 (ME-01): the same editor from every entry point.
+        menu.addItem(entry("Edit Menu…", "slider.horizontal.below.rectangle", #selector(editStatusMenu)))
         let quitItem = NSMenuItem(title: "Quit All of MacOS", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         quitItem.image = NSImage(systemSymbolName: "power", accessibilityDescription: nil)
         menu.addItem(quitItem)
         return menu
+    }
+
+    /// 7.8 (ME-02): the person's menu — a running recording's Stop first,
+    /// their commands, groups and separators, then the part that is always
+    /// there: All Commands (the full menu), Edit Menu… and Quit. nil while
+    /// they haven't applied a menu of their own.
+    @MainActor func makeUserStatusMenu() -> NSMenu? {
+        guard let entries = AOMStatusMenuStore.shared.layout.menu else { return nil }
+        let menu = NSMenu()
+        let target = AOMMenuCommandTarget.shared
+        if ScreenRecordingService.shared.isRecording {
+            let stop = NSMenuItem(title: "Stop Recording", action: #selector(stopRecordingFromMenu), keyEquivalent: "")
+            stop.target = self
+            stop.image = NSImage(systemSymbolName: "stop.circle.fill", accessibilityDescription: nil)
+            menu.addItem(stop)
+            menu.addItem(.separator())
+        }
+        let items = target.items(for: entries, index: AOMMenuCommandCatalog.index())
+        for item in items { menu.addItem(item) }
+        if !items.isEmpty { menu.addItem(.separator()) }
+        let all = NSMenuItem(title: "All Commands", action: nil, keyEquivalent: "")
+        all.image = NSImage(systemSymbolName: "ellipsis.circle", accessibilityDescription: nil)
+        let full = makeStatusMenu()
+        // The full menu without its own Edit Menu… and Quit (they follow here).
+        let fullItems = full.items
+        full.removeAllItems()
+        let allMenu = NSMenu(title: "All Commands")
+        for item in fullItems where item.action != #selector(NSApplication.terminate(_:)) && item.action != #selector(editStatusMenu) {
+            allMenu.addItem(item)
+        }
+        while allMenu.items.last?.isSeparatorItem == true { allMenu.removeItem(at: allMenu.items.count - 1) }
+        all.submenu = allMenu
+        menu.addItem(all)
+        let edit = NSMenuItem(title: "Edit Menu…", action: #selector(editStatusMenu), keyEquivalent: "")
+        edit.target = self
+        edit.image = NSImage(systemSymbolName: "slider.horizontal.below.rectangle", accessibilityDescription: nil)
+        menu.addItem(edit)
+        menu.addItem(.separator())
+        let quitItem = NSMenuItem(title: "Quit All of MacOS", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        quitItem.image = NSImage(systemSymbolName: "power", accessibilityDescription: nil)
+        menu.addItem(quitItem)
+        return menu
+    }
+
+    @objc func editStatusMenu() {
+        MainActor.assumeIsolated { AOMMenuEditorNavigation.open() }
+    }
+
+    @objc private func stopRecordingFromMenu() {
+        MainActor.assumeIsolated { ScreenRecordingService.shared.toggleRecording() }
     }
 
     // MARK: - Actions

@@ -631,26 +631,86 @@ extension Color {
 
 /// Whether the main window lets the desktop through (6.5). Read where colors
 /// resolve, so it follows Reduce Transparency and Increase Contrast live.
+///
+/// 7.8 (Codex WIN-01): with a blue and an orange window behind it, 7.7's
+/// page margin changed by 8/255 and a card by 2/255 in light mode — the
+/// window read as opaque. Three layers stacked up: an `underWindowBackground`
+/// blur that lets ~10 % through, a 62 % page tint and an 82 % card. The
+/// default ("Balanced") now uses the sidebar blur under a 32 % page tint
+/// and 60 % cards; "Subtle" keeps 7.7's look, "Clear" goes further.
 enum AOMTranslucency {
     static let defaultsKey = "AOMWindowTranslucency"
-    static let pageAlphaLight: CGFloat = 0.62
-    static let pageAlphaDark: CGFloat = 0.55
-    static let cardAlphaLight: CGFloat = 0.82
-    static let cardAlphaDark: CGFloat = 0.72
+    static let levelKey = "AOMWindowTranslucencyLevel"
     /// The main window lets the desktop through unless turned off.
     static let defaultOn = true
 
+    enum Level: String, CaseIterable, Identifiable {
+        case subtle, balanced, clear
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .subtle: return "Subtle"
+            case .balanced: return "Balanced"
+            case .clear: return "Clear"
+            }
+        }
+        /// The page tint over the blur (light, dark).
+        var page: (light: CGFloat, dark: CGFloat) {
+            switch self {
+            case .subtle: return (0.62, 0.55)
+            case .balanced: return (0.32, 0.30)
+            case .clear: return (0.16, 0.16)
+            }
+        }
+        /// The card fill over the page (light, dark).
+        var card: (light: CGFloat, dark: CGFloat) {
+            switch self {
+            case .subtle: return (0.82, 0.72)
+            case .balanced: return (0.60, 0.55)
+            case .clear: return (0.46, 0.42)
+            }
+        }
+        /// The blur under everything: 7.7's quieter one for Subtle.
+        var material: NSVisualEffectView.Material { self == .subtle ? .underWindowBackground : .sidebar }
+    }
+
+    static var level: Level {
+        Level(rawValue: UserDefaults.standard.string(forKey: levelKey) ?? "") ?? .balanced
+    }
+
+    static var pageAlphaLight: CGFloat { level.page.light }
+    static var pageAlphaDark: CGFloat { level.page.dark }
+    static var cardAlphaLight: CGFloat { level.card.light }
+    static var cardAlphaDark: CGFloat { level.card.dark }
+
+    /// The user's switch, before the accessibility settings.
+    static var userOn: Bool { UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? defaultOn }
+
+    /// Reduce Transparency or Increase Contrast turns the glass off for now;
+    /// the user's own switch comes back when they are turned off.
+    static var accessibilityForcesSolid: Bool {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
+            || NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+    }
+
     static var isOn: Bool {
-        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency,
-              !NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast else { return false }
+        guard !accessibilityForcesSolid else { return false }
         // 7.2.2: glass again by default (the user found 7.0's opaque canvas
         // too plain); Settings › General › Translucent window turns it off.
-        return UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? defaultOn
+        return userOn
     }
 
     /// Pure: the page tint's alpha for these settings.
-    static func pageAlpha(enabled: Bool, reduceTransparency: Bool, increaseContrast: Bool, dark: Bool) -> CGFloat {
+    static func pageAlpha(enabled: Bool, reduceTransparency: Bool, increaseContrast: Bool, dark: Bool,
+                          level: Level = .balanced) -> CGFloat {
         guard enabled, !reduceTransparency, !increaseContrast else { return 1 }
-        return dark ? pageAlphaDark : pageAlphaLight
+        return dark ? level.page.dark : level.page.light
+    }
+
+    /// Pure (WIN-01): how much of the desktop's colour reaches a surface,
+    /// 0…1, given the blur's own pass-through. A page passes what its tint
+    /// leaves; a card passes what the page and the card leave.
+    static func passThrough(blur: CGFloat, page: CGFloat, card: CGFloat? = nil) -> CGFloat {
+        blur * (1 - page) * (1 - (card ?? 0))
     }
 }

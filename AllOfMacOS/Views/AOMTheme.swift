@@ -114,6 +114,16 @@ struct AOMCardSurface: ViewModifier {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorScheme) private var colorScheme
     @AppStorage(AOMTranslucency.defaultsKey) private var translucent = AOMTranslucency.defaultOn
+    @AppStorage(AOMTranslucency.levelKey) private var levelName = AOMTranslucency.Level.balanced.rawValue
+
+    /// 7.8 (Codex UI-01): content that can reach the rounded corners (a card
+    /// of rows, padding under the radius) is clipped to the card's own
+    /// continuous shape, so a first or last row's hover, selection or
+    /// coloured fill follows the curve instead of leaving square corners.
+    /// The card's shadow and any focus ring outside stay in their own layers.
+    static func clipsContent(padding: CGFloat?, radius: CGFloat) -> Bool {
+        (padding ?? 0) < radius * 0.6
+    }
 
     @ViewBuilder
     func body(content: Content) -> some View {
@@ -121,16 +131,17 @@ struct AOMCardSurface: ViewModifier {
         switch style {
         case .paper:
             let glass = translucent && !reduceTransparency && contrast != .increased
+            let level = AOMTranslucency.Level(rawValue: levelName) ?? .balanced
             content
                 .padding(padding ?? 0)
+                .aomClipped(to: shape, Self.clipsContent(padding: padding, radius: radius))
                 .background {
                     let fill = pressed ? AOMColor.surfacePressed : (hovering ? AOMColor.surfaceHover : AOMColor.surface)
                     if glass {
                         // 6.5: a glass card — the surface a little see-through
                         // over the window's desktop, a light rim along the top
                         // edge and a soft drop (the shape only, never the text).
-                        shape.fill(fill.opacity(colorScheme == .dark ? AOMTranslucency.cardAlphaDark
-                                                                     : AOMTranslucency.cardAlphaLight))
+                        shape.fill(fill.opacity(colorScheme == .dark ? level.card.dark : level.card.light))
                             .overlay(shape.strokeBorder(LinearGradient(
                                 colors: [Color.white.opacity(colorScheme == .dark ? 0.16 : 0.75),
                                          Color.white.opacity(colorScheme == .dark ? 0.03 : 0.2)],
@@ -153,6 +164,7 @@ struct AOMCardSurface: ViewModifier {
         case .well:
             content
                 .padding(padding ?? 0)
+                .aomClipped(to: shape, Self.clipsContent(padding: padding, radius: radius))
                 .background(AOMColor.sunken, in: shape)
                 .overlay {
                     if contrast == .increased || showBorders {
@@ -168,6 +180,13 @@ struct AOMCardSurface: ViewModifier {
 }
 
 extension View {
+    /// Clips to a shape only when asked (a card's rows), so free content
+    /// keeps whatever it draws past the card's padding.
+    @ViewBuilder
+    func aomClipped<S: Shape>(to shape: S, _ clips: Bool) -> some View {
+        if clips { clipShape(shape) } else { self }
+    }
+
     /// One AOM surface in the given style.
     func aomCardStyle(_ style: AOMCardStyle = .paper, radius: CGFloat = AOMTheme.cardRadius,
                       padding: CGFloat? = AOMSpace.cardPadding,

@@ -13,6 +13,10 @@ struct VisualEffectBackground: NSViewRepresentable {
     var blendingMode: NSVisualEffectView.BlendingMode = .behindWindow
     var isEmphasized: Bool = false
     var state: NSVisualEffectView.State = .followsWindowActiveState
+    /// 7.8: rounds the blur itself. A behind-window blur is composited by the
+    /// window server, so SwiftUI's clip alone can leave its square corners
+    /// showing past a rounded panel; a mask image is AppKit's own way.
+    var cornerRadius: CGFloat = 0
 
     func makeNSView(context: Context) -> NSVisualEffectView {
         let view = NSVisualEffectView()
@@ -20,6 +24,7 @@ struct VisualEffectBackground: NSViewRepresentable {
         view.blendingMode = blendingMode
         view.state = state
         view.isEmphasized = isEmphasized
+        view.maskImage = Self.mask(cornerRadius)
         return view
     }
 
@@ -28,5 +33,30 @@ struct VisualEffectBackground: NSViewRepresentable {
         if view.blendingMode != blendingMode { view.blendingMode = blendingMode }
         if view.state != state { view.state = state }
         if view.isEmphasized != isEmphasized { view.isEmphasized = isEmphasized }
+        if context.coordinator.radius != cornerRadius {
+            context.coordinator.radius = cornerRadius
+            view.maskImage = Self.mask(cornerRadius)
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(radius: cornerRadius) }
+
+    final class Coordinator {
+        var radius: CGFloat
+        init(radius: CGFloat) { self.radius = radius }
+    }
+
+    /// A stretchable rounded-rect mask (nil: square).
+    static func mask(_ radius: CGFloat) -> NSImage? {
+        guard radius > 0 else { return nil }
+        let edge = radius * 2 + 1
+        let image = NSImage(size: NSSize(width: edge, height: edge), flipped: false) { rect in
+            NSColor.black.setFill()
+            NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()
+            return true
+        }
+        image.capInsets = NSEdgeInsets(top: radius, left: radius, bottom: radius, right: radius)
+        image.resizingMode = .stretch
+        return image
     }
 }

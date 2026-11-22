@@ -1766,9 +1766,13 @@ private struct AnnotationEditorView: View {
                                     .buttonStyle(.plain).help("Delete")
                             }
                             .padding(.vertical, 2)
-                            .contentShape(Rectangle())
+                            .padding(.horizontal, 4)
+                            // 7.8 (Codex UI-01): the selected layer is one rounded
+                            // shape, not a square fill against the list's edge.
+                            .background(selectedID == object.id ? Color.accentColor.opacity(0.12) : Color.clear,
+                                        in: RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous))
+                            .contentShape(RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous))
                             .onTapGesture { selectTool(.move); selectedID = object.id; style = object.style }
-                            .background(selectedID == object.id ? Color.accentColor.opacity(0.12) : Color.clear)
                         }
                     }
                 }

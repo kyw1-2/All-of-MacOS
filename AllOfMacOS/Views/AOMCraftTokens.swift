@@ -126,20 +126,29 @@ struct AOMFloatingGlassModifier: ViewModifier {
     }
 }
 
-/// 7.0: the launcher panel. Glass (macOS 26) or a material underneath, the
-/// mostly opaque launcher base on top of it, a 0.5 pt rim and a faint top
-/// light. Reduce Transparency and Increase Contrast get the opaque base.
+/// 7.0: the launcher panel. 7.8: drawn in the chosen launcher theme —
+/// a frosted blur of the desktop (or Liquid Glass) under the theme's tint at
+/// the chosen opacity, a 0.5 pt rim and a faint top light. Reduce
+/// Transparency and Increase Contrast get the theme's colour, opaque.
 struct AOMLauncherSurfaceModifier: ViewModifier {
     let radius: CGFloat
     var inWindow = false
+    @ObservedObject private var look = AOMLauncherAppearance.shared
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.colorScheme) private var hostScheme
+
+    init(radius: CGFloat, inWindow: Bool = false) {
+        self.radius = radius
+        self.inWindow = inWindow
+    }
 
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
         let solid = reduceTransparency || contrast == .increased
+        let theme = look.shown
         let based = content
-            .background(solid ? AOMCraftColor.launcherBaseOpaque : AOMCraftColor.launcherBase, in: shape)
+            .background(theme.base(opacity: solid ? 1 : look.opacity), in: shape)
             .clipShape(shape)
             .overlay {
                 shape.strokeBorder(
@@ -155,16 +164,45 @@ struct AOMLauncherSurfaceModifier: ViewModifier {
                     .allowsHitTesting(false)
                     .opacity(solid ? 0 : 1)
             }
+            .environment(\.aomLauncherSelection, theme.selection)
+            .environment(\.aomLauncherOpaqueBase, theme.base(opacity: 1))
+            // A light or dark theme inside a window of the other appearance.
+            .environment(\.colorScheme, theme.colorScheme ?? hostScheme)
         Group {
             if solid {
                 based
-            } else if #available(macOS 26, *) {
+            } else if look.material == .glass, #available(macOS 26, *) {
                 based.glassEffect(.regular, in: shape)
             } else {
-                based.background(VisualEffectBackground(material: .popover, blendingMode: inWindow ? .withinWindow : .behindWindow,
-                                                        state: .active).clipShape(shape))
+                // A HUD-strength blur: the wallpaper's colour comes through,
+                // its detail doesn't (Raycast's window).
+                based.background(VisualEffectBackground(material: .hudWindow, blendingMode: inWindow ? .withinWindow : .behindWindow,
+                                                        state: .active, cornerRadius: radius)
+                    .clipShape(shape))
             }
         }
+    }
+}
+
+private struct AOMLauncherSelectionKey: EnvironmentKey {
+    static let defaultValue: Color = AOMCraftColor.selection
+}
+
+private struct AOMLauncherOpaqueBaseKey: EnvironmentKey {
+    static let defaultValue: Color = AOMCraftColor.launcherBaseOpaque
+}
+
+extension EnvironmentValues {
+    /// 7.8: the selected row's fill in the launcher's theme.
+    var aomLauncherSelection: Color {
+        get { self[AOMLauncherSelectionKey.self] }
+        set { self[AOMLauncherSelectionKey.self] = newValue }
+    }
+
+    /// 7.8: the theme's colour, opaque (the Actions panel over the list).
+    var aomLauncherOpaqueBase: Color {
+        get { self[AOMLauncherOpaqueBaseKey.self] }
+        set { self[AOMLauncherOpaqueBaseKey.self] = newValue }
     }
 }
 

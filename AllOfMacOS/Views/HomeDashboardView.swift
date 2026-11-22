@@ -166,7 +166,7 @@ struct AOMHomeView: View {
         .scrollIndicators(.automatic)
         .defaultScrollAnchor(AOMPreviewHooks.scrollAnchor)
         .aomScrollEdge()
-        .background(AOMColor.pageBackground)
+        .background(AOMPageTint())
         .aomPageToolbar {
             // View options, then the page's one primary action (b.3).
             ToolbarItem(placement: .primaryAction) {

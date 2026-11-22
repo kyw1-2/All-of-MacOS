@@ -675,7 +675,7 @@ struct ModernGesturesWorkspace: View {
             }
             .scrollIndicators(.never)
             .defaultScrollAnchor(AOMPreviewHooks.scrollAnchor)
-            .background(AOMColor.pageBackground)
+            .background(AOMPageTint())
             .id(current.id)
         } else {
             AOMEmptyState("No Automation Selected", systemImage: "bolt",

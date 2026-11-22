@@ -224,7 +224,7 @@ struct AOMListDetail<ListContent: View, Detail: View, InspectorContent: View>: V
             detail
                 .frame(minWidth: AOMSize.detailMinimum, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .background(AOMColor.pageBackground)
+        .background(AOMPageTint())
     }
 }
 
@@ -321,7 +321,7 @@ struct AOMInspector<Content: View>: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .controlSize(.small)
-        .background(AOMColor.pageBackground)
+        .background(AOMPageTint())
     }
 }
 

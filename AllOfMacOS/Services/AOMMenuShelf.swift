@@ -20,6 +20,46 @@ struct AOMMenuShelfItem: Identifiable, Equatable {
     var identifierIsUnique = true
     /// Where the item sits (screen points, top-left origin), when AX says.
     var frame: CGRect? = nil
+    /// 7.8 (MB-01): the item's accessibility description and whether it
+    /// opens its menu with AXShowMenu (else it is pressed).
+    var axDescription = ""
+    var canShowMenu = false
+
+    /// 7.8: what macOS's own item is (Battery, Sound, Control Center, Clock).
+    var identity: AOMMenuBarIdentity? {
+        AOMMenuBarIdentity.identify(ownerBundleID: ownerBundleID, identifier: axIdentifier, description: axDescription)
+    }
+
+    /// 7.8 (MB-02): the key a person's name and symbol are saved under —
+    /// the identifier, or for a system item its function, or a description
+    /// that doesn't change. nil: nothing stable to remember it by.
+    var stableKey: String? {
+        if !axIdentifier.isEmpty && identifierIsUnique { return "\(ownerBundleID)|ax:\(axIdentifier)" }
+        if let identity { return "\(ownerBundleID)|sys:\(identity.name)" }
+        let text = axDescription.isEmpty ? title : axDescription
+        if !text.isEmpty, !AOMMenuBarIdentity.isChanging(text), !text.hasPrefix("Item ") { return "\(ownerBundleID)|desc:\(text)" }
+        return nil
+    }
+
+    /// 7.8: the name before a person renames it: the system function, a
+    /// steady title, or the app's name when the title is a changing value.
+    var baseName: String {
+        if let identity { return identity.name }
+        if title.isEmpty || title.hasPrefix("Item ") || AOMMenuBarIdentity.isChanging(title) { return ownerName }
+        return title
+    }
+
+    /// The item's current value when it isn't its name (80 %, 18°C).
+    var detail: String? {
+        let text = !title.isEmpty ? title : axDescription
+        return text.isEmpty || text == baseName ? nil : text
+    }
+
+    @MainActor var alias: AOMMenuBarAlias? { AOMMenuBarAliasStore.shared.alias(for: stableKey) }
+    @MainActor var displayName: String { alias?.name.flatMap { $0.isEmpty ? nil : $0 } ?? baseName }
+    /// A symbol of the person's, else the system item's; nil: the app's icon.
+    @MainActor var displaySymbol: String? { alias?.symbol.flatMap { $0.isEmpty ? nil : $0 } ?? identity?.symbol }
+    @MainActor var group: String? { alias?.group.flatMap { $0.isEmpty ? nil : $0 } }
 
     /// One scan's row: the app and the item's place in it (7.6, Codex MB01:
     /// two items sharing an identifier are two rows).
@@ -42,7 +82,7 @@ enum AOMMenuShelfPolicy {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         var unique = Set<String>()
         return items.filter { unique.insert($0.id).inserted }
-            .filter { q.isEmpty || $0.title.lowercased().contains(q)
+            .filter { q.isEmpty || $0.title.lowercased().contains(q) || $0.baseName.lowercased().contains(q)
                 || $0.ownerName.lowercased().contains(q) || $0.ownerBundleID.lowercased().contains(q) }
             .sorted {
                 let a = pinned.contains($0.pinKey), b = pinned.contains($1.pinKey)
@@ -137,7 +177,8 @@ enum AOMMenuShelfProbe {
         attribute(el, kAXChildrenAttribute as CFString) as? [AXUIElement] ?? []
     }
 
-    private static func items(pid: pid_t) -> [AXUIElement] {
+    /// The extras bar's direct children.
+    private static func roots(pid: pid_t) -> [AXUIElement] {
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(app, 0.12)
         // AXExtrasMenuBar works for normal status items and Apple menu extras.
@@ -157,6 +198,60 @@ enum AOMMenuShelfProbe {
         return []
     }
 
+    private static func actions(_ element: AXUIElement) -> [String] {
+        var names: CFArray?
+        guard AXUIElementCopyActionNames(element, &names) == .success else { return [] }
+        return names as? [String] ?? []
+    }
+
+    /// An element read for the walk, with the elements under it.
+    private struct Read {
+        var node: AOMMenuExtraNode
+        let element: AXUIElement
+        var children: [Read]
+    }
+
+    /// Reads one element; walks into it only when it is a container
+    /// (nothing to press, no name of its own) — at most `budget` more reads.
+    private static func read(_ element: AXUIElement, depth: Int, budget: inout Int) -> Read {
+        AXUIElementSetMessagingTimeout(element, 0.1)
+        var node = AOMMenuExtraNode(role: string(element, kAXRoleAttribute as CFString),
+                                    subrole: string(element, kAXSubroleAttribute as CFString),
+                                    title: string(element, kAXTitleAttribute as CFString),
+                                    description: string(element, kAXDescriptionAttribute as CFString),
+                                    identifier: string(element, kAXIdentifierAttribute as CFString),
+                                    actions: actions(element))
+        var kids: [Read] = []
+        let container = !node.isActionable && node.subrole != "AXMenuExtra" && (depth > 0 || !node.isNamed)
+        if container, depth < 3, budget > 0 {
+            for child in children(element).prefix(8) where budget > 0 {
+                budget -= 1
+                kids.append(read(child, depth: depth + 1, budget: &budget))
+            }
+        }
+        node.children = kids.map(\.node)
+        return Read(node: node, element: element, children: kids)
+    }
+
+    /// 7.8 (MB-01): the app's items — a container's menu extras in its place.
+    static func flatItems(pid: pid_t) -> (items: [(element: AXUIElement, node: AOMMenuExtraNode)], truncated: Bool) {
+        var budget = 60
+        let reads = roots(pid: pid).prefix(30).map { read($0, depth: 0, budget: &budget) }
+        let flat = AOMMenuExtraFlatten.items(reads.map(\.node))
+        var out: [(element: AXUIElement, node: AOMMenuExtraNode)] = []
+        for path in flat.paths {
+            guard let first = path.first, reads.indices.contains(first) else { continue }
+            var here = reads[first]
+            var ok = true
+            for index in path.dropFirst() {
+                guard here.children.indices.contains(index) else { ok = false; break }
+                here = here.children[index]
+            }
+            if ok { out.append((here.element, here.node)) }
+        }
+        return (out, flat.truncated || budget <= 0)
+    }
+
     private static func frame(_ element: AXUIElement) -> CGRect? {
         guard let position = attribute(element, kAXPositionAttribute as CFString), CFGetTypeID(position) == AXValueGetTypeID(),
               let size = attribute(element, kAXSizeAttribute as CFString), CFGetTypeID(size) == AXValueGetTypeID() else { return nil }
@@ -168,6 +263,13 @@ enum AOMMenuShelfProbe {
     private static func title(_ element: AXUIElement, index: Int) -> String {
         [string(element, kAXTitleAttribute as CFString), string(element, kAXDescriptionAttribute as CFString),
          string(element, kAXHelpAttribute as CFString)].first { !$0.isEmpty } ?? "Item \(index + 1)"
+    }
+
+    private static func title(_ node: AOMMenuExtraNode, element: AXUIElement, index: Int) -> String {
+        if !node.title.isEmpty { return node.title }
+        if !node.description.isEmpty { return node.description }
+        let help = string(element, kAXHelpAttribute as CFString)
+        return help.isEmpty ? "Item \(index + 1)" : help
     }
 
     struct Snapshot {
@@ -184,17 +286,22 @@ enum AOMMenuShelfProbe {
         result.appsLeft = max(0, apps.count - list.count)
         for (number, app) in list.enumerated() {
             if ProcessInfo.processInfo.systemUptime - started >= deadline { result.appsLeft += list.count - number; break }
-            let elements = Array(items(pid: app.pid).prefix(30))
+            let flat = flatItems(pid: app.pid)
+            let elements = Array(flat.items.prefix(30))
             var found: [AOMMenuShelfItem] = []
-            for (index, element) in elements.enumerated() {
+            for (index, entry) in elements.enumerated() {
                 if ProcessInfo.processInfo.systemUptime - started >= deadline { break }
+                let element = entry.element
                 AXUIElementSetMessagingTimeout(element, 0.1)
                 found.append(AOMMenuShelfItem(pid: app.pid, ownerBundleID: app.bundleID, ownerName: app.name,
-                                              title: title(element, index: index),
-                                              axIdentifier: string(element, kAXIdentifierAttribute as CFString), ordinal: index,
-                                              siblings: elements.count, frame: frame(element)))
+                                              title: title(entry.node, element: element, index: index),
+                                              axIdentifier: entry.node.identifier, ordinal: index,
+                                              siblings: elements.count, frame: frame(element),
+                                              axDescription: entry.node.description,
+                                              canShowMenu: entry.node.actions.contains("AXShowMenu")))
             }
-            let partial = found.count < elements.count
+            // Codex MB-01: a walk that stopped early marks the app as read in part.
+            let partial = found.count < elements.count || flat.truncated
             if partial { result.appsLeft += 1 }
             var counts: [String: Int] = [:]
             for item in found where !item.axIdentifier.isEmpty { counts[item.axIdentifier, default: 0] += 1 }
@@ -208,15 +315,19 @@ enum AOMMenuShelfProbe {
         return result
     }
 
-    /// Reads the app's items again and presses the one item that matches.
+    /// Reads the app's items again and opens the one item that matches —
+    /// its menu with AXShowMenu where it offers that, else one AXPress
+    /// (Codex MB-01). A target that isn't one item for sure is never pressed.
     static func activate(_ item: AOMMenuShelfItem) -> Bool {
         guard item.pid > 0, AXIsProcessTrusted(),
               NSRunningApplication(processIdentifier: item.pid)?.bundleIdentifier.map({ $0 == item.ownerBundleID }) ?? item.ownerBundleID.hasPrefix("pid:") else { return false }
-        let list = items(pid: item.pid)
-        let live = list.enumerated().map { AOMMenuShelfPolicy.Live(identifier: string($1, kAXIdentifierAttribute as CFString), title: title($1, index: $0)) }
+        let list = Array(flatItems(pid: item.pid).items.prefix(30))
+        let live = list.enumerated().map { AOMMenuShelfPolicy.Live(identifier: $1.node.identifier, title: title($1.node, element: $1.element, index: $0)) }
         guard let index = AOMMenuShelfPolicy.resolve(item, in: live) else { return false }
-        AXUIElementSetMessagingTimeout(list[index], 0.2)
-        return AXUIElementPerformAction(list[index], kAXPressAction as CFString) == .success
+        let target = list[index]
+        AXUIElementSetMessagingTimeout(target.element, 0.2)
+        let action = target.node.actions.contains("AXShowMenu") ? "AXShowMenu" : kAXPressAction as String
+        return AXUIElementPerformAction(target.element, action as CFString) == .success
     }
 }
 
@@ -331,6 +442,7 @@ final class AOMMenuShelfController: ObservableObject {
                 self.items = result.items
                 self.appsLeft = result.appsLeft
                 self.loading = false
+                defer { self.finishPendingOpen() }
                 let migrated = AOMMenuShelfPolicy.migratePins(self.pinned, items: result.items)
                 if migrated != self.pinned { self.pinned = migrated }
                 if result.items.isEmpty {
@@ -355,6 +467,33 @@ final class AOMMenuShelfController: ObservableObject {
                                            detail: "\(item.title) moved, closed, or two items now match it. \(retry)")
                 }
             }
+        }
+    }
+
+    /// 7.8 (ME, MB-02): opens an item kept in AOM's menu by its lasting
+    /// key. The inventory is read again first; an item that isn't there now
+    /// (its app quit, two items match) is reported, and nothing else pressed.
+    func open(stableKey key: String) {
+        guard AXIsProcessTrusted() else {
+            GestureHUD.shared.show(title: "Menu Bar Item", detail: "AOM needs Accessibility to open other apps' menu bar items.")
+            return
+        }
+        pendingOpen = key
+        refresh()
+    }
+
+    private var pendingOpen: String?
+
+    private func finishPendingOpen() {
+        guard let key = pendingOpen else { return }
+        pendingOpen = nil
+        let matches = items.filter { $0.stableKey == key }
+        if matches.count == 1 {
+            activate(matches[0], retry: "Check it in Menu Bar › Menu bar items.")
+        } else {
+            let name = AOMMenuBarAliasStore.shared.alias(for: key)?.name ?? "The item"
+            GestureHUD.shared.show(title: "Menu Bar Item Not Found",
+                                   detail: matches.isEmpty ? "\(name) isn't in the menu bar now." : "\(name) matches more than one item, so nothing was opened.")
         }
     }
 
@@ -446,14 +585,10 @@ private struct AOMMenuShelfView: View {
                             HStack(spacing: 8) {
                                 Button { controller.activate(item) } label: {
                                     HStack(spacing: 9) {
-                                        if let icon = NSRunningApplication(processIdentifier: item.pid)?.icon {
-                                            Image(nsImage: icon).resizable().frame(width: 20, height: 20)
-                                        } else {
-                                            Image(systemName: "app").frame(width: 20, height: 20)
-                                        }
+                                        MenuBarItemGlyph(item: item, size: 20)
                                         VStack(alignment: .leading, spacing: 1) {
-                                            Text(item.title).lineLimit(1)
-                                            Text(item.ownerName).font(.caption2)
+                                            Text(item.displayName).lineLimit(1)
+                                            Text([item.group, item.detail, item.ownerName].compactMap { $0 }.joined(separator: " · ")).font(.caption2)
                                                 .foregroundStyle(.secondary).lineLimit(1)
                                         }
                                         Spacer()
@@ -468,7 +603,7 @@ private struct AOMMenuShelfView: View {
                                 .help(controller.pinned.contains(item.pinKey) ? "Unpin item" : "Pin in shelf")
                             }
                             .padding(.horizontal, 8).padding(.vertical, 5)
-                            .background(.quaternary.opacity(0.28), in: RoundedRectangle(cornerRadius: 8))
+                            .background(.quaternary.opacity(0.28), in: RoundedRectangle(cornerRadius: AOMCraftRadius.control, style: .continuous))
                         }
                     }
                 }
@@ -482,6 +617,6 @@ private struct AOMMenuShelfView: View {
         }
         .padding(16)
         .frame(width: 550, height: 398)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }
