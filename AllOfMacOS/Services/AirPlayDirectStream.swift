@@ -138,6 +138,47 @@ enum AirPlayDirectMigration {
 
 /// A direct stream's counters as read once by the control path, and their
 /// diagnostics JSON (`captures.<pid>` in audio-health.json). Pure.
+/// 7.6 (Codex AUD-01): what a direct output gap looked like from the
+/// IOProc, so the next crackle report can be told apart. Measured, not
+/// guessed: the callback's entry time against the one before, and whether
+/// the tap delivered a whole cycle.
+enum AirPlayGapCause: UInt64, Equatable {
+    /// The callback came over 1.5 cycles after the previous one: the thread
+    /// woke late (scheduling, load) before AOM did any work.
+    case lateEntry = 1
+    /// On time, but the app's tap delivered less than a cycle.
+    case inputShort = 2
+    /// On time with a whole input: the output clock itself jumped.
+    case clockJump = 3
+
+    var label: String {
+        switch self {
+        case .lateEntry: return "late callback"
+        case .inputShort: return "app's audio came short"
+        case .clockJump: return "output clock jumped"
+        }
+    }
+
+    /// Pure: the cause from the entry interval (0: no previous callback) and the tap's frames.
+    static func classify(intervalTicks: UInt64, periodTicks: UInt64, inputFrames: Int, frames: Int) -> AirPlayGapCause {
+        if intervalTicks > 0, periodTicks > 0, intervalTicks * 2 > periodTicks * 3 { return .lateEntry }
+        if inputFrames < frames { return .inputShort }
+        return .clockJump
+    }
+
+    /// Pure: which of the eight entry-interval bins (× the cycle: ≤1.1, ≤1.25,
+    /// ≤1.5, ≤2, ≤3, ≤5, ≤10, more) an interval falls in.
+    static func bin(intervalTicks: UInt64, periodTicks: UInt64) -> Int {
+        guard periodTicks > 0 else { return 0 }
+        let ratio = Double(intervalTicks) / Double(periodTicks)
+        for (index, edge) in binEdges.enumerated() where ratio <= edge { return index }
+        return binEdges.count
+    }
+
+    static let binEdges: [Double] = [1.1, 1.25, 1.5, 2, 3, 5, 10]
+    static let binLabels = ["≤1.1", "≤1.25", "≤1.5", "≤2", "≤3", "≤5", "≤10", ">10"]
+}
+
 struct AirPlayDirectCounters: Equatable {
     var callbacks: UInt64 = 0
     var frames: UInt64 = 0
@@ -155,6 +196,16 @@ struct AirPlayDirectCounters: Equatable {
     var sampleRate: Double = 48000
     var peak: Float = 0
     var wired = false
+    /// 7.6 (Codex AUD-01).
+    var lateEntries: UInt64 = 0
+    var slowCycles: UInt64 = 0
+    var inputShortCycles: UInt64 = 0
+    var inputMissingCycles: UInt64 = 0
+    var gapsLateEntry: UInt64 = 0
+    var gapsInputShort: UInt64 = 0
+    var gapsClockJump: UInt64 = 0
+    var entryBins: [UInt64] = []
+    var entryMaxTicks: UInt64 = 0
 
     private func micros(_ ticks: Double) -> Double { (ticks * secondsPerTick * 10_000_000).rounded() / 10 }
 
@@ -173,7 +224,14 @@ struct AirPlayDirectCounters: Equatable {
          "oversizedCycles": oversizedCycles,
          "sampleRate": sampleRate,
          "peak": peak.isFinite ? Double(peak) : 0,
-         "wired": wired]
+         "wired": wired,
+         "lateCallbacks": lateEntries,
+         "slowCycles": slowCycles,
+         "inputShortCycles": inputShortCycles,
+         "inputMissingCycles": inputMissingCycles,
+         "gapCauses": ["lateCallback": gapsLateEntry, "inputShort": gapsInputShort, "clockJump": gapsClockJump],
+         "callbackIntervalCycles": Dictionary(uniqueKeysWithValues: zip(AirPlayGapCause.binLabels, entryBins.count == 8 ? entryBins : Array(repeating: 0, count: 8))),
+         "callbackIntervalMaxMicros": micros(Double(entryMaxTicks))]
     }
 }
 
@@ -240,6 +298,19 @@ final class AirPlayDirectStream: AppAudioActivitySource {
     private let stopRequested = AudioAtomicCounter()
     private let fadedOut = AudioAtomicCounter()
     private let reconfigured = AudioAtomicCounter()
+    /// 7.6 (Codex AUD-01): entry timing and input completeness, atomics only.
+    private let lastEntryTick = AudioAtomicCounter()
+    private let lateEntries = AudioAtomicCounter()
+    private let slowCycles = AudioAtomicCounter()
+    private let inputShortCycles = AudioAtomicCounter()
+    private let inputMissingCycles = AudioAtomicCounter()
+    private let gapsLateEntry = AudioAtomicCounter()
+    private let gapsInputShort = AudioAtomicCounter()
+    private let gapsClockJump = AudioAtomicCounter()
+    private let entryMaxTicks = AudioAtomicCounter()
+    private let entryBins: [AudioAtomicCounter] = (0..<8).map { _ in AudioAtomicCounter() }
+    /// Ticks per output frame (set at init; the cycle length is frames × this).
+    private let ticksPerFrame: Double
     private let secondsPerTick: Double
 
     private var procID: AudioDeviceIOProcID?
@@ -264,6 +335,7 @@ final class AirPlayDirectStream: AppAudioActivitySource {
         mach_timebase_info(&timebase)
         secondsPerTick = Double(timebase.numer) / Double(timebase.denom) / 1_000_000_000
         let rate = Self.float64(aggregateID, kAudioDevicePropertyNominalSampleRate) ?? 0
+        ticksPerFrame = rate > 0 ? 1 / rate / secondsPerTick : 0
         let inputs = Self.channelsPerBuffer(aggregateID, scope: kAudioObjectPropertyScopeInput)
         let deviceInputs = Self.channelsPerBuffer(device.id, scope: kAudioObjectPropertyScopeInput)
         let outputs = Self.channelsPerBuffer(aggregateID, scope: kAudioObjectPropertyScopeOutput)
@@ -401,12 +473,37 @@ final class AirPlayDirectStream: AppAudioActivitySource {
         }
         guard outputChannels > 0, frames != .max, frames > 0 else { return }
         bufferFrames.store(UInt64(frames))
+        // 7.6 (Codex AUD-01): when this callback came, against the one before.
+        let previousEntry = lastEntryTick.load()
+        lastEntryTick.store(start)
+        let interval = previousEntry > 0 && start > previousEntry ? start - previousEntry : 0
+        let periodTicks = UInt64(Double(frames) * ticksPerFrame)
+        if interval > 0, periodTicks > 0 {
+            entryBins[AirPlayGapCause.bin(intervalTicks: interval, periodTicks: periodTicks)].add()
+            entryMaxTicks.raise(to: interval)
+            if interval * 2 > periodTicks * 3 { lateEntries.add() }
+        }
+        // The tap's frames this cycle (read again below for the mix).
+        let inputList = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: input))
+        var inputFrames = 0
+        if inputBufferOffset < inputList.count {
+            let tap = inputList[inputBufferOffset]
+            if tap.mNumberChannels > 0, tap.mData != nil { inputFrames = Int(tap.mDataByteSize) / (4 * Int(tap.mNumberChannels)) }
+        }
+        if inputFrames == 0 { inputMissingCycles.add() } else if inputFrames < frames { inputShortCycles.add() }
         let stamp = outputTime.pointee
         let missing = gapDetector.observe(sampleTime: stamp.mSampleTime,
                                           valid: stamp.mFlags.contains(.sampleTimeValid), frames: frames)
         if missing > 0 {
             ioGaps.add()
             ioGapFrames.add(UInt64(missing))
+            let cause = AirPlayGapCause.classify(intervalTicks: interval, periodTicks: periodTicks, inputFrames: inputFrames, frames: frames)
+            switch cause {
+            case .lateEntry: gapsLateEntry.add()
+            case .inputShort: gapsInputShort.add()
+            case .clockJump: gapsClockJump.add()
+            }
+            events.push(.gapCause, value: cause.rawValue, extra: UInt64(Double(interval) * secondsPerTick * 1_000_000), host: start)
             // The real output sample time, or "unknown" (the event used to
             // read "device sample time 0" for every direct gap).
             let valid = stamp.mFlags.contains(.sampleTimeValid) && stamp.mSampleTime.isFinite && stamp.mSampleTime >= 0
@@ -467,6 +564,8 @@ final class AirPlayDirectStream: AppAudioActivitySource {
         costTicks.add(cost)
         costCycles.add()
         costMaxTicks.raise(to: cost)
+        // The work itself took longer than the cycle (AUD-01: "after entry").
+        if frames > 0, Double(cost) > Double(frames) * ticksPerFrame { slowCycles.add() }
     }
 
     private static func silence(_ outputs: UnsafeMutableAudioBufferListPointer) {
@@ -499,7 +598,10 @@ final class AirPlayDirectStream: AppAudioActivitySource {
             costTicks: costTicks.load(), costCycles: costCycles.load(), costMaxTicks: costMaxTicks.load(),
             secondsPerTick: secondsPerTick, bufferFrames: bufferFrames.load(), configuredIOFrames: ioFrames,
             oversizedCycles: oversizedCycles.load(), sampleRate: sampleRate,
-            peak: Float(bitPattern: UInt32(truncatingIfNeeded: peakBits.load())), wired: wired.left && wired.right).json
+            peak: Float(bitPattern: UInt32(truncatingIfNeeded: peakBits.load())), wired: wired.left && wired.right,
+            lateEntries: lateEntries.load(), slowCycles: slowCycles.load(), inputShortCycles: inputShortCycles.load(),
+            inputMissingCycles: inputMissingCycles.load(), gapsLateEntry: gapsLateEntry.load(), gapsInputShort: gapsInputShort.load(),
+            gapsClockJump: gapsClockJump.load(), entryBins: entryBins.map { $0.load() }, entryMaxTicks: entryMaxTicks.load()).json
     }
 
     var eventCounters: [String: UInt64] {

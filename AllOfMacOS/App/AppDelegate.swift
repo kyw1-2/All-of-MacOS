@@ -660,6 +660,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let audio = entry("App Audio Engine", "speaker.wave.2", #selector(toggleAppAudio))
             audio.state = AppAudioEngine.shared.isEnabled ? .on : .off
             menu.addItem(audio)
+            // 7.6 (Codex M12): only while App Audio is processing.
+            if AppAudioEngine.shared.isEnabled {
+                let mark = entry("I Just Heard a Glitch", "waveform.badge.exclamationmark", #selector(markAudioGlitch))
+                mark.toolTip = "Saves what AOM saw 10 seconds before and after (Diagnostics/audio-marks); playback isn't touched"
+                menu.addItem(mark)
+            }
         }
         let enabled = MainActor.assumeIsolated { appState?.globalEnabled ?? true }
         let engine = entry("Automation", "bolt", #selector(toggleEnabled))
@@ -718,6 +724,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         moreMenu.addItem(.separator())
         moreMenu.addItem(entry("Floating Menus & Widgets…", "square.grid.2x2", #selector(editFloatingMenus)))
         moreMenu.addItem(entry("Menu Bar Shelf…", "rectangle.topthird.inset.filled", #selector(toggleMenuBarShelf)))
+        moreMenu.addItem(entry("Menu Bar Strip", "menubar.rectangle", #selector(showMenuBarStrip)))
         moreMenu.addItem(entry("Show Cheat Sheet", "list.bullet.rectangle", #selector(showCheatSheet)))
         let hudItem = entry("Gesture HUD", "rectangle.on.rectangle", #selector(toggleHUD))
         hudItem.state = (UserDefaults.standard.object(forKey: "AOMHUDEnabled") as? Bool ?? true) ? .on : .off
@@ -756,6 +763,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if #available(macOS 14.2, *) {
             AppAudioEngine.shared.isEnabled.toggle()
         }
+    }
+
+    @objc private func markAudioGlitch() {
+        MainActor.assumeIsolated { AudioGlitchMarker.mark() }
+    }
+
+    @objc private func showMenuBarStrip() {
+        MainActor.assumeIsolated { MenuBarStripController.shared.toggle() }
     }
 
     @objc private func toggleMenuBarShelf() {

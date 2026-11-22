@@ -226,6 +226,17 @@ final class AppAudioEngine {
 
     private var sessions: [pid_t: Session] = [:]
 
+    /// 7.6 (Codex M12): what plays through AOM now, for a glitch mark —
+    /// the app, its path and the direct stream's counters; no device names.
+    func markRoutes() -> [[String: Any]] {
+        sessions.values.map { session in
+            var route: [String: Any] = ["bundleID": session.bundleID, "direct": session.isDirect, "airPlay": session.isAirPlay,
+                                        "sampleRate": session.sampleRate]
+            if let stream = session.stream { route["counters"] = stream.statistics }
+            return route
+        }
+    }
+
     var isSupported: Bool { true } // the type itself is 14.2-gated
 
     /// Master toggle for App Audio Engine. When disabled, all process taps and

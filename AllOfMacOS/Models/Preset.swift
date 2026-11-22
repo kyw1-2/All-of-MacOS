@@ -355,23 +355,6 @@ struct Preset: Identifiable, Codable {
             $0.input.category == trigger.input.category && $0.isFavorite == trigger.isFavorite
         }, mode: .manual)
     }
-    func canMoveTrigger(_ id: UUID, offset: Int) -> Bool {
-        guard offset == -1 || offset == 1, let trigger = triggers.first(where: { $0.id == id }) else { return false }
-        let peers = movePeers(of: trigger)
-        guard let index = peers.firstIndex(where: { $0.id == id }) else { return false }
-        return peers.indices.contains(index + offset)
-    }
-    @discardableResult
-    mutating func moveTrigger(_ id: UUID, offset: Int) -> Bool {
-        guard canMoveTrigger(id, offset: offset), let trigger = triggers.first(where: { $0.id == id }) else { return false }
-        var peers = movePeers(of: trigger)
-        guard let index = peers.firstIndex(where: { $0.id == id }) else { return false }
-        peers.swapAt(index, index + offset)
-        let order = Dictionary(uniqueKeysWithValues: peers.enumerated().map { ($0.element.id, $0.offset) })
-        for index in triggers.indices { if let value = order[triggers[index].id] { triggers[index].order = value } }
-        modifiedAt = Date(); return true
-    }
-
     mutating func addTrigger(_ trigger: Trigger) {
         var trigger = trigger
         let peers = movePeers(of: trigger)

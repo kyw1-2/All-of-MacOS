@@ -114,6 +114,10 @@ struct ParityActionForm: View {
             note("On turns Wi-Fi and Bluetooth off; Off turns back on the ones that were on before. Bluetooth keyboards and mice disconnect.")
         case .dismissNotifications:
             note("Presses Close on each notification in Notification Center through Accessibility.")
+        case .showMenuBarStrip:
+            note("Opens on the display under the pointer. Needs Accessibility to read other apps' menu bar items; nothing is moved.")
+        case .markAudioGlitch:
+            note("Playback isn't touched. The record goes to Application Support/AllOfMacOS/Diagnostics/audio-marks.")
         case .bluetoothDevice:
             HStack {
                 TextField("Device name or address", text: string(\.bluetoothDevice, default: "")).textFieldStyle(.roundedBorder)

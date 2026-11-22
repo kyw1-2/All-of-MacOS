@@ -581,6 +581,11 @@ struct QuickCommandPalette: View {
         }
         // Keycaps mirror the user's real bindings; unbound commands show none.
         // Capture Text resolves to the OCR binding, as in CaptureMenu.
+        // 7.6 (Codex M08, M12).
+        command("menubar.strip", "Menu Bar Strip", "Every menu bar icon in one row, hidden ones first · 메뉴바 아이콘 띠", "menubar.rectangle",
+                keywords: "menu bar icons notch hidden status items ice bar bartender 메뉴바 노치 숨은 아이콘") { MenuBarStripController.shared.show() }
+        command("audio.mark", "I Just Heard a Glitch", "Save what AOM saw 10 s before and after; playback isn't touched · 방금 잡음 들림", "waveform.badge.exclamationmark",
+                keywords: "crackle glitch noise airplay homepod audio mark 지지직 잡음 끊김 표시") { AudioGlitchMarker.mark() }
         // 7.6 (Codex SEC04): aom://trigger links ask again.
         command("links.forget", "Forget Link Permissions", "aom:// links ask again before running an automation · 링크 권한 초기화", "link.badge.plus",
                 keywords: "aom link url scheme trigger permission allow reset 링크 권한") { AOMLinkConsent.forgetAll() }

@@ -121,27 +121,6 @@ enum PaletteAppControl {
     }
 
     @MainActor
-    static func forceQuit(_ app: URL, name: String) {
-        let targets = instances(of: app).filter { !isProtected($0.bundleIdentifier) }
-        guard !targets.isEmpty else { notRunning(name); return }
-        let alert = NSAlert()
-        alert.messageText = "Force Quit “\(name)”?"
-        alert.informativeText = "\(name) closes at once. Unsaved changes in it are lost."
-        alert.alertStyle = .warning
-        let button = alert.addButton(withTitle: "Force Quit")
-        button.hasDestructiveAction = true
-        alert.addButton(withTitle: "Cancel")
-        NSApp.activate(ignoringOtherApps: true)
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        // The same instances, unless one ended or changed meanwhile.
-        let key = installedKey(app)
-        for target in targets where !target.isTerminated && runningKey(target) == key {
-            target.forceTerminate()
-        }
-        GestureLog.shared.logFromAnyThread("Force quit \(name) from ⌘K", level: .action)
-    }
-
-    @MainActor
     private static func notRunning(_ name: String) {
         GestureHUD.shared.show(title: "\(name) Isn't Running", detail: nil)
     }

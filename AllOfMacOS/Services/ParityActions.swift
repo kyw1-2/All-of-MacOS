@@ -772,6 +772,7 @@ enum ParityActions {
         .activateWindowByTitle, .minimizeAppWindows, .gatherWindowsToPointerDisplay, .tileFrontWindowsSideBySide,
         .switchInputSource, .setSoundInput, .toggleDisplayMirroring, .setDisplayInputSource, .toggleXDRBrightness, .ejectAllDisks, .toggleDockAutoHide,
         .bluetoothDevice, .setWiFiPower, .setBluetoothPower, .setAirplaneMode, .dismissNotifications, .showEmojiPicker,
+        .showMenuBarStrip, .markAudioGlitch,
         .recognizeScreenText, .sendMIDI, .sendOSC, .pickScreenColor, .hapticFeedback, .postDistributedNotification,
         .restartRecording]
 
@@ -1000,6 +1001,12 @@ enum ParityActions {
                                        icon: outcome.succeeded ? (outcome.on ? "airplane" : "wifi") : "exclamationmark.triangle")
                 completion(outcome.succeeded)
             }
+        case .showMenuBarStrip:
+            MenuBarStripController.shared.toggle()
+            completion(true)
+        case .markAudioGlitch:
+            AudioGlitchMarker.mark()
+            completion(true)
         case .dismissNotifications:
             NotificationDismisser.dismissAllInBackground { closed in
                 switch closed {

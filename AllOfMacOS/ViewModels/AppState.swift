@@ -219,13 +219,6 @@ class AppState: ObservableObject {
     }
 
     var isSearchingTriggers: Bool { !triggerSearch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-    func canMoveTrigger(_ trigger: Trigger, offset: Int) -> Bool {
-        !isSearchingTriggers && triggerSortMode == .manual && currentPreset.canMoveTrigger(trigger.id, offset: offset)
-    }
-    func moveTrigger(_ trigger: Trigger, offset: Int) {
-        guard canMoveTrigger(trigger, offset: offset), currentPreset.moveTrigger(trigger.id, offset: offset) else { return }
-        selectedTrigger = currentPreset.triggers.first { $0.id == trigger.id }; save()
-    }
     func toggleFavorite(_ trigger: Trigger) {
         guard var latest = currentPreset.triggers.first(where: { $0.id == trigger.id }) else { return }
         latest.isFavorite.toggle(); updateTrigger(latest)
@@ -253,13 +246,6 @@ class AppState: ObservableObject {
         currentPreset.activationGroups.append(group)
         save()
         return group.id
-    }
-
-    func addActivationGroup(_ group: ActivationGroup) {
-        guard !currentPreset.activationGroups.contains(where: { $0.id == group.id }) else { return }
-        currentPreset.activationGroups.append(group)
-        selectedActivationGroupID = group.id
-        save()
     }
 
     func updateActivationGroup(_ group: ActivationGroup) {

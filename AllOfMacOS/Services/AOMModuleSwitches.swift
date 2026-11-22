@@ -16,11 +16,11 @@ import SwiftUI
 enum AOMModuleSwitch: String, CaseIterable, Identifiable, Codable {
     case files, folderRules, textActions, focus, micMute, inputSources, screenRuler, clickHints
     /// 7.4, off until turned on.
-    case menuBarHider, memoryWatch, meetingAlerts
+    case menuBarHider, memoryWatch, meetingAlerts, weather
 
     /// Off until turned on: they add menu bar items, ask for Calendar or
     /// post alerts, so nothing changes for anyone who doesn't choose them.
-    static let optIn: Set<AOMModuleSwitch> = [.menuBarHider, .memoryWatch, .meetingAlerts]
+    static let optIn: Set<AOMModuleSwitch> = [.menuBarHider, .memoryWatch, .meetingAlerts, .weather]
     var isOptIn: Bool { Self.optIn.contains(self) }
 
     var id: String { rawValue }
@@ -38,6 +38,7 @@ enum AOMModuleSwitch: String, CaseIterable, Identifiable, Codable {
         case .menuBarHider: return "Menu Bar Hider"
         case .memoryWatch: return "Memory Watch"
         case .meetingAlerts: return "Meeting Alerts"
+        case .weather: return "Menu Bar Weather"
         }
     }
 
@@ -54,6 +55,7 @@ enum AOMModuleSwitch: String, CaseIterable, Identifiable, Codable {
         case .menuBarHider: return "Hides the menu bar items you ⌘-drag left of its divider"
         case .memoryWatch: return "Alerts on memory pressure or heavy swap, with the apps using most"
         case .meetingAlerts: return "Countdown in the menu bar and a full-screen alert as a meeting starts"
+        case .weather: return "A city's temperature in the menu bar, details a click away; no location permission"
         }
     }
 
@@ -70,6 +72,7 @@ enum AOMModuleSwitch: String, CaseIterable, Identifiable, Codable {
         case .menuBarHider: return "chevron.left.2"
         case .memoryWatch: return "memorychip"
         case .meetingAlerts: return "calendar.badge.clock"
+        case .weather: return "cloud.sun"
         }
     }
 
@@ -152,6 +155,7 @@ final class AOMModuleSwitches: ObservableObject {
         case .menuBarHider: MenuBarHider.shared.start()
         case .memoryWatch: MemoryWatch.shared.start()
         case .meetingAlerts: MeetingAlerts.shared.start()
+        case .weather: MenuBarWeather.shared.start()
         }
     }
 
@@ -171,6 +175,7 @@ final class AOMModuleSwitches: ObservableObject {
         case .menuBarHider: MenuBarHider.shared.stop()
         case .memoryWatch: MemoryWatch.shared.stop()
         case .meetingAlerts: MeetingAlerts.shared.stop()
+        case .weather: MenuBarWeather.shared.stop()
         }
     }
 

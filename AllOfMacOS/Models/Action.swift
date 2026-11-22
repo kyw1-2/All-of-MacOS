@@ -323,6 +323,9 @@ enum ActionType: String, Codable, Identifiable, CaseIterable {
     case setAirplaneMode = "Turn Airplane Mode On / Off"
     case dismissNotifications = "Dismiss All Notifications"
     case showEmojiPicker = "Show Emoji & Symbols"
+    // 7.6 (Codex M08, M12)
+    case showMenuBarStrip = "Show Menu Bar Strip"
+    case markAudioGlitch = "Mark Audio Glitch"
     // Utility
     case recognizeScreenText = "Find Text on Screen (OCR)"
     case sendMIDI = "Send MIDI Message"
@@ -410,7 +413,8 @@ enum ActionType: String, Codable, Identifiable, CaseIterable {
         case .activateWindowByTitle, .minimizeAppWindows, .gatherWindowsToPointerDisplay, .tileFrontWindowsSideBySide:
             return .windowManagement
         case .switchInputSource, .setSoundInput, .toggleDisplayMirroring, .setDisplayInputSource, .toggleXDRBrightness, .ejectAllDisks, .toggleDockAutoHide,
-             .bluetoothDevice, .setWiFiPower, .setBluetoothPower, .setAirplaneMode, .dismissNotifications, .showEmojiPicker:
+             .bluetoothDevice, .setWiFiPower, .setBluetoothPower, .setAirplaneMode, .dismissNotifications, .showEmojiPicker,
+             .showMenuBarStrip, .markAudioGlitch:
             return .systemActions
         case .recognizeScreenText, .sendMIDI, .sendOSC, .pickScreenColor, .hapticFeedback, .postDistributedNotification:
             return .utilityActions
@@ -625,6 +629,8 @@ enum ActionType: String, Codable, Identifiable, CaseIterable {
         case .setBluetoothPower: return "dot.radiowaves.left.and.right"
         case .setAirplaneMode: return "airplane"
         case .dismissNotifications: return "bell.slash"
+        case .showMenuBarStrip: return "menubar.rectangle"
+        case .markAudioGlitch: return "waveform.badge.exclamationmark"
         case .showEmojiPicker: return "face.smiling"
         case .recognizeScreenText: return "text.magnifyingglass"
         case .sendMIDI: return "pianokeys"

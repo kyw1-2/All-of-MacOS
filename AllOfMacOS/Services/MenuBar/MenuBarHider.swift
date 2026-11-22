@@ -19,6 +19,16 @@ final class MenuBarHider: NSObject {
 
     private var toggle: NSStatusItem?
     private var divider: NSStatusItem?
+    /// 7.6 (Codex M04): the optional second divider; items left of it stay
+    /// hidden when the chevron shows the others, until ⌥-click shows all.
+    private var always: NSStatusItem?
+    static let alwaysKey = "AOMMenuBarHider.alwaysSection"
+    static var alwaysSectionOn: Bool {
+        get { UserDefaults.standard.bool(forKey: alwaysKey) }
+        set { UserDefaults.standard.set(newValue, forKey: alwaysKey) }
+    }
+    /// Shown everything (⌥-click), not only the "when needed" section.
+    private(set) var showsAll = false
     private(set) var isCollapsed = false
     private var rehide: DispatchWorkItem?
     /// 7.6 (Codex MB04): the delayed collapse after a start, cancelled by stop.
@@ -39,7 +49,8 @@ final class MenuBarHider: NSObject {
         toggle.button?.image = NSImage(systemSymbolName: "chevron.left", accessibilityDescription: "Show hidden menu bar items")
         toggle.button?.target = self
         toggle.button?.action = #selector(clicked)
-        toggle.button?.toolTip = "Hidden menu bar items · ⌘-drag an item left of the divider to hide it"
+        toggle.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        toggle.button?.toolTip = "Hidden menu bar items · ⌘-drag an item left of the divider to hide it · ⌥-click shows all · right-click for options"
         let divider = NSStatusBar.system.statusItem(withLength: Self.dividerLength)
         divider.autosaveName = "AOMMenuBarHiderDivider"
         divider.button?.image = NSImage(systemSymbolName: "line.diagonal", accessibilityDescription: "Menu Bar Hider divider")
@@ -48,6 +59,7 @@ final class MenuBarHider: NSObject {
         divider.button?.toolTip = "Items left of this line hide"
         self.toggle = toggle
         self.divider = divider
+        if Self.alwaysSectionOn { addAlwaysDivider() }
         isCollapsed = false
         updateAppearance()
         if UserDefaults.standard.bool(forKey: Self.usedKey) {
@@ -71,14 +83,118 @@ final class MenuBarHider: NSObject {
         startCollapse?.cancel()
         startCollapse = nil
         rehide?.cancel()
-        for item in [toggle, divider].compactMap({ $0 }) { NSStatusBar.system.removeStatusItem(item) }
+        for item in [toggle, divider, always].compactMap({ $0 }) { NSStatusBar.system.removeStatusItem(item) }
+        always = nil
+        showsAll = false
         toggle = nil
         divider = nil
         isCollapsed = false
     }
 
     @objc private func clicked() {
+        if NSApp.currentEvent?.type == .rightMouseUp { showOptions(); return }
+        if NSEvent.modifierFlags.contains(.option) { expand(all: true); return }
         if isCollapsed { expand() } else { collapse() }
+    }
+
+    // MARK: Always-hidden section (Codex M04)
+
+    /// Pure: the two lengths for a state. Collapsed: the first divider
+    /// pushes everything left of it away (the second goes with it).
+    /// Expanded: the second divider pushes its side away. All: both narrow.
+    static func lengths(collapsed: Bool, showsAll: Bool, hasAlways: Bool) -> (divider: CGFloat, always: CGFloat?) {
+        guard hasAlways else { return (collapsed ? collapsedLength : dividerLength, nil) }
+        if collapsed { return (collapsedLength, dividerLength) }
+        return (dividerLength, showsAll ? dividerLength : collapsedLength)
+    }
+
+    /// Pure: the second divider works only while it sits left of the first,
+    /// which sits left of the chevron.
+    static func canUseAlways(alwaysMinX: CGFloat?, dividerMinX: CGFloat?, toggleMinX: CGFloat?) -> Bool {
+        guard let alwaysMinX, let dividerMinX, let toggleMinX else { return false }
+        return alwaysMinX < dividerMinX && dividerMinX < toggleMinX
+    }
+
+    private func addAlwaysDivider() {
+        guard always == nil else { return }
+        // A new item lands left of AOM's existing ones; its position is remembered.
+        let item = NSStatusBar.system.statusItem(withLength: Self.dividerLength)
+        item.autosaveName = "AOMMenuBarHiderAlways"
+        item.button?.image = NSImage(systemSymbolName: "line.diagonal", accessibilityDescription: "Always-hidden divider")
+        item.button?.imageScaling = .scaleProportionallyDown
+        item.button?.appearsDisabled = true
+        item.button?.alphaValue = 0.55
+        item.button?.toolTip = "Items left of this fainter line stay hidden until you ⌥-click the chevron"
+        always = item
+    }
+
+    private func setAlwaysSection(_ on: Bool) {
+        Self.alwaysSectionOn = on
+        if on {
+            addAlwaysDivider()
+            GestureHUD.shared.show(title: "Always-Hidden Section", detail: "⌘-drag items left of the new fainter divider; they stay hidden until you ⌥-click the chevron.")
+        } else {
+            if let always { NSStatusBar.system.removeStatusItem(always) }
+            always = nil
+        }
+        apply()
+    }
+
+    private func showOptions() {
+        let menu = NSMenu()
+        let section = NSMenuItem(title: "Always-Hidden Section", action: #selector(toggleAlwaysSection), keyEquivalent: "")
+        section.target = self
+        section.state = Self.alwaysSectionOn ? .on : .off
+        menu.addItem(section)
+        let all = NSMenuItem(title: "Show Everything (⌥-Click)", action: #selector(showEverything), keyEquivalent: "")
+        all.target = self
+        menu.addItem(all)
+        menu.addItem(.separator())
+        let header = NSMenuItem(title: "Hide Again After", action: nil, keyEquivalent: "")
+        header.isEnabled = false
+        menu.addItem(header)
+        for seconds in [0.0, 10, 15, 30, 60] {
+            let entry = NSMenuItem(title: seconds == 0 ? "Never" : "\(Int(seconds)) Seconds", action: #selector(pickRehide(_:)), keyEquivalent: "")
+            entry.target = self
+            entry.representedObject = seconds
+            entry.state = Self.rehideSeconds == seconds ? .on : .off
+            menu.addItem(entry)
+        }
+        toggle?.menu = menu
+        toggle?.button?.performClick(nil)
+        toggle?.menu = nil
+    }
+
+    @objc private func toggleAlwaysSection() { setAlwaysSection(!Self.alwaysSectionOn) }
+    @objc private func showEverything() { expand(all: true) }
+    @objc private func pickRehide(_ sender: NSMenuItem) { Self.rehideSeconds = sender.representedObject as? Double ?? 15 }
+
+    /// Sets both lengths for the state, then checks the chevron is still on a
+    /// display; if the second section pushed it off, that section is turned
+    /// off and the menu bar goes back to one section.
+    private func apply() {
+        guard let divider else { return }
+        var hasAlways = always != nil
+        if hasAlways, !isCollapsed, !showsAll,
+           !Self.canUseAlways(alwaysMinX: always?.button?.window?.frame.minX, dividerMinX: divider.button?.window?.frame.minX,
+                              toggleMinX: toggle?.button?.window?.frame.minX) {
+            hasAlways = false
+            GestureHUD.shared.show(title: "Always-Hidden Section", detail: "⌘-drag the fainter divider left of the first one; until then everything shows.")
+        }
+        let lengths = Self.lengths(collapsed: isCollapsed, showsAll: showsAll, hasAlways: hasAlways)
+        divider.length = lengths.divider
+        divider.button?.image = lengths.divider == Self.collapsedLength ? nil
+            : NSImage(systemSymbolName: "line.diagonal", accessibilityDescription: "Menu Bar Hider divider")
+        if let always { always.length = lengths.always ?? Self.dividerLength }
+        updateAppearance()
+        guard always != nil, lengths.always == Self.collapsedLength else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            guard let self, let frame = self.toggle?.button?.window?.frame else { return }
+            let visible = NSScreen.screens.contains { $0.frame.intersects(frame) && $0.frame.minX <= frame.minX }
+            guard !visible else { return }
+            self.setAlwaysSection(false)
+            GestureHUD.shared.show(title: "Always-Hidden Section Off", detail: "On this display it pushed the chevron off the menu bar, so AOM went back to one section.")
+        }
     }
 
     /// Pure: collapsing is safe only while the divider sits left of the
@@ -101,19 +217,18 @@ final class MenuBarHider: NSObject {
             return
         }
         rehide?.cancel()
-        divider.length = Self.collapsedLength
-        divider.button?.image = nil
         UserDefaults.standard.set(true, forKey: Self.usedKey)
         isCollapsed = true
-        updateAppearance()
+        showsAll = false
+        apply()
+        _ = divider
     }
 
-    func expand() {
-        guard toggle != nil, let divider else { return }
-        divider.length = Self.dividerLength
-        divider.button?.image = NSImage(systemSymbolName: "line.diagonal", accessibilityDescription: "Menu Bar Hider divider")
+    func expand(all: Bool = false) {
+        guard toggle != nil, divider != nil else { return }
         isCollapsed = false
-        updateAppearance()
+        showsAll = all
+        apply()
         rehide?.cancel()
         let seconds = Self.rehideSeconds
         guard seconds > 0 else { return }

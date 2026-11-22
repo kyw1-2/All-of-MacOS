@@ -85,7 +85,9 @@ enum AudioEventKind: UInt64, CaseIterable {
          defaultOutputChanged, deviceListChanged, tapAttached, tapDetached, tapRewrite, outputMoved,
          handover, mixLate, countersReset, effectChanged,
          // 3.3.4 (N334): a network bus's leveler took more than 1 dB, and let go.
-         levelerEngaged, levelerReleased, outputAutoRecovery, outputAutoRecoverySuppressed, clockSkip, captureGap, captureClockReset, displayVolume
+         levelerEngaged, levelerReleased, outputAutoRecovery, outputAutoRecoverySuppressed, clockSkip, captureGap, captureClockReset, displayVolume,
+         // 7.6 (Codex AUD-01): why a direct gap happened, and the user's "I heard it" mark.
+         gapCause, userMark
 
     var name: String { String(describing: self) }
 
@@ -398,6 +400,9 @@ final class AudioEventLog {
             event.extra = extra
             event.detail = dynamicsDetail(kind: kind, extra: extra)
         case .handover: event.detail = extra == 1 ? "the old output had stopped (took over)" : "after the old output's fade-out"
+        case .gapCause:
+            event.extra = extra
+            event.detail = AirPlayGapCause(rawValue: value).map { "\($0.label); callback came \(extra) µs after the one before" } ?? "unknown"
         default: break
         }
         return event

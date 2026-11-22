@@ -84,7 +84,8 @@ final class AOM75Tests: XCTestCase {
         try Data(repeating: 9, count: 2_000).write(to: replaced)
         let plan = FileTools.planDuplicateTrash(sets, selected: all, hash: hash)
         XCTAssertEqual(plan.trash.count, 1, "the healthy set loses one copy and keeps one")
-        XCTAssertEqual(plan.keptLast.count, 2)
+        // 7.6: a set held back isn't also "kept last"; only the healthy set is.
+        XCTAssertEqual(plan.keptLast.count, 1)
         XCTAssertEqual(plan.held.count, 1)
     }
 

@@ -56,8 +56,9 @@ final class StorageNode: Identifiable, @unchecked Sendable {
     }
 
     /// The largest items kept as they came in, the rest only summed.
-    fileprivate func finish(_ top: TopItems, unreadable: Bool, unreadableHere: Int) {
-        var kept = top.sortedKept
+    func finish(_ top: TopItems, unreadable: Bool, unreadableHere: Int) {
+        var top = top
+        var kept = top.finalize()
         if top.restCount > 0 {
             let count = top.restCount
             kept.append(StorageNode(name: "\(count) smaller item\(count == 1 ? "" : "s")", url: url, kind: .smallerItems(count),
@@ -112,10 +113,16 @@ struct TopItems {
         kept.removeLast(kept.count - keep)
     }
 
+    /// The kept items, largest first, after a last cut (what it cuts joins the rest).
+    mutating func finalize() -> [StorageNode] {
+        if kept.count > keep { trim() }
+        kept.sort(by: Self.ordered)
+        return kept
+    }
+
     var sortedKept: [StorageNode] {
         var copy = self
-        if copy.kept.count > keep { copy.trim() }
-        return copy.kept.sorted(by: Self.ordered)
+        return copy.finalize()
     }
 }
 
