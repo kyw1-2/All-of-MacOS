@@ -301,7 +301,9 @@ struct AOMMenuBarCraftPanel: View {
     }
 
     private func toggleMenu(_ id: String) {
-        withAnimation(.easeOut(duration: 0.12)) { openMenu = openMenu == id ? nil : id }
+        withAnimation(AOMCraftMotion.resolve(AOMCraftMotion.crossfade, reduceMotion: AOMMotion.systemReduceMotion)) {
+            openMenu = openMenu == id ? nil : id
+        }
     }
 
     private func tileMenu(_ tile: ToggleTile, _ commands: [AOMFeatureCommand]) -> some View {

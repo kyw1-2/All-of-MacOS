@@ -7,6 +7,13 @@ Kill Process, weather that shows what you pick in °C or °F, menus on the AOM p
 - The process is checked again right before it is ended (PID and start time), so a reused PID is never hit; a Return that finishes Korean input or a held Return does nothing; AOM, Finder, Dock, WindowServer and the session's own processes are protected. "Ended", "already ended", "not allowed" and "still running" are told apart.
 - The old screen is **Quit App · 일반 종료** (asks the app to quit, so it can save).
 
+### Launcher
+- **Comes back as you left it**: closed without running anything — you clicked another app, pressed Esc or the hotkey — the launcher keeps its screen, search and selection for 90 seconds, as Raycast does; running a row, or waiting longer, starts at the root again.
+- **⌘[ goes back a screen** even with the cursor in the search field, so a Back gesture or mouse button (which sends ⌘[) works there.
+
+### Back gesture in text fields
+- A Send Keyboard Shortcut action no longer loses ⌘[ (or any ⌘ shortcut) to a focused text field in another app: when that app has a menu command with the shortcut (History › Back), AOM chooses it through Accessibility; otherwise the keys go as before.
+
 ### Weather
 - The menu bar reads **☀ 20°C** or **☀ 68°F**. Choose and order what sits beside the icon — temperature, feels like, today's high/low, chance of rain, humidity, wind — in Menu Bar › Weather, with a live one-line preview; the weather icon's menu has **Menu Bar Display…** and per-item toggles. Icon-only setups stay icon only.
 - Switching °C/°F converts the reading you have at once (also offline) — 20 °C becomes 68 °F, never "20°F". Wind shows km/h or mph; long lines drop their last items, the tooltip shows all of it and when it was measured.

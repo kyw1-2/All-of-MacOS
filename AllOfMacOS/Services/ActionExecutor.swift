@@ -845,6 +845,13 @@ class ActionExecutor {
     @discardableResult
     private static func sendKeyStroke(keyCode: UInt16, flags: NSEvent.ModifierFlags) -> Bool {
         GestureLog.shared.logFromAnyThread("sendKeyStroke keyCode=\(keyCode) mods=\(flags.rawValue)", level: .action)
+        // 7.11: a text field in the front app would take a ⌘ shortcut such as
+        // ⌘[ (Back) for itself; its menu command is chosen instead when it has
+        // one. AOM's own windows (the launcher) get the keys as before.
+        let aomHasKeyboard: Bool = Thread.isMainThread
+            ? MainActor.assumeIsolated { NSApp.keyWindow != nil }
+            : DispatchQueue.main.sync { MainActor.assumeIsolated { NSApp.keyWindow != nil } }
+        if !aomHasKeyboard, ShortcutMenuPress.pressIfTyping(keyCode: keyCode, flags: flags) { return true }
 
         return sendViaCGEvent(keyCode: keyCode, flags: flags, tapPoint: .cgSessionEventTap, label: "cgSessionEventTap")
     }

@@ -43,6 +43,42 @@ final class AOMLauncherController: NSObject, NSWindowDelegate {
     /// ends after a new open never hides or empties the new panel.
     private var presentation = 0
 
+    /// 7.11 (Raycast's "Pop to Root Search after 90 seconds"): closed without
+    /// running anything — focus moved away, a click outside, Esc, the hotkey —
+    /// the launcher keeps its screen, search and selection, and opening it
+    /// again within this time shows it as it was. Running a row starts fresh.
+    static let keepSeconds: TimeInterval = 90
+    /// Uptime until which the hidden palette may be shown again as it was.
+    private var keptUntil: TimeInterval = 0
+    private var teardown: DispatchWorkItem?
+    /// A row ran: the next open starts at the root.
+    private var startFresh = false
+
+    /// Called when a row's action runs (it closes the launcher on its own way).
+    func resetOnNextOpen() { startFresh = true }
+
+    /// Pure: whether a hidden palette comes back as it was.
+    static func reusesKept(now: TimeInterval, keptUntil: TimeInterval, hasContent: Bool, startFresh: Bool,
+                           initialRoute: Bool, hotkey: Bool) -> Bool {
+        hasContent && !startFresh && !initialRoute && !hotkey && now < keptUntil
+    }
+
+    /// Keeps the hidden palette for `keepSeconds`, then tears it down (its
+    /// queries and timers stop, as a fresh close did through 7.10).
+    private func keep(_ panel: AOMLauncherPanel, ticket: Int) {
+        teardown?.cancel()
+        guard !startFresh else { panel.contentView = nil; startFresh = false; keptUntil = 0; return }
+        keptUntil = ProcessInfo.processInfo.systemUptime + Self.keepSeconds
+        let work = DispatchWorkItem { [weak self, weak panel] in
+            guard let self, let panel, self.presentation == ticket, !panel.isVisible else { return }
+            panel.contentView = nil
+            self.keptUntil = 0
+        }
+        teardown = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.keepSeconds, execute: work)
+        NotificationCenter.default.post(name: .aomLauncherVisibility, object: nil, userInfo: ["visible": false])
+    }
+
     /// The app that was in front when the launcher opened (paste targets, "except" lists).
     var frontApp: NSRunningApplication? { previousApp.flatMap { $0.isTerminated ? nil : $0 } }
 
@@ -106,6 +142,29 @@ final class AOMLauncherController: NSObject, NSWindowDelegate {
         }
         let panel = self.panel ?? makePanel()
         panelSize = Self.size(fitting: Self.screenUnderPointer()?.visibleFrame ?? CGRect(origin: .zero, size: Self.size))
+        teardown?.cancel()
+        teardown = nil
+        if Self.reusesKept(now: ProcessInfo.processInfo.systemUptime, keptUntil: keptUntil, hasContent: panel.contentView != nil,
+                           startFresh: startFresh, initialRoute: initialRoute != nil, hotkey: runItem != nil) {
+            // The screen as it was left (7.11).
+            if PresetManager.isUIPreview { NSLog("AOM launcher: shown again as it was") }
+            panel.contentView?.frame = NSRect(origin: .zero, size: panelSize)
+            panel.appearance = AOMLauncherAppearance.shared.shown.appearance
+            place(panel)
+            panel.alphaValue = 0
+            if Self.activatesApp || PresetManager.isUIPreview { NSApp.activate(ignoringOtherApps: true) }
+            panel.makeKeyAndOrderFront(nil)
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = PresetManager.isUIPreview ? 0 : QuickCommandPalette.reducesMotion ? 0.05 : 0.12
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                panel.animator().alphaValue = 1
+            }
+            watchClicksOutside()
+            NotificationCenter.default.post(name: .aomLauncherVisibility, object: nil, userInfo: ["visible": true])
+            return
+        }
+        startFresh = false
+        keptUntil = 0
         let presented = Binding<Bool>(get: { [weak self] in self?.isVisible ?? false },
                                       set: { [weak self] open in if !open { self?.dismiss(restoringFocus: true) } })
         let root = AOMLauncherThemedRoot(appAccent: appState.accentColorChoice.color) {
@@ -158,9 +217,14 @@ final class AOMLauncherController: NSObject, NSWindowDelegate {
                 guard self?.presentation == ticket else { then?(); return }
                 panel.orderOut(nil)
                 panel.alphaValue = 1
-                // Tears the palette down: its Spotlight queries and menu
-                // reads stop, and the next open starts fresh.
-                panel.contentView = nil
+                // 7.11: a plain close keeps the palette for a while (Raycast);
+                // after an action, or once the time is up, it is torn down
+                // and its Spotlight queries and menu reads stop.
+                if then == nil, let self { self.keep(panel, ticket: ticket) } else {
+                    panel.contentView = nil
+                    self?.startFresh = false
+                    self?.keptUntil = 0
+                }
                 self?.hiding = false
                 if let target, !target.isTerminated { target.activate(options: []) }
                 if restoresInput {
@@ -189,7 +253,8 @@ final class AOMLauncherController: NSObject, NSWindowDelegate {
         PaletteInputSource.forget()
         panel.orderOut(nil)
         panel.alphaValue = 1
-        panel.contentView = nil
+        // Another AOM surface took over: kept too, like a plain close (7.11).
+        keep(panel, ticket: presentation)
     }
 
     /// 7.8: the theme's appearance on the panel, so the launcher ink and
@@ -283,4 +348,9 @@ struct AOMLauncherThemedRoot<Content: View>: View {
             .accentColor(accent)
             .tint(accent)
     }
+}
+
+extension Notification.Name {
+    /// 7.11: the launcher was hidden (kept) or shown again as it was; userInfo["visible"].
+    static let aomLauncherVisibility = Notification.Name("AOMLauncherVisibility")
 }

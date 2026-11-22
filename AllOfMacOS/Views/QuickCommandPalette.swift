@@ -1157,6 +1157,8 @@ struct QuickCommandPalette: View {
     /// the app that was in front is active again when the action runs.
     func perform(_ action: PaletteAction?, of item: PaletteItem) {
         guard let action, !item.isDimmed else { return }
+        // 7.11: a row that closes the launcher sends the next open back to the root.
+        if host == .launcher, case .close = action.effect { AOMLauncherController.shared.resetOnNextOpen() }
         // ⌘K learns root picks only: a row inside a screen (an app to kill,
         // a confirmation) never becomes the default for a similar search.
         if navigation.isRoot, item.section != .recent { PaletteKnowledgeStore.shared.record(itemID: item.id, query: query) }
@@ -2317,6 +2319,13 @@ struct QuickCommandPalette: View {
         .onReceive(appState.objectWillChange) { _ in sourcesChanged() }
         .onReceive(screens.objectWillChange) { _ in sourcesChanged() }
         .onReceive(PaletteUninstallFlow.recentDidChange) { _ in sourcesChanged() }
+        // 7.11: kept while hidden — Kill Process stops reading processes, and
+        // reads them again (and refreshes everything) when shown as it was.
+        .onReceive(NotificationCenter.default.publisher(for: .aomLauncherVisibility)) { note in
+            let visible = note.userInfo?["visible"] as? Bool ?? true
+            if navigation.current == .killProcess { screens.watchProcesses(visible, keepingRows: true) }
+            if visible { sourcesChanged() }
+        }
         .onReceive(NotificationCenter.default.publisher(for: AOMAIConfig.didChange)) { _ in sourcesChanged() }
         // 7.2: the new screens' sources.
         .onReceive(data.objectWillChange) { _ in sourcesChanged() }

@@ -132,6 +132,12 @@ class AppState: ObservableObject {
         }
         if PresetManager.isUIPreview, ProcessInfo.processInfo.arguments.contains("--aom-preview-launcher") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { AOMLauncherController.shared.show() }
+            // 7.11: `--aom-preview-launcher-reopen` closes it as a focus change
+            // would and opens it again, to check the screen comes back as it was.
+            if ProcessInfo.processInfo.arguments.contains("--aom-preview-launcher-reopen") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) { AOMLauncherController.shared.dismiss(restoringFocus: false) }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { AOMLauncherController.shared.show() }
+            }
         }
         // 7.5: `--aom-preview-file-tool zip:<path> | pdfs:<a>|<b> | folders:<a>|<b> | storageMap:<path>`.
         if PresetManager.isUIPreview, let index = ProcessInfo.processInfo.arguments.firstIndex(of: "--aom-preview-file-tool"),

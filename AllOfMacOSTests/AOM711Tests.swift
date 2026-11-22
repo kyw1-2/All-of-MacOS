@@ -115,3 +115,36 @@ final class AOM711ReviewTests: XCTestCase {
         _ = (full, short)
     }
 }
+
+/// 7.11: the launcher comes back as it was within 90 s of a plain close.
+@MainActor
+final class AOM711LauncherKeepTests: XCTestCase {
+    func testKeptScreenComesBackOnlyForAPlainReopenInTime() {
+        let reuse = { (now: Double, fresh: Bool, route: Bool, hotkey: Bool, content: Bool) in
+            AOMLauncherController.reusesKept(now: now, keptUntil: 100, hasContent: content, startFresh: fresh,
+                                              initialRoute: route, hotkey: hotkey)
+        }
+        XCTAssertTrue(reuse(50, false, false, false, true), "reopened within the time: as it was")
+        XCTAssertFalse(reuse(100, false, false, false, true), "after 90 s: back to the root")
+        XCTAssertFalse(reuse(50, true, false, false, true), "a row ran: fresh")
+        XCTAssertFalse(reuse(50, false, true, false, true), "opened on a given screen: that screen")
+        XCTAssertFalse(reuse(50, false, false, true, true), "a launcher hotkey: fresh")
+        XCTAssertFalse(reuse(50, false, false, false, false), "nothing kept")
+        XCTAssertEqual(AOMLauncherController.keepSeconds, 90)
+    }
+}
+
+/// 7.11 (user report): a Back gesture's ⌘[ while a text field has the focus.
+final class AOM711ShortcutMenuTests: XCTestCase {
+    func testMenuShortcutMatching() {
+        XCTAssertEqual(ShortcutMenuPress.menuModifiers([.command]), 0)
+        XCTAssertEqual(ShortcutMenuPress.menuModifiers([.command, .shift]), 1)
+        XCTAssertEqual(ShortcutMenuPress.menuModifiers([.command, .option, .control]), 6)
+        XCTAssertNil(ShortcutMenuPress.menuModifiers([.control]), "only ⌘ shortcuts have menu commands")
+        XCTAssertTrue(ShortcutMenuPress.matches(cmdChar: "[", cmdModifiers: 0, character: "[", modifiers: 0))
+        XCTAssertTrue(ShortcutMenuPress.matches(cmdChar: "W", cmdModifiers: nil, character: "w", modifiers: 0))
+        XCTAssertFalse(ShortcutMenuPress.matches(cmdChar: "[", cmdModifiers: 1, character: "[", modifiers: 0), "⇧⌘[ is another command")
+        XCTAssertFalse(ShortcutMenuPress.matches(cmdChar: nil, cmdModifiers: 0, character: "[", modifiers: 0))
+        XCTAssertEqual(ShortcutMenuPress.character(for: 33), "[", "on the ASCII layout whatever the input source")
+    }
+}

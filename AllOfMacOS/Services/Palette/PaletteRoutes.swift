@@ -874,10 +874,10 @@ final class PaletteRouteModels: ObservableObject {
     private var processTimer: Timer?
     private var processTicket = 0
 
-    func watchProcesses(_ on: Bool) {
+    func watchProcesses(_ on: Bool, keepingRows: Bool = false) {
         processTimer?.invalidate()
         processTimer = nil
-        guard on else { processes = nil; return }
+        guard on else { if !keepingRows { processes = nil }; return }
         loadProcesses()
         // Fresh while the screen is open; reading ~500 processes takes a few ms.
         let timer = Timer(timeInterval: 3, repeats: true) { _ in MainActor.assumeIsolated { [weak self] in self?.loadProcesses() } }

@@ -20,6 +20,12 @@ extension QuickCommandPalette {
     /// The launcher's own keys (PaletteNavigationKeys); true when used.
     func handleKey(_ event: NSEvent, items: [PaletteItem], selected: PaletteItem?) -> Bool {
         let mods = event.modifierFlags.intersection([.shift, .command, .control, .option, .function])
+        // 7.11: ⌘[ goes back a screen even though the search field has the
+        // cursor — the Back gesture (and mouse button) sends ⌘[ (user report).
+        if event.keyCode == 33, mods == .command, navigation.current != .hotkeyFinder, navigation.depth > 0 {
+            if !event.isARepeat { if showsActions { showsActions = false } else { pop() } }
+            return true
+        }
         // 7.3: Find a Shortcut — any key combination is looked up, nothing is set.
         if navigation.current == .hotkeyFinder {
             if event.keyCode == 53, mods.isEmpty { if !event.isARepeat { pop() }; return true }
