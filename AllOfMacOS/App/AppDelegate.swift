@@ -294,6 +294,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 mainWindow?.makeKeyAndOrderFront(nil)
             }
             if let appState { AOMPageSwitchBench.runIfRequested(appState) }
+            // 7.10: `--aom-menubar-selftest <folder>` (real launches only).
+            if !PresetManager.isUIPreview { MainActor.assumeIsolated { MenuBarSelfTest.runIfRequested() } }
             // 7.9: `--aom-preview-menubar-sample` fills the Menu Bar page with
             // 18 items (long Korean names) and a full weather reading, so it is
             // checked with real-looking data; `--aom-preview-menubar-bar` opens the Bar.

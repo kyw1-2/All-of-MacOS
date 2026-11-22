@@ -77,8 +77,13 @@ enum MenuBarLayoutPolicy {
     }
 
     /// Items macOS keeps at the right end; they can't change lanes.
-    static func lockedReason(_ item: AOMMenuShelfItem, ownPID: pid_t) -> String? {
+    static func lockedReason(_ item: AOMMenuShelfItem, ownPID: pid_t, native: Bool = false) -> String? {
         if isHiderControl(item, ownPID: ownPID) { return "AOM's own control" }
+        if native {
+            // macOS 27 hides by app and always keeps its own items.
+            if MenuBarSectionStore.systemOwners.contains(item.ownerBundleID) { return "macOS keeps its own items visible" }
+            if item.pid == ownPID { return "All of MacOS stays visible (its ❮ is the switch)" }
+        }
         switch item.identity?.name {
         case "Clock", "Control Center": return "macOS keeps it at the right end"
         default: return nil
@@ -188,6 +193,33 @@ enum MenuBarItemImager {
 
     static var hasPermission: Bool { CGPreflightScreenCaptureAccess() }
 
+    /// Pure-ish: pixels close to the picture's border colour (the menu bar
+    /// behind the icon) become transparent, with a soft edge.
+    static func removeBackground(_ image: CGImage) -> CGImage? {
+        let width = image.width, height = image.height
+        guard width > 2, height > 2,
+              let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                                      space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+              let data = context.data else { return nil }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        let pixels = data.bindMemory(to: UInt8.self, capacity: width * height * 4)
+        var border: [(Int, Int, Int)] = []
+        for x in 0..<width { for y in [0, height - 1] { let i = (y * width + x) * 4; border.append((Int(pixels[i]), Int(pixels[i + 1]), Int(pixels[i + 2]))) } }
+        for y in 0..<height { for x in [0, width - 1] { let i = (y * width + x) * 4; border.append((Int(pixels[i]), Int(pixels[i + 1]), Int(pixels[i + 2]))) } }
+        func median(_ values: [Int]) -> Int { values.sorted()[values.count / 2] }
+        let bg = (median(border.map(\.0)), median(border.map(\.1)), median(border.map(\.2)))
+        for index in 0..<(width * height) {
+            let i = index * 4
+            let d = abs(Int(pixels[i]) - bg.0) + abs(Int(pixels[i + 1]) - bg.1) + abs(Int(pixels[i + 2]) - bg.2)
+            // Within 24 of the bar: gone; past 72: kept; between: a ramp.
+            let keep = d <= 24 ? 0.0 : d >= 72 ? 1.0 : Double(d - 24) / 48
+            if keep < 1 {
+                for c in 0..<4 { pixels[i + c] = UInt8(Double(pixels[i + c]) * keep) }
+            }
+        }
+        return context.makeImage()
+    }
+
     /// `frames` in AX coordinates (top-left origin of the main display).
     /// Display scales and notches, read on the main thread (Gemini 7.9: NSScreen
     /// isn't for the capture's background executor).
@@ -238,7 +270,10 @@ enum MenuBarItemImager {
                 let local = CGRect(x: (frame.minX - bounds.minX) * sx, y: (frame.minY - bounds.minY) * sy,
                                    width: frame.width * sx, height: frame.height * sy).integral
                 guard let crop = image.cropping(to: local) else { continue }
-                result.images[key] = NSImage(cgImage: crop, size: NSSize(width: CGFloat(crop.width) / sx, height: CGFloat(crop.height) / sy))
+                // 7.10: the bar behind the icon is keyed out, so pictures sit on
+                // any background without a box around them.
+                let clean = removeBackground(crop) ?? crop
+                result.images[key] = NSImage(cgImage: clean, size: NSSize(width: CGFloat(crop.width) / sx, height: CGFloat(crop.height) / sy))
             }
             if result.background == nil {
                 // The right side, where the status items sit — not the notch or app menus.
@@ -343,10 +378,11 @@ final class MenuBarLayoutModel: ObservableObject {
         // for a moment only to take pictures still missing or 30 minutes old.
         let needsPictures = items.isEmpty || items.contains { $0.section != .shown && images[$0.imageKey] == nil }
             || Date().timeIntervalSince(lastReveal) > 30 * 60
-        let reveal = allowReveal && needsPictures && hider.isRunning && hider.isCollapsed
+        let reveal = allowReveal && needsPictures && hider.isRunning
+            && (hider.native ? MenuBarNativeHiding.shared.isHolding : hider.isCollapsed)
         if reveal { lastReveal = Date() }
         if reveal { hider.revealForInspection() }
-        DispatchQueue.main.asyncAfter(deadline: .now() + (reveal ? 0.45 : 0)) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + (reveal ? (hider.native ? 0.9 : 0.45) : 0)) { [weak self] in
             self?.scan(ticket: ticket) { [weak self] in
                 if reveal { MenuBarHider.shared.endInspection() }
                 self?.busy = false
@@ -366,16 +402,29 @@ final class MenuBarLayoutModel: ObservableObject {
                     guard let self, ticket == self.generation else { done(); return }
                     // AOM's own icons (its menu, weather) are items like any other;
                     // only the Hider's chevron and dividers are left out.
-                    let laid = snapshot.items.filter { !MenuBarLayoutPolicy.isHiderControl($0, ownPID: own) }.map { item in
-                        MenuBarLayoutItem(item: item,
-                                          section: MenuBarLayoutPolicy.section(of: item.frame, divider: hiderFrames.divider, always: hiderFrames.always),
-                                          lockedReason: MenuBarLayoutPolicy.lockedReason(item, ownPID: own))
+                    let native = MenuBarNativeHiding.isAvailable
+                    if native, !UserDefaults.standard.bool(forKey: "AOMMenuBarSections.seeded"),
+                       let chevron = hiderFrames.toggle, MenuBarSectionStore.all.isEmpty, !MenuBarNativeHiding.shared.isHolding {
+                        // First run on macOS 27: what already sat left of ❮ starts Hidden.
+                        let seed = MenuBarSectionStore.seed(items: snapshot.items.filter { $0.pid != own }.compactMap { item in
+                            item.frame.map { (item.ownerBundleID, $0.minX) } }, chevronMinX: chevron.minX)
+                        for (bundle, section) in seed { MenuBarSectionStore.set(section, for: bundle) }
+                        UserDefaults.standard.set(true, forKey: "AOMMenuBarSections.seeded")
+                    }
+                    let sections = MenuBarSectionStore.all
+                    let laid = snapshot.items.filter { !MenuBarLayoutPolicy.isHiderControl($0, ownPID: own) }.map { item -> MenuBarLayoutItem in
+                        let locked = MenuBarLayoutPolicy.lockedReason(item, ownPID: own, native: native)
+                        let section: MenuBarSection = native
+                            ? (locked == nil ? sections[item.ownerBundleID] ?? .shown : .shown)
+                            : MenuBarLayoutPolicy.section(of: item.frame, divider: hiderFrames.divider, always: hiderFrames.always)
+                        return MenuBarLayoutItem(item: item, section: section, lockedReason: locked)
                     }
                     self.items = laid
                     if snapshot.appsLeft > 0 { self.status = "\(snapshot.appsLeft) app\(snapshot.appsLeft == 1 ? "" : "s") didn't answer in time; Refresh to try again." }
                     var frames: [String: CGRect] = [:]
-                    // While the Hider is collapsed only the Shown items are where they look.
-                    let collapsed = MenuBarHider.shared.isRunning && MenuBarHider.shared.isCollapsed
+                    // While anything is hidden only the Shown items are where they look.
+                    let collapsed = MenuBarHider.shared.isRunning
+                        && (native ? MenuBarNativeHiding.shared.isHolding : MenuBarHider.shared.isCollapsed)
                     for entry in laid where !collapsed || entry.section == .shown {
                         if let frame = entry.item.frame { frames[entry.imageKey] = frame }
                     }
@@ -403,6 +452,7 @@ final class MenuBarLayoutModel: ObservableObject {
         guard !isSample else { sampleMove(id, to: section, before: neighbor); return }
         guard !busy, let entry = items.first(where: { $0.id == id }) else { return }
         if let reason = entry.lockedReason { status = "\(entry.item.displayName) can't move: \(reason)."; return }
+        if MenuBarNativeHiding.isAvailable { assign(entry.item.ownerBundleID, to: section, name: entry.item.ownerName); return }
         let hider = MenuBarHider.shared
         guard hider.isRunning || section == .shown else {
             status = "Turn on Hide Icons to give the menu bar hidden sections."
@@ -473,6 +523,37 @@ final class MenuBarLayoutModel: ObservableObject {
         }
     }
 
+    /// 7.10 (macOS 27): an app's section is a setting, applied at once —
+    /// all of its icons move together, nothing is dragged in the menu bar.
+    func assign(_ bundle: String, to section: MenuBarSection, name: String) {
+        MenuBarSectionStore.set(section, for: bundle)
+        for index in items.indices where items[index].item.ownerBundleID == bundle && items[index].lockedReason == nil {
+            items[index].section = section
+        }
+        let hider = MenuBarHider.shared
+        if hider.isRunning { hider.reapply() }
+        switch section {
+        case .shown: status = "\(name) stays in the menu bar."
+        case .hidden: status = hider.isRunning ? "\(name) hides; ❮ or the Bar shows it." : "\(name) will hide once Hide icons is on."
+        case .alwaysHidden: status = hider.isRunning ? "\(name) shows only with ⌥-click or Show All." : "\(name) will hide once Hide icons is on."
+        }
+    }
+
+    /// One row per app for the list under the lanes (Bartender's item list).
+    var apps: [(bundle: String, name: String, items: [MenuBarLayoutItem])] {
+        var order: [String] = []
+        var groups: [String: [MenuBarLayoutItem]] = [:]
+        for entry in items.sorted(by: { ($0.item.frame?.minX ?? 0) > ($1.item.frame?.minX ?? 0) }) {
+            let key = entry.item.ownerBundleID
+            if groups[key] == nil { order.append(key) }
+            groups[key, default: []].append(entry)
+        }
+        return order.map { key in
+            let name = MenuBarSectionStore.systemOwners.contains(key) ? "macOS" : groups[key]?.first?.item.ownerName ?? key
+            return (key, name, groups[key] ?? [])
+        }
+    }
+
     // MARK: Sample (isolated previews)
 
     /// `--aom-preview-menubar-sample`: 18 items with long Korean names, as a
@@ -515,13 +596,17 @@ final class MenuBarLayoutModel: ObservableObject {
         items = laid
         images = pictures
         status = nil
-        barColor = NSColor(white: 0.5, alpha: 0.15)
+        // A blue wallpaper behind a translucent bar, white icons — as on this Mac.
+        barColor = NSColor(srgbRed: 0.16, green: 0.38, blue: 0.68, alpha: 1)
         lastRefresh = Date()
     }
 
     private func sampleMove(_ id: String, to section: MenuBarSection, before neighbor: String?) {
         guard let index = items.firstIndex(where: { $0.id == id }), items[index].lockedReason == nil else { return }
-        items[index].section = section
+        let bundle = items[index].item.ownerBundleID
+        for other in items.indices where items[other].item.ownerBundleID == bundle && items[other].lockedReason == nil {
+            items[other].section = section
+        }
         status = "Moved \(items[index].item.displayName) to \(section.title)."
     }
 
@@ -533,7 +618,7 @@ final class MenuBarLayoutModel: ObservableObject {
                 .withSymbolConfiguration(.init(pointSize: 13, weight: .medium)) else { return false }
             let tinted = NSImage(size: glyph.size, flipped: false) { inner in
                 glyph.draw(in: inner)
-                NSColor.labelColor.set()
+                NSColor.white.set()
                 inner.fill(using: .sourceAtop)
                 return true
             }

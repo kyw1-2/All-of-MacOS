@@ -233,6 +233,16 @@ final class MenuBarStripController: NSObject, ObservableObject, NSWindowDelegate
     /// Hider's timer, which waits while its menu is open.
     func openItem(_ item: AOMMenuShelfItem, section: MenuBarSection) {
         let hider = MenuBarHider.shared
+        // 7.10 (macOS 27): the app is let back into the menu bar for this
+        // click, then hidden again once its menu has closed.
+        if hider.native, section != .shown, MenuBarNativeHiding.shared.isHolding {
+            MenuBarNativeHiding.shared.showTemporarily(item.ownerBundleID) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                    AOMMenuShelfController.shared.activate(item, retry: "Open the bar and pick it again.")
+                }
+            }
+            return
+        }
         // Gemini 7.9: an always-hidden item needs Show All even when the
         // ordinary hidden ones are already out.
         let reveal = hider.isRunning && ((section == .hidden && hider.isCollapsed)
