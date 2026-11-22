@@ -194,72 +194,83 @@ enum MenuBarTriggerPolicy {
     }
 }
 
-/// How far the front app's menus reach (File, Edit … on the left).
+/// How far the front app's menus reach (File, Edit … on the left), cached
+/// per front app for a few seconds: it is asked on every reveal.
 enum MenuBarAppMenus {
+    @MainActor private static var cache: (pid: pid_t, maxX: CGFloat, at: TimeInterval)?
+
     @MainActor
     static func maxX(on screen: NSScreen) -> CGFloat {
-        guard AXIsProcessTrusted(), let app = NSWorkspace.shared.frontmostApplication else { return screen.frame.minX + 400 }
+        let fallback = screen.frame.minX + 400
+        guard AXIsProcessTrusted(), let app = NSWorkspace.shared.frontmostApplication else { return fallback }
+        let now = ProcessInfo.processInfo.systemUptime
+        if let cache, cache.pid == app.processIdentifier, now - cache.at < 5 { return cache.maxX }
         let element = AXUIElementCreateApplication(app.processIdentifier)
         AXUIElementSetMessagingTimeout(element, 0.25)
-        var bar: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, kAXMenuBarAttribute as CFString, &bar) == .success, let bar else {
-            return screen.frame.minX + 400
-        }
-        var children: CFTypeRef?
-        // swiftlint:disable:next force_cast
-        guard AXUIElementCopyAttributeValue(bar as! AXUIElement, kAXChildrenAttribute as CFString, &children) == .success,
-              let items = children as? [AXUIElement], let last = items.last else { return screen.frame.minX + 400 }
-        var position: CFTypeRef?, size: CFTypeRef?
-        var origin = CGPoint.zero, extent = CGSize.zero
-        // swiftlint:disable force_cast
-        if AXUIElementCopyAttributeValue(last, kAXPositionAttribute as CFString, &position) == .success, let position {
-            AXValueGetValue(position as! AXValue, .cgPoint, &origin)
-        }
-        if AXUIElementCopyAttributeValue(last, kAXSizeAttribute as CFString, &size) == .success, let size {
-            AXValueGetValue(size as! AXValue, .cgSize, &extent)
-        }
-        // swiftlint:enable force_cast
-        return origin.x + extent.width - screen.frame.minX
+        guard let bar = AOMMenuShelfProbe.attribute(element, kAXMenuBarAttribute as CFString),
+              CFGetTypeID(bar) == AXUIElementGetTypeID(),
+              // swiftlint:disable:next force_cast
+              let items = AOMMenuShelfProbe.attribute(bar as! AXUIElement, kAXChildrenAttribute as CFString) as? [AXUIElement],
+              let last = items.last, let frame = AOMMenuShelfProbe.frame(last) else { return fallback }
+        let value = frame.maxX - screen.frame.minX
+        cache = (app.processIdentifier, value, now)
+        return value
     }
 }
 
-/// What lies under a point of the menu bar (Accessibility hit test).
+/// What lies under a point of the menu bar (Accessibility hit test). Safe
+/// off the main thread; every call is capped at a quarter second.
 enum MenuBarHitTest {
-    private static let systemWide = AXUIElementCreateSystemWide()
+    private static let systemWide: AXUIElement = {
+        let element = AXUIElementCreateSystemWide()
+        AXUIElementSetMessagingTimeout(element, 0.25)
+        return element
+    }()
 
     private static func role(_ element: AXUIElement) -> String? {
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &value) == .success else { return nil }
-        return value as? String
+        AOMMenuShelfProbe.attribute(element, kAXRoleAttribute as CFString) as? String
     }
 
-    /// True when the point (AppKit coordinates) is menu bar space with no
-    /// item or app menu under it. Unknown answers count as not empty.
-    static func isEmpty(at point: CGPoint) -> Bool {
+    /// True when the point (Accessibility coordinates, top-left origin) is
+    /// menu bar space with no item or app menu under it. Unknown answers
+    /// count as not empty.
+    static func isEmpty(atAX point: CGPoint) -> Bool {
         guard AXIsProcessTrusted() else { return false }
-        let primary = NSScreen.screens.first?.frame.height ?? 0
         var element: AXUIElement?
-        let result = AXUIElementCopyElementAtPosition(systemWide, Float(point.x), Float(primary - point.y), &element)
+        let result = AXUIElementCopyElementAtPosition(systemWide, Float(point.x), Float(point.y), &element)
         // Over nothing at all (the empty bar belongs to no app's tree).
         guard result == .success, let element else { return result == .noValue }
-        var parent: CFTypeRef?
-        var parentRole: String?
-        if AXUIElementCopyAttributeValue(element, kAXParentAttribute as CFString, &parent) == .success, let parent {
-            parentRole = role(parent as! AXUIElement) // swiftlint:disable:this force_cast
-        }
+        let parent = AOMMenuShelfProbe.attribute(element, kAXParentAttribute as CFString)
+        // swiftlint:disable:next force_cast
+        let parentRole = parent.flatMap { CFGetTypeID($0) == AXUIElementGetTypeID() ? role($0 as! AXUIElement) : nil }
         return MenuBarTriggerPolicy.isEmptySpace(role: role(element), parentRole: parentRole)
+    }
+
+    /// Asks off the main thread and answers on it.
+    @MainActor
+    static func whenEmpty(at point: CGPoint, then: @escaping @MainActor () -> Void) {
+        let primary = NSScreen.screens.first?.frame.height ?? 0
+        let ax = CGPoint(x: point.x, y: primary - point.y)
+        DispatchQueue.global(qos: .userInitiated).async {
+            guard isEmpty(atAX: ax) else { return }
+            DispatchQueue.main.async { MainActor.assumeIsolated { then() } }
+        }
     }
 }
 
 /// Bartender's ways to show hidden icons without aiming at ❮, plus the
 /// ⌘-drag and wide-display rules. Global mouse monitors only watch; the
-/// click or scroll still reaches the menu bar.
+/// click or scroll still reaches the menu bar. Only the events a setting
+/// needs are watched (pointer moves only while hover is on).
 @MainActor
 final class MenuBarTriggers {
     static let shared = MenuBarTriggers()
 
-    private var monitors: [Any] = []
+    private var monitor: Any?
+    private var mask: NSEvent.EventTypeMask = []
     private var screenObserver: NSObjectProtocol?
+    /// The menu bar band of each screen, refreshed when displays change.
+    private var bands: [CGRect] = []
     private var hoverWork: DispatchWorkItem?
     private var hoverHideWork: DispatchWorkItem?
     /// Shown by a hover; hidden again when the pointer leaves the menu bar.
@@ -272,21 +283,22 @@ final class MenuBarTriggers {
 
     func start() {
         stop()
-        let events: NSEvent.EventTypeMask = [.leftMouseDown, .leftMouseUp, .scrollWheel, .mouseMoved, .leftMouseDragged]
-        if let monitor = NSEvent.addGlobalMonitorForEvents(matching: events, handler: { event in
-            let type = event.type, flags = event.modifierFlags, delta = event.scrollingDeltaY + event.scrollingDeltaX
-            MainActor.assumeIsolated { MenuBarTriggers.shared.handle(type, flags: flags, scroll: delta) }
-        }) { monitors.append(monitor) }
+        readBands()
         screenObserver = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
                                                                 object: nil, queue: .main) { _ in
-            MainActor.assumeIsolated { MenuBarTriggers.shared.applyWideRule() }
+            MainActor.assumeIsolated {
+                MenuBarTriggers.shared.readBands()
+                MenuBarTriggers.shared.applyWideRule()
+            }
         }
+        reconfigure()
         applyWideRule()
     }
 
     func stop() {
-        for monitor in monitors { NSEvent.removeMonitor(monitor) }
-        monitors = []
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+        mask = []
         if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
         screenObserver = nil
         hoverWork?.cancel()
@@ -296,44 +308,71 @@ final class MenuBarTriggers {
         wideHold = false
     }
 
-    private static func band(containing point: CGPoint) -> CGRect? {
-        guard let screen = NSScreen.screens.first(where: { NSMouseInRect(point, $0.frame, false) }) else { return nil }
-        let band = MenuBarTriggerPolicy.band(screen: screen.frame, visibleMaxY: screen.visibleFrame.maxY)
-        return band.contains(point) ? band : nil
+    /// Pure: the events the current settings need. Clicks are always
+    /// watched while hiding (the clock hand-off needs them).
+    static func mask(click: Bool, scroll: Bool, hover: Bool, commandDrag: Bool) -> NSEvent.EventTypeMask {
+        var mask: NSEvent.EventTypeMask = [.leftMouseDown]
+        if commandDrag { mask.insert(.leftMouseUp) }
+        if scroll { mask.insert(.scrollWheel) }
+        if hover { mask.formUnion([.mouseMoved, .leftMouseDragged]) }
+        _ = click
+        return mask
     }
+
+    /// Re-installs the monitor when a setting changed what it must watch.
+    func reconfigure() {
+        guard MenuBarHider.shared.isRunning else { return }
+        let wanted = Self.mask(click: MenuBarPrefs.showOnEmptyClick, scroll: MenuBarPrefs.showOnScroll,
+                               hover: MenuBarPrefs.showOnHover, commandDrag: MenuBarPrefs.commandDragShowsAll)
+        guard wanted != mask || monitor == nil else { return }
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        mask = wanted
+        monitor = NSEvent.addGlobalMonitorForEvents(matching: wanted) { event in
+            // AOM's own synthetic clicks (item hotkeys, ⌘-drag moves) are not the user's.
+            if event.cgEvent?.getIntegerValueField(.eventSourceUserData) == SyntheticInput.selfTag { return }
+            let type = event.type, flags = event.modifierFlags, delta = event.scrollingDeltaY + event.scrollingDeltaX
+            MainActor.assumeIsolated { MenuBarTriggers.shared.handle(type, flags: flags, scroll: delta) }
+        }
+    }
+
+    private func readBands() {
+        bands = NSScreen.screens.map { MenuBarTriggerPolicy.band(screen: $0.frame, visibleMaxY: $0.visibleFrame.maxY) }
+    }
+
+    private func inBar(_ point: CGPoint) -> Bool { bands.contains { $0.contains(point) } }
 
     private func handle(_ type: NSEvent.EventType, flags: NSEvent.ModifierFlags, scroll: CGFloat) {
         let hider = MenuBarHider.shared
         guard hider.isRunning else { return }
         let point = NSEvent.mouseLocation
-        let inBar = Self.band(containing: point) != nil
         switch type {
         case .leftMouseDown:
-            if inBar, flags.contains(.command), MenuBarPrefs.commandDragShowsAll { beginArranging(); return }
-            guard inBar, MenuBarPrefs.showOnEmptyClick, !flags.contains(.command) else { return }
-            // Let the click land first; then ask what was under it.
-            DispatchQueue.main.async {
-                guard MenuBarHitTest.isEmpty(at: point) else { return }
-                MenuBarHider.shared.toggleFromTrigger()
+            guard inBar(point) else { return }
+            if flags.contains(.command) {
+                if MenuBarPrefs.commandDragShowsAll { beginArranging() }
+                return
             }
+            // macOS 27 ignores the clock while anything is hidden: hand it over.
+            if MenuBarNativeHiding.shared.handleClockClick(at: point) { return }
+            guard MenuBarPrefs.showOnEmptyClick else { return }
+            MenuBarHitTest.whenEmpty(at: point) { MenuBarHider.shared.toggleFromTrigger() }
         case .leftMouseUp:
             if arranging { endArranging() }
         case .scrollWheel:
-            guard inBar, MenuBarPrefs.showOnScroll, abs(scroll) > 0.5 else { return }
+            guard abs(scroll) > 0.5, inBar(point) else { return }
             let now = ProcessInfo.processInfo.systemUptime
             guard now - lastScroll > 0.6 else { return }
             lastScroll = now
             // Scrolling down (or right) shows, up (or left) hides — as in Bartender.
             if scroll < 0 { hider.revealFromTrigger() } else { hider.hideFromTrigger() }
         case .mouseMoved, .leftMouseDragged:
-            guard MenuBarPrefs.showOnHover else { return }
-            if inBar { pointerInBar(point) } else { pointerLeftBar() }
+            if inBar(point) { pointerInBar() } else if revealedByHover || hoverWork != nil { pointerLeftBar() }
         default:
             break
         }
     }
 
-    private func pointerInBar(_ point: CGPoint) {
+    private func pointerInBar() {
         hoverHideWork?.cancel()
         hoverHideWork = nil
         guard MenuBarHider.shared.isCollapsed, hoverWork == nil else { return }
@@ -341,10 +380,11 @@ final class MenuBarTriggers {
             guard let self else { return }
             self.hoverWork = nil
             let now = NSEvent.mouseLocation
-            guard Self.band(containing: now) != nil, MenuBarHider.shared.isCollapsed,
-                  NSEvent.pressedMouseButtons == 0, MenuBarHitTest.isEmpty(at: now) else { return }
-            self.revealedByHover = true
-            MenuBarHider.shared.revealFromTrigger()
+            guard self.inBar(now), MenuBarHider.shared.isCollapsed, NSEvent.pressedMouseButtons == 0 else { return }
+            MenuBarHitTest.whenEmpty(at: now) {
+                MenuBarTriggers.shared.revealedByHover = true
+                MenuBarHider.shared.revealFromTrigger()
+            }
         }
         hoverWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + MenuBarPrefs.hoverShowDelay, execute: work)
@@ -357,11 +397,9 @@ final class MenuBarTriggers {
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.hoverHideWork = nil
-            // Still away, and no menu or popover of a shown icon open.
-            guard Self.band(containing: NSEvent.mouseLocation) == nil, !MenuBarHider.isMenuBarBusy() else {
-                if Self.band(containing: NSEvent.mouseLocation) == nil { self.pointerLeftBar() }
-                return
-            }
+            guard !self.inBar(NSEvent.mouseLocation) else { return }
+            // A menu or popover of a shown icon is open: look again shortly.
+            guard !MenuBarHider.isMenuBarBusy() else { self.pointerLeftBar(); return }
             self.revealedByHover = false
             MenuBarHider.shared.hideFromTrigger()
         }

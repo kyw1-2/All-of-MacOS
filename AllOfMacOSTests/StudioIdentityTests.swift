@@ -73,14 +73,4 @@ final class StudioIdentityTests: XCTestCase {
             XCTAssertEqual(ids.count, Set(ids).count, "\(tab) lists an action twice")
         }
     }
-
-    func testWorkspaceGreetingFollowsTheClock() {
-        func at(_ hour: Int) -> Date {
-            Calendar.current.date(bySettingHour: hour, minute: 0, second: 0, of: Date())!
-        }
-        XCTAssertEqual(AOMWorkspaceGreeting.text(at: at(8)), "Good morning")
-        XCTAssertEqual(AOMWorkspaceGreeting.text(at: at(14)), "Good afternoon")
-        XCTAssertEqual(AOMWorkspaceGreeting.text(at: at(20)), "Good evening")
-        XCTAssertEqual(AOMWorkspaceGreeting.text(at: at(2)), "Working late")
-    }
 }

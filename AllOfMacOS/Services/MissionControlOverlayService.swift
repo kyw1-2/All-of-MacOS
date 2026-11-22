@@ -96,8 +96,6 @@ final class MissionControlOverlayService: ObservableObject {
         running.contains { $0.map(deferringBundleIDs.contains) ?? false }
     }
 
-    /// True while Mission Control Plus runs (Settings says so).
-    var defersToOtherApp: Bool { suspensions.contains(.otherApp) }
     private var suspensions: Set<Suspension> = []
     private var lifecycleObservers: [NSObjectProtocol] = []
     private var spaceObserver: NSObjectProtocol?

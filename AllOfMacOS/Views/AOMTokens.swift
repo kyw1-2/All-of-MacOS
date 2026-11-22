@@ -79,7 +79,6 @@ enum AOMSpace {
 
 enum AOMSize {
     static let directoryTileMin: CGFloat = 220
-    static let directoryIcon: CGFloat = 32
     static let workspaceModeWidth: CGFloat = 240
     /// Global sidebar, wide enough for task groups and the search label.
     static let sidebarMin: CGFloat = 220
@@ -139,9 +138,6 @@ enum AOMSize {
 
     /// The ⌘K palette's empty-state column.
     static let quickActionMin: CGFloat = 132
-    /// Workspace quick actions: a 36 pt button over its name.
-    static let quickActionButton: CGFloat = 36
-    static let quickActionCell: CGFloat = 76
     /// A capture mode button's round face.
     static let modeButton: CGFloat = 36
     /// A section title row: a 16 pt ⓘ or an 18 pt link, so a title with or
@@ -576,10 +572,6 @@ enum AOMIcon {
     static let headerBadge: CGFloat = 28
     /// Empty-state glyph.
     static let empty: CGFloat = 28
-    /// The symbol frame inside a text button (a capsule link): one Callout
-    /// line tall, so a tall glyph (`rectangle.stack`) cannot make its button
-    /// taller than its neighbours.
-    static let inlineGlyph: CGFloat = 14
     /// Hit area for icon buttons: one regular control high.
     static let hitArea: CGFloat = 24
     /// Status dot inside pills and badges.
@@ -588,7 +580,6 @@ enum AOMIcon {
     /// Large status header (Focus timer, Folder Rules today): the squircle
     /// and the progress ring around it.
     static let statusBadge: CGFloat = 36
-    static let statusRing: CGFloat = 48
     /// Rows in a module's item list that carry a small squircle.
     static let listBadge: CGFloat = 20
     /// The glyph frame of a floating HUD (mic mute, focus start).
@@ -682,8 +673,6 @@ enum AOMTranslucency {
 
     static var pageAlphaLight: CGFloat { level.page.light }
     static var pageAlphaDark: CGFloat { level.page.dark }
-    static var cardAlphaLight: CGFloat { level.card.light }
-    static var cardAlphaDark: CGFloat { level.card.dark }
 
     /// The user's switch, before the accessibility settings.
     static var userOn: Bool { UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? defaultOn }

@@ -52,8 +52,8 @@ final class MenuBarHider: NSObject {
     /// Pointer on the menu bar, any menu or menu-bar popover open, or a
     /// button held.
     static func isMenuBarBusy() -> Bool {
-        MenuBarRehidePolicy.isBusy(pointerInMenuBar: pointerInMenuBar(), menuOpen: menuIsOpen(),
-                                   buttonsDown: NSEvent.pressedMouseButtons != 0)
+        // Cheapest first: the window list is read only when nothing else says busy.
+        NSEvent.pressedMouseButtons != 0 || pointerInMenuBar() || menuIsOpen()
     }
 
     func start() {
@@ -64,14 +64,7 @@ final class MenuBarHider: NSObject {
         if native { startNative(); return }
         // Items are added right to left, so the chevron comes first and the
         // divider lands on its left.
-        let toggle = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        toggle.autosaveName = "AOMMenuBarHiderToggle"
-        toggle.button?.image = NSImage(systemSymbolName: "chevron.left", accessibilityDescription: "Show hidden menu bar items")
-        toggle.button?.target = self
-        toggle.button?.action = #selector(clicked)
-        toggle.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
-        toggle.button?.toolTip = "Hidden menu bar items · ⌘-drag an item left of the divider to hide it · ⌥-click shows all · right-click for options"
-        installHover(on: toggle.button)
+        let toggle = makeToggle(tip: "Hidden menu bar items · ⌘-drag an item left of the divider to hide it · ⌥-click shows all · right-click for options")
         let divider = NSStatusBar.system.statusItem(withLength: Self.dividerLength)
         divider.autosaveName = "AOMMenuBarHiderDivider"
         divider.button?.image = NSImage(systemSymbolName: "line.diagonal", accessibilityDescription: "Menu Bar Hider divider")
@@ -93,14 +86,7 @@ final class MenuBarHider: NSObject {
     }
 
     private func startNative() {
-        let toggle = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        toggle.autosaveName = "AOMMenuBarHiderToggle"
-        toggle.button?.target = self
-        toggle.button?.action = #selector(clicked)
-        toggle.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
-        toggle.button?.toolTip = "Hidden menu bar icons · click to show or hide · ⌥-click shows all · right-click for options"
-        installHover(on: toggle.button)
-        self.toggle = toggle
+        toggle = makeToggle(tip: "Hidden menu bar icons · click to show or hide · ⌥-click shows all · right-click for options")
         isCollapsed = false
         updateAppearance()
         if UserDefaults.standard.bool(forKey: Self.usedKey) {
@@ -108,6 +94,18 @@ final class MenuBarHider: NSObject {
             startCollapse = work
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
         }
+    }
+
+    /// The chevron both hiding methods share.
+    private func makeToggle(tip: String) -> NSStatusItem {
+        let toggle = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        toggle.autosaveName = "AOMMenuBarHiderToggle"
+        toggle.button?.target = self
+        toggle.button?.action = #selector(clicked)
+        toggle.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        toggle.button?.toolTip = tip
+        installHover(on: toggle.button)
+        return toggle
     }
 
     fileprivate func checkChevronSurvived() {
@@ -175,6 +173,22 @@ final class MenuBarHider: NSObject {
 
     /// Icon picture or hover choice changed in Settings.
     func refreshAppearance() { updateAppearance() }
+
+    /// Brings one item into view, then runs `then` (Bartender's "show and
+    /// click"): on macOS 27 only its app is let back for a while; otherwise
+    /// its section shows (Always Hidden needs Show All) on the rehide timer.
+    func reveal(_ item: AOMMenuShelfItem, section: MenuBarSection, then: @escaping @MainActor () -> Void) {
+        if native, section != .shown, MenuBarNativeHiding.shared.isHolding {
+            MenuBarNativeHiding.shared.showTemporarily(item.ownerBundleID) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { MainActor.assumeIsolated { then() } }
+            }
+            return
+        }
+        let needed = isRunning && ((section == .hidden && isCollapsed)
+            || (section == .alwaysHidden && (isCollapsed || !showsAll)))
+        if needed { expand(all: section == .alwaysHidden) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + (needed ? 0.35 : 0)) { MainActor.assumeIsolated { then() } }
+    }
 
     // MARK: 7.10 — Bartender's triggers
 
@@ -261,11 +275,14 @@ final class MenuBarHider: NSObject {
         set { UserDefaults.standard.set(newValue.rawValue, forKey: revealModeKey) }
     }
 
-    static let hoverKey = "AOMMenuBarHider.hoverReveal"
+    /// Hover reveal (on ❮ or on empty menu bar space) — one setting, in `MenuBarPrefs`.
     static var hoverReveal: Bool {
-        get { UserDefaults.standard.bool(forKey: hoverKey) }
-        set { UserDefaults.standard.set(newValue, forKey: hoverKey) }
+        get { MenuBarPrefs.showOnHover }
+        set { MenuBarPrefs.showOnHover = newValue; MenuBarTriggers.shared.reconfigure() }
     }
+
+    /// "Hide again after" choices, shared by Settings and ❮'s menu.
+    static let rehideChoices: [Double] = [0, 5, 10, 15, 30, 60]
 
     var isRunning: Bool { toggle != nil }
     /// Whether macOS draws the chevron now (the self-test checks AOM's own ❮ survives a hide).
@@ -397,7 +414,7 @@ final class MenuBarHider: NSObject {
         if !native { add("Always-Hidden Section", #selector(toggleAlwaysSection), on: Self.alwaysSectionOn) }
         let rehide = NSMenuItem(title: "Hide Again After", action: nil, keyEquivalent: "")
         let sub = NSMenu()
-        for seconds in [0.0, 10, 15, 30, 60] {
+        for seconds in Self.rehideChoices {
             let entry = NSMenuItem(title: seconds == 0 ? "Never" : "\(Int(seconds)) Seconds", action: #selector(pickRehide(_:)), keyEquivalent: "")
             entry.target = self
             entry.representedObject = seconds
@@ -416,7 +433,7 @@ final class MenuBarHider: NSObject {
 
     @objc private func toggleShown() { if isCollapsed { revealFromTrigger() } else { collapse() } }
     @objc private func searchIcons() { AOMMenuShelfController.shared.show() }
-    @objc private func toggleEmptyClick() { MenuBarPrefs.showOnEmptyClick.toggle() }
+    @objc private func toggleEmptyClick() { MenuBarPrefs.showOnEmptyClick.toggle(); MenuBarTriggers.shared.reconfigure() }
     @objc private func openSetup() { MenuBarNavigation.open(setup: true) }
     @objc private func toggleAlwaysSection() { setAlwaysSection(!Self.alwaysSectionOn) }
     @objc private func toggleRevealMode() { Self.revealMode = Self.revealMode == .bar ? .menuBar : .bar }
@@ -574,8 +591,7 @@ final class MenuBarHider: NSObject {
     fileprivate static func pointerInMenuBar() -> Bool {
         let point = NSEvent.mouseLocation
         guard let screen = NSScreen.screens.first(where: { NSMouseInRect(point, $0.frame, false) }) else { return false }
-        let height = max(24, screen.frame.maxY - screen.visibleFrame.maxY)
-        return point.y >= screen.frame.maxY - height
+        return MenuBarTriggerPolicy.band(screen: screen.frame, visibleMaxY: screen.visibleFrame.maxY).contains(point)
     }
 
     /// Any app's menu on screen (menus sit at the pop-up menu window level),

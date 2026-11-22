@@ -183,7 +183,6 @@ enum AirPlayGapCause: UInt64, Equatable {
         return 7
     }
 
-    static let binEdges: [Double] = [1.1, 1.25, 1.5, 2, 3, 5, 10]
     static let binLabels = ["≤1.1", "≤1.25", "≤1.5", "≤2", "≤3", "≤5", "≤10", ">10"]
 }
 

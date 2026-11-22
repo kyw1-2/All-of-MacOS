@@ -7,28 +7,38 @@ import SwiftUI
 // (HotKeysPreferences.nib) and Advanced (AdvancedPreferences.nib), with the
 // same labels where AOM does the same thing.
 
-/// A settings value read once and written through on change.
+/// A settings value written through on change and read again whenever the
+/// defaults change (❮'s right-click menu changes some of the same settings).
 private struct Pref<Value: Equatable>: DynamicProperty {
     @State private var value: Value
+    private let read: () -> Value
     private let write: (Value) -> Void
 
-    init(read: () -> Value, write: @escaping (Value) -> Void) {
+    init(read: @escaping () -> Value, write: @escaping (Value) -> Void) {
         _value = State(initialValue: read())
+        self.read = read
         self.write = write
     }
 
     var binding: Binding<Value> {
         Binding(get: { value }, set: { value = $0; write($0) })
     }
+
+    func sync() {
+        let fresh = read()
+        if fresh != value { value = fresh }
+    }
 }
+
+private let defaultsChanged = NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification).receive(on: RunLoop.main)
 
 // MARK: - General
 
 struct MenuBarGeneralPane: View {
     @ObservedObject private var modules = AOMModuleSwitches.shared
-    private let click = Pref(read: { MenuBarPrefs.showOnEmptyClick }, write: { MenuBarPrefs.showOnEmptyClick = $0 })
-    private let scroll = Pref(read: { MenuBarPrefs.showOnScroll }, write: { MenuBarPrefs.showOnScroll = $0 })
-    private let hover = Pref(read: { MenuBarPrefs.showOnHover }, write: { MenuBarPrefs.showOnHover = $0 })
+    private let click = Pref(read: { MenuBarPrefs.showOnEmptyClick }, write: { MenuBarPrefs.showOnEmptyClick = $0; MenuBarTriggers.shared.reconfigure() })
+    private let scroll = Pref(read: { MenuBarPrefs.showOnScroll }, write: { MenuBarPrefs.showOnScroll = $0; MenuBarTriggers.shared.reconfigure() })
+    private let hover = Pref(read: { MenuBarHider.hoverReveal }, write: { MenuBarHider.hoverReveal = $0 })
     private let hoverShow = Pref(read: { MenuBarPrefs.hoverShowDelay }, write: { MenuBarPrefs.hoverShowDelay = $0 })
     private let hoverHide = Pref(read: { MenuBarPrefs.hoverHideDelay }, write: { MenuBarPrefs.hoverHideDelay = $0 })
     private let rehide = Pref(read: { MenuBarHider.rehideSeconds }, write: { MenuBarHider.shared.setRehideSeconds($0) })
@@ -76,12 +86,7 @@ struct MenuBarGeneralPane: View {
         AOMSection("Automatically rehide") {
             AOMSettingRow("Hide again after", detail: "Waits while a menu is open or the pointer is on the menu bar", symbol: "arrow.uturn.backward") {
                 Picker("Hide again after", selection: rehide.binding) {
-                    Text("Never").tag(0.0)
-                    Text("5 s").tag(5.0)
-                    Text("10 s").tag(10.0)
-                    Text("15 s").tag(15.0)
-                    Text("30 s").tag(30.0)
-                    Text("1 min").tag(60.0)
+                    ForEach(MenuBarHider.rehideChoices, id: \.self) { Text($0 == 0 ? "Never" : "\(Int($0)) s").tag($0) }
                 }
                 .labelsHidden().fixedSize()
             }
@@ -128,6 +133,10 @@ struct MenuBarGeneralPane: View {
             }
         }
         .disabled(!on)
+        .onReceive(defaultsChanged) { _ in
+            for pref in [click, scroll, hover, bar] { pref.sync() }
+            rehide.sync(); icon.sync(); wide.sync(); hoverShow.sync(); hoverHide.sync()
+        }
     }
 
     private func seconds(_ value: Binding<Double>, _ choices: [Double]) -> some View {
@@ -171,11 +180,9 @@ struct MenuBarGeneralPane: View {
 struct MenuBarBarPane: View {
     @ObservedObject private var shelf = AOMMenuShelfController.shared
     @ObservedObject private var modules = AOMModuleSwitches.shared
-    private let bar = Pref(read: { MenuBarHider.revealMode == .bar }, write: { MenuBarHider.revealMode = $0 ? .bar : .menuBar })
     private let atMouse = Pref(read: { MenuBarPrefs.barAtMouse }, write: { MenuBarPrefs.barAtMouse = $0 })
     private let autohide = Pref(read: { MenuBarPrefs.barAutohide }, write: { MenuBarPrefs.barAutohide = $0 })
     private let leave = Pref(read: { MenuBarPrefs.barLeaveDelay }, write: { MenuBarPrefs.barLeaveDelay = $0 })
-    private let temporary = Pref(read: { MenuBarPrefs.temporaryShowSeconds }, write: { MenuBarPrefs.temporaryShowSeconds = $0 })
 
     var body: some View {
         AOMSection("Bar", detail: "Your hidden icons in a bar below the menu bar", padding: 14) {
@@ -198,8 +205,10 @@ struct MenuBarBarPane: View {
             }
         }
         AOMSection("Behaviour") {
-            AOMToggleRow("Show hidden icons in the Bar", detail: "Instead of swapping them into the menu bar", symbol: "menubar.dock.rectangle",
-                         isOn: bar.binding)
+            AOMSettingRow("Show hidden icons in the Bar instead of the menu bar", detail: "General › Bar", symbol: "menubar.dock.rectangle") {
+                Button("General…") { UserDefaults.standard.set(MenuBarSettingsTab.general.rawValue, forKey: MenuBarSettingsTab.key) }
+                    .controlSize(.small)
+            }
             AOMToggleRow("Show the Bar at the mouse", detail: "Otherwise under ❮", symbol: "cursorarrow", isOn: atMouse.binding)
             AOMToggleRow("Hide the Bar when your pointer leaves it", symbol: "rectangle.portrait.and.arrow.right", isOn: autohide.binding)
             AOMSettingRow("After", symbol: "timer", indent: true) {
@@ -209,12 +218,6 @@ struct MenuBarBarPane: View {
                 .labelsHidden().fixedSize()
             }
             .disabled(!autohide.binding.wrappedValue)
-            AOMSettingRow("Keep an opened icon in the menu bar for", detail: "After its menu closes", symbol: "hourglass") {
-                Picker("Keep for", selection: temporary.binding) {
-                    ForEach([2.0, 5, 10, 15, 30, 60], id: \.self) { Text("\(Int($0)) s").tag($0) }
-                }
-                .labelsHidden().fixedSize()
-            }
             AOMToggleRow("Open the search at the top center", detail: "When the pointer rests there", symbol: "arrow.up.to.line",
                          isOn: $shelf.hoverEnabled)
                 .disabled(!AXIsProcessTrusted())
@@ -304,34 +307,32 @@ struct MenuBarHotkeysPane: View {
     }
 
     private func row(_ binding: PaletteHotkey, _ parsed: (activation: MenuBarHotkeys.Activation, key: String)) -> some View {
-        HStack {
-            itemLabel(parsed.key, fallback: binding.title)
-            recorder(binding.itemID, title: binding.title).frame(width: 262)
-            Picker("Activation", selection: Binding(get: { parsed.activation }, set: { change(binding, to: $0, key: parsed.key) })) {
-                ForEach(MenuBarHotkeys.Activation.allCases) { Text($0.title).tag($0) }
-            }
-            .labelsHidden().frame(width: 210)
-            Button { store.remove(binding.itemID) } label: { Image(systemName: "minus.circle") }
-                .buttonStyle(.borderless).frame(width: 24)
-                .help("Delete menu bar item hot key")
-        }
-        .padding(.horizontal, 12).padding(.vertical, 6)
-        .overlay(alignment: .top) { Rectangle().fill(AOMColor.hairline).frame(height: 0.5) }
+        itemRow(key: parsed.key, title: binding.title, id: binding.itemID, activation: parsed.activation,
+                choose: { change(binding, to: $0, key: parsed.key) }, remove: { store.remove(binding.itemID) })
     }
 
     /// A new row before its key is recorded.
     private func pendingRow(_ key: String) -> some View {
         let activation = pendingActivation[key] ?? .leftClick
-        let id = MenuBarHotkeys.itemID(key, activation: activation)
-        return HStack {
-            itemLabel(key, fallback: key)
-            recorder(id, title: entry(for: key)?.item.displayName ?? key) { adding.removeAll { $0 == key } }.frame(width: 262)
-            Picker("Activation", selection: Binding(get: { activation }, set: { pendingActivation[key] = $0 })) {
+        return itemRow(key: key, title: entry(for: key)?.item.displayName ?? key,
+                       id: MenuBarHotkeys.itemID(key, activation: activation), activation: activation,
+                       choose: { pendingActivation[key] = $0 }, remove: { adding.removeAll { $0 == key } },
+                       saved: { adding.removeAll { $0 == key } })
+    }
+
+    private func itemRow(key: String, title: String, id: String, activation: MenuBarHotkeys.Activation,
+                         choose: @escaping (MenuBarHotkeys.Activation) -> Void, remove: @escaping () -> Void,
+                         saved: (() -> Void)? = nil) -> some View {
+        HStack {
+            itemLabel(key, fallback: title)
+            recorder(id, title: title, saved: saved).frame(width: 262)
+            Picker("Activation", selection: Binding(get: { activation }, set: choose)) {
                 ForEach(MenuBarHotkeys.Activation.allCases) { Text($0.title).tag($0) }
             }
             .labelsHidden().frame(width: 210)
-            Button { adding.removeAll { $0 == key } } label: { Image(systemName: "minus.circle") }
+            Button(action: remove) { Image(systemName: "minus.circle") }
                 .buttonStyle(.borderless).frame(width: 24)
+                .help("Delete menu bar item hot key")
         }
         .padding(.horizontal, 12).padding(.vertical, 6)
         .overlay(alignment: .top) { Rectangle().fill(AOMColor.hairline).frame(height: 0.5) }
@@ -388,7 +389,7 @@ struct MenuBarHotkeysPane: View {
 
 struct MenuBarAdvancedPane: View {
     @ObservedObject private var modules = AOMModuleSwitches.shared
-    private let commandDrag = Pref(read: { MenuBarPrefs.commandDragShowsAll }, write: { MenuBarPrefs.commandDragShowsAll = $0 })
+    private let commandDrag = Pref(read: { MenuBarPrefs.commandDragShowsAll }, write: { MenuBarPrefs.commandDragShowsAll = $0; MenuBarTriggers.shared.reconfigure() })
     private let noRoom = Pref(read: { MenuBarPrefs.barWhenNoRoom }, write: { MenuBarPrefs.barWhenNoRoom = $0 })
     private let temporary = Pref(read: { MenuBarPrefs.temporaryShowSeconds }, write: { MenuBarPrefs.temporaryShowSeconds = $0 })
     private let always = Pref(read: { MenuBarHider.alwaysSectionOn }, write: { MenuBarHider.shared.setAlwaysSection($0) })

@@ -25,7 +25,6 @@ final class InputSourceChangeHub {
     private var observer: NSObjectProtocol?
     private var handlers: [UUID: () -> Void] = [:]
 
-    var listenerCount: Int { handlers.count }
     var isObserving: Bool { observer != nil }
 
     @discardableResult

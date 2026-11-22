@@ -113,25 +113,13 @@ enum MenuBarHotkeys {
 
     @MainActor
     private static func perform(_ entry: MenuBarLayoutItem, activation: Activation) {
-        let native = MenuBarNativeHiding.shared
-        let hider = MenuBarHider.shared
-        let click: @MainActor @Sendable () -> Void = {
-            guard activation != .justShow else { return }
-            if activation == .leftClick {
-                AOMMenuShelfController.shared.activate(entry.item, retry: "Press the key again.")
-            } else {
-                MenuBarClick.post(entry.item, activation: activation)
+        MenuBarHider.shared.reveal(entry.item, section: entry.section) {
+            switch activation {
+            case .justShow: break
+            case .leftClick: AOMMenuShelfController.shared.activate(entry.item, retry: "Press the key again.")
+            default: MenuBarClick.post(entry.item, activation: activation)
             }
         }
-        if entry.section != .shown, hider.native, native.isHolding {
-            native.showTemporarily(entry.item.ownerBundleID) {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.45, execute: click)
-            }
-            return
-        }
-        let reveal = hider.isRunning && entry.section != .shown && hider.isCollapsed
-        if reveal { hider.expand(all: entry.section == .alwaysHidden) }
-        DispatchQueue.main.asyncAfter(deadline: .now() + (reveal ? 0.35 : 0), execute: click)
     }
 }
 
@@ -154,9 +142,10 @@ enum MenuBarClick {
             let button: CGMouseButton = right ? .right : .left
             let original = CGEvent(source: nil)?.location
             for type in [down, up] {
-                guard let event = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: button) else { continue }
-                if option { event.flags = .maskAlternate }
-                event.post(tap: .cghidEventTap)
+                let event = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: button)
+                if option { event?.flags = .maskAlternate }
+                // Tagged, so AOM's own monitors (the menu bar triggers) ignore it.
+                SyntheticInput.post(event, tap: .cghidEventTap)
                 usleep(40_000)
             }
             if let original { CGWarpMouseCursorPosition(original) }

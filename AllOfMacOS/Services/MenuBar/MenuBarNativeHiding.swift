@@ -28,8 +28,6 @@ enum MenuBarSectionStore {
         return raw.compactMapValues(MenuBarSection.init(rawValue:))
     }
 
-    static func section(of bundle: String) -> MenuBarSection { all[bundle] ?? .shown }
-
     static func set(_ section: MenuBarSection, for bundle: String) {
         var raw = UserDefaults.standard.dictionary(forKey: key) as? [String: String] ?? [:]
         if section == .shown { raw.removeValue(forKey: bundle) } else { raw[bundle] = section.rawValue }
@@ -66,11 +64,11 @@ final class MenuBarNativeHiding {
 
     /// macOS 27 or later with the restriction available, running from an
     /// Applications folder (macOS matches the list to apps it knows there).
-    static var isAvailable: Bool {
+    static let isAvailable: Bool = {
         guard ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 27, AOMMenuBarNativeIsAvailable() else { return false }
         let path = Bundle.main.bundlePath
         return path.hasPrefix("/Applications/") || path.contains("/Applications/")
-    }
+    }()
 
     /// The system item ids to keep (unknown ids are ignored; 0–63 covers them).
     static let systemItems: [NSNumber] = (0..<64).map { NSNumber(value: $0) }
@@ -79,7 +77,7 @@ final class MenuBarNativeHiding {
     private(set) var allowed: [String]?
     private var generation = 0
     private var launchObserver: NSKeyValueObservation?
-    private var clockMonitor: Any?
+    private var launchWork: DispatchWorkItem?
     /// The sections the current hold hides (to re-hold when apps start).
     private var hiding: Set<MenuBarSection> = []
     /// An app shown for a moment (the Bar, a clock click), and what to go back to.
@@ -100,7 +98,6 @@ final class MenuBarNativeHiding {
         // The same list again (a helper process started) changes nothing.
         if isHolding, list == allowed { completion?(true) } else { activate(list, completion: completion) }
         watchLaunches()
-        watchClock()
     }
 
     /// Everything visible again.
@@ -112,7 +109,8 @@ final class MenuBarNativeHiding {
         assertion = nil
         allowed = nil
         launchObserver = nil
-        if let clockMonitor { NSEvent.removeMonitor(clockMonitor); self.clockMonitor = nil }
+        launchWork?.cancel()
+        launchWork = nil
     }
 
     /// The new list is held before the old one goes, so nothing flashes.
@@ -147,12 +145,18 @@ final class MenuBarNativeHiding {
     /// its section hides it.
     private func watchLaunches() {
         guard launchObserver == nil else { return }
+        // Coalesced: a login or a build starts dozens of helpers at once.
         launchObserver = NSWorkspace.shared.observe(\.runningApplications, options: [.new]) { _, _ in
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     let native = MenuBarNativeHiding.shared
-                    guard native.isHolding, native.lift == nil else { return }
-                    native.hide(native.hiding)
+                    native.launchWork?.cancel()
+                    let work = DispatchWorkItem {
+                        guard native.isHolding, native.lift == nil else { return }
+                        native.hide(native.hiding)
+                    }
+                    native.launchWork = work
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
                 }
             }
         }
@@ -200,20 +204,14 @@ final class MenuBarNativeHiding {
     /// While anything is hidden macOS ignores the clock; a click on it lifts
     /// the restriction, presses the clock (Notification Center) and hides
     /// again once the panel has closed.
-    private func watchClock() {
-        guard clockMonitor == nil else { return }
-        clockMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown]) { _ in
-            MainActor.assumeIsolated { MenuBarNativeHiding.shared.clickedSomewhere() }
-        }
-    }
-
-    private func clickedSomewhere() {
-        guard isHolding, lift == nil else { return }
-        let point = NSEvent.mouseLocation
+    /// A click on the menu bar (from `MenuBarTriggers`' one monitor): true
+    /// when it was the clock and was handed over.
+    func handleClockClick(at point: CGPoint) -> Bool {
+        guard isHolding, lift == nil else { return false }
         let primary = NSScreen.screens.first?.frame.height ?? 0
         let ax = CGPoint(x: point.x, y: primary - point.y)
         guard let clock = MenuBarLayoutModel.shared.items.first(where: { $0.item.identity?.name == "Clock" })?.item,
-              let frame = clock.frame, frame.insetBy(dx: -2, dy: -2).contains(ax) else { return }
+              let frame = clock.frame, frame.insetBy(dx: -2, dy: -2).contains(ax) else { return false }
         let keep = hiding
         if let assertion { AOMMenuBarNativeInvalidate(assertion) }
         assertion = nil
@@ -222,5 +220,6 @@ final class MenuBarNativeHiding {
             AOMMenuShelfController.shared.activate(clock, retry: "Click the clock again.")
             MenuBarNativeHiding.shared.startLift(bundle: nil)
         }
+        return true
     }
 }

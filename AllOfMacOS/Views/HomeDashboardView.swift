@@ -1213,19 +1213,6 @@ struct AOMHomeView: View {
 
 // MARK: - Snapshot
 
-/// Everything one render needs, computed once per body.
-/// The Workspace banner's greeting for the time of day.
-enum AOMWorkspaceGreeting {
-    static func text(at date: Date = Date()) -> String {
-        switch Calendar.current.component(.hour, from: date) {
-        case 5..<12: return "Good morning"
-        case 12..<18: return "Good afternoon"
-        case 18..<23: return "Good evening"
-        default: return "Working late"
-        }
-    }
-}
-
 /// The top of Workspace (6.0): the page's name and one line of state,
 /// left-aligned like Things' and Linear's view titles. The 5.0 banner (a
 /// brand-gradient wash and a time-of-day greeting) read as decoration.

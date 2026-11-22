@@ -25,7 +25,6 @@ class AppState: ObservableObject {
     @Published var selectedAppTarget: AppTarget
     @Published var selectedActivationGroupID: UUID?
     @Published var triggerSearch = ""
-    @Published var triggerSortMode: TriggerSortMode = .manual
     @Published var selectedTriggerCategory: TriggerCategory = .all
     @Published var selectedTrigger: Trigger?
     @Published var selectedAction: TriggerAction?
@@ -218,7 +217,6 @@ class AppState: ObservableObject {
                                        category: category)
     }
 
-    var isSearchingTriggers: Bool { !triggerSearch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     func toggleFavorite(_ trigger: Trigger) {
         guard var latest = currentPreset.triggers.first(where: { $0.id == trigger.id }) else { return }
         latest.isFavorite.toggle(); updateTrigger(latest)

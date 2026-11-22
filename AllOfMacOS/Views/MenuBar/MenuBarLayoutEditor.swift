@@ -240,7 +240,7 @@ struct MenuBarLayoutEditor: View {
     /// box; hover lights it as the menu bar does; locked ones are dimmed.
     private func icon(_ entry: MenuBarLayoutItem) -> some View {
         let lit = hovered == entry.id
-        return picture(entry, height: 22)
+        return MenuBarItemPicture(entry: entry, height: 22, ink: laneInk)
             .padding(.horizontal, 6)
             .frame(height: 32)
             .background(lit ? laneInk.opacity(0.16) : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
@@ -248,17 +248,13 @@ struct MenuBarLayoutEditor: View {
             .contentShape(Rectangle())
             .onHover { hovered = $0 ? entry.id : (hovered == entry.id ? nil : hovered) }
             .help("\(entry.item.displayName) — \(entry.item.ownerName)" + (entry.lockedReason.map { "\n\($0)" } ?? "\nDrag to another section"))
-            .modifier(DraggableUnlessLocked(id: entry.id, locked: entry.lockedReason != nil, preview: { picture(entry, height: 22) }))
+            .modifier(DraggableUnlessLocked(id: entry.id, locked: entry.lockedReason != nil, preview: { MenuBarItemPicture(entry: entry, height: 22, ink: laneInk) }))
             .contextMenu { MenuBarItemMenu(entry: entry, rename: { renaming = entry.id }) }
             .popover(isPresented: Binding(get: { renaming == entry.id }, set: { if !$0 { renaming = nil } }), arrowEdge: .bottom) {
                 MenuBarItemAliasEditor(item: entry.item) { renaming = nil }
             }
             .accessibilityElement()
             .accessibilityLabel("\(entry.item.displayName), \(entry.section.title)")
-    }
-
-    private func picture(_ entry: MenuBarLayoutItem, height: CGFloat) -> some View {
-        MenuBarItemPicture(entry: entry, height: height, ink: laneInk)
     }
 }
 
@@ -463,20 +459,11 @@ struct AppIconView: View {
         Image(nsImage: Self.icon(bundle)).resizable().frame(width: size, height: size)
     }
 
-    private static var cache: [String: NSImage] = [:]
-
+    /// AOM's shared (bounded) app icon cache; macOS's own items show System Settings.
+    @MainActor
     static func icon(_ bundle: String) -> NSImage {
-        if let cached = cache[bundle] { return cached }
-        let image: NSImage
-        if MenuBarSectionStore.systemOwners.contains(bundle) {
-            image = NSWorkspace.shared.icon(forFile: "/System/Applications/System Settings.app")
-        } else if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle) {
-            image = NSWorkspace.shared.icon(forFile: url.path)
-        } else {
-            image = NSWorkspace.shared.icon(for: .application)
-        }
-        cache[bundle] = image
-        return image
+        let owner = MenuBarSectionStore.systemOwners.contains(bundle) ? "com.apple.systempreferences" : bundle
+        return AppMetadataCache.shared.icon(for: owner) ?? NSWorkspace.shared.icon(for: .application)
     }
 }
 

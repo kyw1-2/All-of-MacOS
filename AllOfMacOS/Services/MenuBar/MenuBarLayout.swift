@@ -412,17 +412,17 @@ final class MenuBarLayoutModel: ObservableObject {
                         UserDefaults.standard.set(true, forKey: "AOMMenuBarSections.seeded")
                     }
                     // 7.10: an app seen for the first time starts where the
-                    // "New Menu Bar Items" pill is (once AOM knows the others).
-                    var seen = MenuBarPrefs.seenApps
+                    // "New Menu Bar Items" pill is (the policy `hide` also uses).
+                    let seen = MenuBarPrefs.seenApps
                     let owners = Set(snapshot.items.filter { $0.pid != own }.map(\.ownerBundleID))
-                    if native, !seen.isEmpty, MenuBarPrefs.newItemsSection != .shown {
-                        for bundle in owners.subtracting(seen) where MenuBarSectionStore.all[bundle] == nil
-                            && !MenuBarSectionStore.systemOwners.contains(bundle) {
-                            MenuBarSectionStore.set(MenuBarPrefs.newItemsSection, for: bundle)
-                        }
+                    var sections = MenuBarSectionStore.all
+                    if native {
+                        let placed = MenuBarTriggerPolicy.sections(running: Array(owners), stored: sections, seen: seen,
+                                                                   newItems: MenuBarPrefs.newItemsSection)
+                        for (bundle, section) in placed where sections[bundle] == nil { MenuBarSectionStore.set(section, for: bundle) }
+                        sections = placed
                     }
-                    if !owners.isSubset(of: seen) { seen.formUnion(owners); MenuBarPrefs.seenApps = seen }
-                    let sections = MenuBarSectionStore.all
+                    if !owners.isSubset(of: seen) { MenuBarPrefs.seenApps = seen.union(owners) }
                     let laid = snapshot.items.filter { !MenuBarLayoutPolicy.isHiderControl($0, ownPID: own) }.map { item -> MenuBarLayoutItem in
                         let locked = MenuBarLayoutPolicy.lockedReason(item, ownPID: own, native: native)
                         let section: MenuBarSection = native

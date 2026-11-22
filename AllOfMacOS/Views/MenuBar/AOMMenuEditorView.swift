@@ -110,15 +110,6 @@ enum AOMMenuEditorNavigation {
     }
 }
 
-/// Menu Bar › AOM menu.
-struct AOMMenuEditorSection: View {
-    var body: some View {
-        AOMSection("AOM menu", detail: "Click panel and right-click menu, in your order", padding: 14) {
-            AOMMenuEditorView(inWindow: false)
-        }
-    }
-}
-
 struct AOMMenuEditorView: View {
     var inWindow: Bool
     @ObservedObject private var store = AOMStatusMenuStore.shared

@@ -46,12 +46,7 @@ enum AOMCraftColor {
     static let inkSecondary = dynamic(light: NSColor.black.withAlphaComponent(0.64), dark: NSColor.white.withAlphaComponent(0.68))
     static let inkTertiary = dynamic(light: NSColor.black.withAlphaComponent(0.50), dark: NSColor.white.withAlphaComponent(0.50))
 
-    /// The launcher's own surface under its content: mostly opaque, so the
-    /// glass shows at the rim and never behind the text.
-    static let launcherBase = dynamic(
-        light: NSColor(srgbRed: 0.984, green: 0.980, blue: 0.973, alpha: 0.86), // #FBFAF8
-        dark:  NSColor(srgbRed: 0.110, green: 0.110, blue: 0.122, alpha: 0.86)  // #1C1C1F
-    )
+    /// The launcher's own surface under its content, fully opaque.
     static let launcherBaseOpaque = dynamic(
         light: NSColor(srgbRed: 0.984, green: 0.980, blue: 0.973, alpha: 1),
         dark:  NSColor(srgbRed: 0.110, green: 0.110, blue: 0.122, alpha: 1)
@@ -66,7 +61,6 @@ enum AOMCraftColor {
         dark:  NSColor(srgbRed: 0.078, green: 0.078, blue: 0.086, alpha: 1)
     )
 
-    static let workbenchCanvas = Color(nsColor: NSColor(srgbRed: 0.078, green: 0.078, blue: 0.086, alpha: 1)) // #141416
     static let overdriveAmber = Color(nsColor: NSColor(srgbRed: 0.961, green: 0.620, blue: 0.043, alpha: 1))  // #F59E0B
     static let overdriveHot   = Color(nsColor: NSColor(srgbRed: 0.937, green: 0.267, blue: 0.267, alpha: 1))  // #EF4444
 }
@@ -88,10 +82,7 @@ enum AOMCraftRadius {
 enum AOMCraftMotion {
     static let hoverFill  = Animation.easeOut(duration: 0.08)
     static let stackPush  = Animation.snappy(duration: 0.18, extraBounce: 0)
-    static let tabSlide   = Animation.spring(response: 0.22, dampingFraction: 0.86)
     static let inlineFold = Animation.smooth(duration: 0.22)
-    static let shelfIn    = Animation.spring(response: 0.16, dampingFraction: 0.88)
-    static let shelfOut   = Animation.easeIn(duration: 0.18)
     static let crossfade  = Animation.easeOut(duration: 0.10)
 
     static func resolve(_ curve: Animation, reduceMotion: Bool) -> Animation? {

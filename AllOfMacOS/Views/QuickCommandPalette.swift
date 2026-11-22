@@ -3252,7 +3252,6 @@ enum PaletteMetrics {
     /// 7.2 (report 05 §4): ⌘- and ⌘= pick 36, 44 or 52 (Settings too).
     static var rowBadge: CGFloat { AOMLauncherDensity.current.badge }
     static var rowHeight: CGFloat { AOMLauncherDensity.current.rowHeight }
-    static let calculatorHeight: CGFloat = 60
     static let actionPanelWidth: CGFloat = 280
     static let actionBarHeight: CGFloat = 38
     static let launcherSearchHeight: CGFloat = 56

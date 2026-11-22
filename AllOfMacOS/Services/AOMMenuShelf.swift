@@ -167,7 +167,8 @@ struct AOMMenuShelfApp: Sendable {
 /// A response uses immutable identifiers, not retained foreign AXUIElements:
 /// the target is resolved again immediately before it is pressed.
 enum AOMMenuShelfProbe {
-    private static func attribute(_ el: AXUIElement, _ key: CFString) -> CFTypeRef? {
+    /// Shared with the menu bar triggers (7.10 review: one AX read helper).
+    static func attribute(_ el: AXUIElement, _ key: CFString) -> CFTypeRef? {
         var value: CFTypeRef?
         return AXUIElementCopyAttributeValue(el, key, &value) == .success ? value : nil
     }
@@ -255,7 +256,7 @@ enum AOMMenuShelfProbe {
         return (out, flat.truncated || budget <= 0)
     }
 
-    private static func frame(_ element: AXUIElement) -> CGRect? {
+    static func frame(_ element: AXUIElement) -> CGRect? {
         guard let position = attribute(element, kAXPositionAttribute as CFString), CFGetTypeID(position) == AXValueGetTypeID(),
               let size = attribute(element, kAXSizeAttribute as CFString), CFGetTypeID(size) == AXValueGetTypeID() else { return nil }
         var point = CGPoint.zero, extent = CGSize.zero

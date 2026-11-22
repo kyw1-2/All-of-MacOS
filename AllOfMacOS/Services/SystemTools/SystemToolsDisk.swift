@@ -77,5 +77,4 @@ enum DiskTools {
 
     /// Asks macOS to purge up to 20 GB of Time Machine local snapshots now,
     /// at the highest urgency.
-    static let thinArguments = ["thinlocalsnapshots", "/", "20000000000", "4"]
 }
