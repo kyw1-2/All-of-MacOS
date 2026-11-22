@@ -124,20 +124,28 @@ final class ZipExtractModel: ObservableObject {
     /// 7.6 (Codex Z04): the newest Quick Look request; older ones are dropped.
     private var previewGeneration = 0
     private var closed = false
+    /// Stops the preview unpacking when another file is picked or the window closes.
+    private var previewStop: AOMCancelFlag?
 
     func quickLook(_ entry: ZipArchive.Entry) {
         guard entry.unsupported == nil, !closed else { return }
         if previewURL != nil { previewURL = nil; return }
         previewGeneration += 1
         let generation = previewGeneration
+        previewStop?.set()
+        let stop = AOMCancelFlag()
+        previewStop = stop
         let folder = previewFolder ?? FileManager.default.temporaryDirectory.appendingPathComponent("AOMZipPreview-\(UUID().uuidString)", isDirectory: true)
         previewFolder = folder
+        // The preview folder is made here, on main; the work below never makes it
+        // again, so a window closed meanwhile leaves nothing behind (Gemini 7.6).
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let archive = archive
         Task.detached(priority: .userInitiated) {
-            // Each request unpacks into its own folder inside the preview folder.
             let own = folder.appendingPathComponent("\(generation)", isDirectory: true)
-            try? FileManager.default.createDirectory(at: own, withIntermediateDirectories: true)
-            let outcome = ZipArchive.extract([entry], from: archive, into: own, keepFolders: false, budget: ZipArchive.previewBudget)
+            guard (try? FileManager.default.createDirectory(at: own, withIntermediateDirectories: false)) != nil else { return }
+            let outcome = ZipArchive.extract([entry], from: archive, into: own, keepFolders: false, budget: ZipArchive.previewBudget,
+                                             isCancelled: { stop.isSet })
             await MainActor.run {
                 guard !self.closed, generation == self.previewGeneration else {
                     try? FileManager.default.removeItem(at: own)
@@ -157,6 +165,7 @@ final class ZipExtractModel: ObservableObject {
     func close() {
         closed = true
         cancel()
+        previewStop?.set()
         previewGeneration += 1
         previewURL = nil
         if let previewFolder { try? FileManager.default.removeItem(at: previewFolder) }

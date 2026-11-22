@@ -1,3 +1,31 @@
+## [7.6.0] - 2026-11-22
+
+Codex's audit of 7.5 is fixed where it found data, privacy or wrong-target risks, and four of its menu bar ideas are added: weather in the menu bar, a strip of every menu bar icon, an always-hidden section, and a way to mark an audio glitch so the next crackle can be explained. Details: `docs/design-7.6.md`.
+
+### Safer file tools
+- **Duplicates** move set by set, each copy checked again just before it goes together with the copy that stays; a batch that hits a refused move or a changed set is never reported as done.
+- **Compare Folders** copies a missing folder only if it's unchanged since the comparison, file by file so Stop works inside a big folder (nothing half-copied is left), shows items whose details couldn't be read as "Couldn't Compare", and keeps your folders' spelling in the rows.
+- **Extract from ZIP** checks the picked total against the free space before writing, refuses sizes too large to add up, re-checks the destination folder right before each file lands, and keeps Quick Look previews apart so a late one never replaces the one you asked for.
+- **Storage map** stays light in folders with tens of thousands of files and tells you how many items had no readable size.
+- **Compare PDFs**: when linked pages don't line up, the badge says "No matching page" instead of comparing the wrong pages.
+
+### Menu bar and privacy
+- **Menu Bar Shelf** pins survive an icon whose title changes (a temperature, a timer), two items with the same name stay two rows, and an item is pressed only when it's still the one you picked. A scan that ran out of time says so.
+- **Menu Bar Hider** shows the right chevron and VoiceOver text after a restart, and **menu bar spacing** changes both settings together or puts both back.
+- **Safari tabs** with the same address and title are never chosen by guess.
+- **Meeting Alerts** clear the countdown and an open alert when Calendar access is withdrawn; **Memory Watch** reads the app list only when an alert can post.
+- **AI tool setup**: the connection token isn't shown as selectable text; Copy with Token marks it private (clipboard histories, AOM's too, skip it) and clears it after 90 seconds unless you copied something else.
+- **aom:// links** ask before running an automation: Run Once, Always Allow or Don't Run. "Forget Link Permissions" in the launcher resets the answers.
+
+### New
+- **Menu Bar Weather** (Settings › General › Modules): the temperature of a city you choose, with feels-like, today's low and high, rain chance and the time of the reading a click away. Celsius or Fahrenheit, temperature, feels-like or icon only. No location or other permission; data by Open-Meteo.
+- **Menu Bar Strip**: every menu bar icon AOM can reach in one row under the menu bar of the display you're on — the ones hidden behind the notch or by the Hider first. ← → and ↩ open one; esc closes. In the launcher, the menu's More, and as an action you can give a shortcut.
+- **Always-Hidden Section**: right-click the Hider's chevron to add a second, fainter divider. Items left of it stay hidden when the chevron shows the others; ⌥-click shows everything.
+- **I Just Heard a Glitch** (the menu while App Audio runs, the launcher, an action): marks the moment and saves what AOM saw ten seconds before and after — output gaps with their measured cause (a late callback, the app's audio coming short, or the output clock jumping), overloads, the routes playing and the system load — to Diagnostics/audio-marks. Playback isn't touched.
+
+### Removed
+- Three unused functions the audit found (an old force-quit path, an activation-group overload, the manual trigger reordering chain).
+
 ## [7.5.0] - 2026-11-22
 
 Codex's audit of 7.4 found six defects, each reproduced on synthetic data; all six are fixed with a regression test. Five of the features it proposed are added: snippet choices, picking files out of a ZIP, a storage map, Compare PDFs and Compare Folders. A Gemini review of the whole change was checked against the code: its confirmed points are fixed, three claims were disproved. Details: `docs/design-7.5.md`.

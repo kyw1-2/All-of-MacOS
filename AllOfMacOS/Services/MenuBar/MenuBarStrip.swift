@@ -28,13 +28,20 @@ enum MenuBarStripPolicy {
             guard let frame = item.frame, frame.width > 0 else { return Placed(item: item, hidden: true) }
             let center = CGPoint(x: frame.midX, y: frame.midY)
             guard let display = displays.first(where: { $0.frame.contains(center) }) else { return Placed(item: item, hidden: true) }
-            if let notch = display.notch, notch.intersects(frame.insetBy(dx: 2, dy: 0)) { return Placed(item: item, hidden: true) }
+            // A sliver isn't shrunk to nothing before the notch test.
+            let probe = frame.width > 6 ? frame.insetBy(dx: 2, dy: 0) : frame
+            if let notch = display.notch, notch.intersects(probe) { return Placed(item: item, hidden: true) }
             return Placed(item: item, hidden: !display.frame.contains(frame))
         }
         return placed.sorted { a, b in
             if a.hidden != b.hidden { return a.hidden }
             return (a.item.frame?.minX ?? -.infinity) > (b.item.frame?.minX ?? -.infinity)
         }
+    }
+
+    /// Pure: AOM's own Hider dividers aren't something to open (Gemini 7.6 idea).
+    static func isOwnDivider(_ item: AOMMenuShelfItem, ownPID: pid_t) -> Bool {
+        item.pid == ownPID && item.title.localizedCaseInsensitiveContains("divider")
     }
 
     /// Pure: an AppKit screen rect (bottom-left origin) in Accessibility coordinates.
@@ -64,13 +71,15 @@ private final class MenuBarStripPanel: NSPanel {
 }
 
 @MainActor
-final class MenuBarStripController: ObservableObject {
+final class MenuBarStripController: NSObject, ObservableObject, NSWindowDelegate {
     static let shared = MenuBarStripController()
 
     @Published private(set) var placed: [MenuBarStripPolicy.Placed] = []
     @Published private(set) var loading = false
     @Published private(set) var message: String?
     @Published var selection = 0
+    /// Each app's icon, read once per scan instead of on every redraw.
+    private(set) var icons: [pid_t: NSImage] = [:]
     private var panel: MenuBarStripPanel?
     private var generation = 0
     private let worker = DispatchQueue(label: "com.kyw.aom.menubar-strip-ax", qos: .userInitiated)
@@ -113,6 +122,8 @@ final class MenuBarStripController: ObservableObject {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         panel.hidesOnDeactivate = false
         panel.contentView = NSHostingView(rootView: MenuBarStripView(controller: self))
+        // Clicking anywhere else closes it (Gemini 7.6 review).
+        panel.delegate = self
         panel.onKey = { [weak self] code in
             guard let self else { return false }
             switch code {
@@ -120,6 +131,10 @@ final class MenuBarStripController: ObservableObject {
             case 124: self.move(1)
             case 36, 76: self.open()
             case 53: self.dismiss()
+            // 1–9 open the first nine (the hidden ones come first).
+            case 18, 19, 20, 21, 23, 22, 26, 28, 25:
+                let order: [UInt16] = [18, 19, 20, 21, 23, 22, 26, 28, 25]
+                self.open(order.firstIndex(of: code))
             default: return false
             }
             return true
@@ -127,23 +142,26 @@ final class MenuBarStripController: ObservableObject {
         return panel
     }
 
+    func windowDidResignKey(_ notification: Notification) { dismiss() }
+
     private func scan() {
         generation += 1
         let mine = generation
         loading = true
         message = nil
-        let apps = NSWorkspace.shared.runningApplications.compactMap { app -> AOMMenuShelfApp? in
-            guard app.processIdentifier > 0 else { return nil }
-            return AOMMenuShelfApp(pid: app.processIdentifier, bundleID: app.bundleIdentifier ?? "pid:\(app.processIdentifier)",
-                                   name: app.localizedName ?? app.bundleIdentifier ?? "App")
-        }
+        // The shelf's order: system extras first, apps that can't have a menu bar item last.
+        let apps = AOMMenuShelfPolicy.orderedApps(NSWorkspace.shared.runningApplications)
         let displays = MenuBarStripPolicy.displays()
+        let own = ProcessInfo.processInfo.processIdentifier
         worker.async { [weak self] in
             let snapshot = AOMMenuShelfProbe.snapshot(apps: apps)
-            let placed = MenuBarStripPolicy.arrange(snapshot.items, displays: displays)
+            let placed = MenuBarStripPolicy.arrange(snapshot.items.filter { !MenuBarStripPolicy.isOwnDivider($0, ownPID: own) }, displays: displays)
             DispatchQueue.main.async { [weak self] in
                 guard let self, mine == self.generation else { return }
+                guard AXIsProcessTrusted() else { self.dismiss(); return }
                 self.loading = false
+                self.icons = Dictionary(placed.map { ($0.item.pid, $0.item.pid) }, uniquingKeysWith: { a, _ in a })
+                    .compactMapValues { NSRunningApplication(processIdentifier: $0)?.icon }
                 self.placed = placed
                 self.selection = 0
                 if placed.isEmpty { self.message = "No menu bar items could be read." }
@@ -163,7 +181,7 @@ final class MenuBarStripController: ObservableObject {
         let item = placed[index].item
         dismiss()
         // The panel is gone before the press, so it can't take the menu's click.
-        AOMMenuShelfController.shared.activate(item)
+        AOMMenuShelfController.shared.activate(item, retry: "Open the Menu Bar Strip and pick it again.")
     }
 }
 
@@ -176,7 +194,7 @@ private struct MenuBarStripView: View {
                 Text("Menu Bar").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
                 if let message = controller.message { Text(message).font(.system(size: 11)).foregroundStyle(.orange).lineLimit(1) }
                 Spacer()
-                Text("← → move · ↩ open · esc close").font(.system(size: 10)).foregroundStyle(.tertiary)
+                Text("← → move · ↩ or 1–9 open · esc close").font(.system(size: 10)).foregroundStyle(.tertiary)
             }
             if controller.loading && controller.placed.isEmpty {
                 ProgressView().controlSize(.small).frame(maxWidth: .infinity)
@@ -204,7 +222,7 @@ private struct MenuBarStripView: View {
 
     private func chip(_ placed: MenuBarStripPolicy.Placed, selected: Bool) -> some View {
         HStack(spacing: 6) {
-            if let icon = NSRunningApplication(processIdentifier: placed.item.pid)?.icon {
+            if let icon = controller.icons[placed.item.pid] {
                 Image(nsImage: icon).resizable().frame(width: 18, height: 18)
             } else {
                 Image(systemName: "app").frame(width: 18, height: 18)

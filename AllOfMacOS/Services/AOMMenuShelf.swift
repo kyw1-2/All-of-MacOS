@@ -23,7 +23,7 @@ struct AOMMenuShelfItem: Identifiable, Equatable {
 
     /// One scan's row: the app and the item's place in it (7.6, Codex MB01:
     /// two items sharing an identifier are two rows).
-    var id: String { "\(ownerBundleID)|#\(ordinal)" }
+    var id: String { "\(ownerBundleID)|\(pid)|#\(ordinal)" }
 
     /// What a pin remembers across scans: the identifier when it names one
     /// item, else the place — never the title, which changes (18°C → 19°C).
@@ -77,12 +77,31 @@ enum AOMMenuShelfPolicy {
     static func resolve(_ item: AOMMenuShelfItem, in live: [Live]) -> Int? {
         if !item.axIdentifier.isEmpty {
             let matches = live.indices.filter { live[$0].identifier == item.axIdentifier }
-            if matches.count == 1 { return matches[0] }
+            // A lone match counts only if the identifier was unique when scanned;
+            // a twin that closed must not hand its click to the other (Gemini 7.6).
+            if matches.count == 1, item.identifierIsUnique { return matches[0] }
             return matches.contains(item.ordinal) && live.count == item.siblings ? item.ordinal : nil
         }
         // No identifier: the same place in a list of the same length (a title may change).
         guard live.count == item.siblings, live.indices.contains(item.ordinal), live[item.ordinal].identifier.isEmpty else { return nil }
         return item.ordinal
+    }
+
+    /// System extras first, then apps by name; processes macOS doesn't let
+    /// have a menu bar item go last, so a long list doesn't spend the
+    /// deadline on them.
+    static func orderedApps(_ running: [NSRunningApplication]) -> [AOMMenuShelfApp] {
+        running.filter { $0.processIdentifier > 0 }
+            .sorted { a, b in
+                func rank(_ app: NSRunningApplication) -> Int {
+                    let id = app.bundleIdentifier ?? ""
+                    if id.hasPrefix("com.apple.controlcenter") || id.hasPrefix("com.apple.systemuiserver") { return 0 }
+                    return app.activationPolicy == .prohibited ? 2 : 1
+                }
+                return rank(a) != rank(b) ? rank(a) < rank(b) : (a.localizedName ?? "") < (b.localizedName ?? "")
+            }
+            .map { AOMMenuShelfApp(pid: $0.processIdentifier, bundleID: $0.bundleIdentifier ?? "pid:\($0.processIdentifier)",
+                                   name: $0.localizedName ?? $0.bundleIdentifier ?? "App") }
     }
 
     static func safeHoverZone(_ point: CGPoint, screen: CGRect, menuBarHeight: CGFloat = 24) -> Bool {
@@ -175,12 +194,14 @@ enum AOMMenuShelfProbe {
                                               axIdentifier: string(element, kAXIdentifierAttribute as CFString), ordinal: index,
                                               siblings: elements.count, frame: frame(element)))
             }
-            if found.count < elements.count { result.appsLeft += 1 }
+            let partial = found.count < elements.count
+            if partial { result.appsLeft += 1 }
             var counts: [String: Int] = [:]
             for item in found where !item.axIdentifier.isEmpty { counts[item.axIdentifier, default: 0] += 1 }
             result.items += found.map { item in
                 var copy = item
-                copy.identifierIsUnique = (counts[item.axIdentifier] ?? 0) <= 1
+                // An app read only in part can't vouch that an identifier is unique.
+                copy.identifierIsUnique = !partial && (counts[item.axIdentifier] ?? 0) <= 1
                 return copy
             }
         }
@@ -297,18 +318,7 @@ final class AOMMenuShelfController: ObservableObject {
         }
         loading = true
         message = nil
-        let apps = NSWorkspace.shared.runningApplications.compactMap { app -> AOMMenuShelfApp? in
-            guard app.processIdentifier > 0 else { return nil }
-            return AOMMenuShelfApp(pid: app.processIdentifier,
-                                   bundleID: app.bundleIdentifier ?? "pid:\(app.processIdentifier)",
-                                   name: app.localizedName ?? app.bundleIdentifier ?? "App")
-        }
-        // System status extras first; other apps follow in name order.
-        let ordered = apps.sorted {
-            let a = $0.bundleID.hasPrefix("com.apple.controlcenter") || $0.bundleID.hasPrefix("com.apple.systemuiserver")
-            let b = $1.bundleID.hasPrefix("com.apple.controlcenter") || $1.bundleID.hasPrefix("com.apple.systemuiserver")
-            return a == b ? $0.name < $1.name : a
-        }
+        let ordered = AOMMenuShelfPolicy.orderedApps(NSWorkspace.shared.runningApplications)
         worker.async { [weak self] in
             let result = AOMMenuShelfProbe.snapshot(apps: ordered)
             DispatchQueue.main.async { [weak self] in
@@ -334,7 +344,7 @@ final class AOMMenuShelfController: ObservableObject {
         }
     }
 
-    func activate(_ item: AOMMenuShelfItem) {
+    func activate(_ item: AOMMenuShelfItem, retry: String = "Open the shelf and pick it again.") {
         dismiss()
         worker.async { [weak self] in
             let success = AOMMenuShelfProbe.activate(item)
@@ -342,7 +352,7 @@ final class AOMMenuShelfController: ObservableObject {
                 DispatchQueue.main.async {
                     self?.message = "Could not activate \(item.title); its menu-bar item may have moved or closed."
                     GestureHUD.shared.show(title: "Menu Bar Item Not Opened",
-                                           detail: "\(item.title) moved, closed, or two items now match it. Open the shelf and pick it again.")
+                                           detail: "\(item.title) moved, closed, or two items now match it. \(retry)")
                 }
             }
         }
@@ -425,7 +435,7 @@ private struct AOMMenuShelfView: View {
                     Button("Request Accessibility Permission") { controller.requestPermission() }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if controller.visibleItems.isEmpty && controller.appsLeft == 0 {
+            } else if controller.visibleItems.isEmpty {
                 Text(controller.message ?? "No items match your search.")
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)

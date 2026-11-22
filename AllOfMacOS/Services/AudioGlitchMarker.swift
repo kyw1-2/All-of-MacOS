@@ -55,6 +55,9 @@ enum AudioGlitchMarker {
     }
 
     private static var pending = false
+    /// The newest saved mark (Reveal Last Glitch Mark).
+    static let lastKey = "AOMAudioGlitch.lastMark"
+    static let keep = 50
 
     static func mark() {
         guard !pending else {
@@ -74,8 +77,13 @@ enum AudioGlitchMarker {
             AudioEventLog.shared.poll()
             let events = AudioEventLog.shared.snapshot().events.filter { abs($0.time.timeIntervalSince(markedAt)) <= window }
             let summary = summarize(events, around: markedAt)
-            let file = save(markedAt: markedAt, routes: routes, load: load, events: events, summary: summary)
+            // Read again now, so the file shows what changed over the ten seconds after (Gemini 7.6 idea).
+            var after: [[String: Any]] = []
+            if #available(macOS 14.2, *) { after = AppAudioEngine.shared.markRoutes() }
+            let loadAfter = AudioSystemLoad.summary(AudioSystemLoad.current()) ?? "no load problem"
+            let file = save(markedAt: markedAt, routes: routes, load: load, routesAfter: after, loadAfter: loadAfter, events: events, summary: summary)
             var detail = summary.headline + "."
+            if file == nil { detail += " The record couldn't be saved." }
             if routes.isEmpty { detail += " No app was playing through AOM." }
             if !UserDefaults.standard.bool(forKey: AudioEventLog.diagnosticsKey) { detail += " Audio diagnostics are off, so some counters are missing." }
             GestureHUD.shared.show(title: summary.gaps > 0 ? "Output Gap Found" : "Glitch Marked", detail: detail, icon: "waveform.badge.exclamationmark")
@@ -83,7 +91,8 @@ enum AudioGlitchMarker {
         }
     }
 
-    private static func save(markedAt: Date, routes: [[String: Any]], load: String, events: [AudioEventLog.Event], summary: Summary) -> URL? {
+    private static func save(markedAt: Date, routes: [[String: Any]], load: String, routesAfter: [[String: Any]], loadAfter: String,
+                             events: [AudioEventLog.Event], summary: Summary) -> URL? {
         guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
         let folder = base.appendingPathComponent("AllOfMacOS/Diagnostics/audio-marks", isDirectory: true)
         let formatter = ISO8601DateFormatter()
@@ -95,6 +104,7 @@ enum AudioGlitchMarker {
             "summary": summary.headline,
             "gaps": summary.gaps, "gapFrames": summary.gapFrames, "gapCauses": summary.causes, "overloads": summary.overloads,
             "routes": routes, "systemLoad": load,
+            "routesAfter10s": routesAfter, "systemLoadAfter10s": loadAfter,
             "events": events.map { $0.json },
             "listening": "user mark only; no audio recorded",
         ]
@@ -104,7 +114,26 @@ enum AudioGlitchMarker {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             let url = folder.appendingPathComponent(name)
             try data.write(to: url, options: .atomic)
+            UserDefaults.standard.set(url.path, forKey: lastKey)
+            prune(folder)
             return url
         } catch { return nil }
+    }
+
+    /// Keeps the newest `keep` marks.
+    static func prune(_ folder: URL) {
+        let files = ((try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? [])
+            .filter { $0.pathExtension == "json" }
+            .sorted { ($0.lastPathComponent) > ($1.lastPathComponent) }
+        for file in files.dropFirst(keep) { try? FileManager.default.removeItem(at: file) }
+    }
+
+    /// Shows the newest mark in Finder (Gemini 7.6 idea).
+    static func revealLast() {
+        guard let path = UserDefaults.standard.string(forKey: lastKey), FileManager.default.fileExists(atPath: path) else {
+            GestureHUD.shared.show(title: "No Glitch Mark Yet", detail: "Use I Just Heard a Glitch when you hear a crackle.")
+            return
+        }
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
     }
 }

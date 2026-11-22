@@ -242,19 +242,43 @@ enum FolderCompare {
         var files = 0
         var bytes: Int64 = 0
         var newest: TimeInterval = 0
+        /// Every item's relative path, kind, size, date and link target folded
+        /// together (order-free), so a rename, an empty folder or a re-pointed
+        /// link changes it too (Gemini 7.6 review).
+        var digest: UInt64 = 0
     }
 
     static func treeSignature(_ folder: URL) -> TreeSignature {
         var signature = TreeSignature(identity: FileTools.anyIdentity(folder))
-        let keys: [URLResourceKey] = [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey]
-        let enumerator = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: keys, options: [])
-        while let url = enumerator?.nextObject() as? URL {
-            guard let values = try? url.resourceValues(forKeys: Set(keys)), values.isRegularFile == true else { continue }
-            signature.files += 1
-            signature.bytes += Int64(values.fileSize ?? 0)
-            signature.newest = max(signature.newest, values.contentModificationDate?.timeIntervalSince1970 ?? 0)
+        let keys: [URLResourceKey] = [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey]
+        let device = volume(folder)
+        let base = folder.resolvingSymlinksInPath().standardizedFileURL.path
+        guard let enumerator = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: keys, options: [],
+                                                              errorHandler: { _, _ in signature.digest &+= 0x9E37_79B9; return true }) else { return signature }
+        while let url = enumerator.nextObject() as? URL {
+            guard let values = try? url.resourceValues(forKeys: Set(keys)) else { continue }
+            if values.isDirectory == true, values.isSymbolicLink != true, volume(url) != device { enumerator.skipDescendants(); continue }
+            // The parent resolved, the item's own name kept (a link isn't followed).
+            let path = url.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL.path + "/" + url.lastPathComponent
+            let relative = path.hasPrefix(base + "/") ? String(path.dropFirst(base.count + 1)) : url.lastPathComponent
+            let modified = values.contentModificationDate?.timeIntervalSince1970 ?? 0
+            var line = "\(relative)|\(values.isDirectory == true ? "d" : values.isSymbolicLink == true ? "l" : "f")|\(values.fileSize ?? 0)|\(modified)"
+            if values.isSymbolicLink == true { line += "|" + ((try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)) ?? "?") }
+            signature.digest ^= fnv1a(line)
+            if values.isRegularFile == true {
+                signature.files += 1
+                signature.bytes += Int64(values.fileSize ?? 0)
+                signature.newest = max(signature.newest, modified)
+            }
         }
         return signature
+    }
+
+    /// Pure: FNV-1a over the UTF-8 bytes.
+    static func fnv1a(_ text: String) -> UInt64 {
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in text.utf8 { hash = (hash ^ UInt64(byte)) &* 0x0000_0100_0000_01B3 }
+        return hash
     }
 
     private static func volume(_ url: URL) -> String {
@@ -368,28 +392,33 @@ enum FolderCompare {
     }
 
     /// Copies a folder tree into `destination` (which must not exist): folders
-    /// made, files copied, links copied as links, another volume not entered;
-    /// Stop is checked before each item.
+    /// made by name (no path arithmetic), files copied, links copied as links,
+    /// another volume not entered. Stop is checked before each item, and a
+    /// folder that can't be read fails the whole copy instead of leaving a
+    /// hole in it (Gemini 7.6 review). Folders keep their dates.
     static func copyTree(_ source: URL, to destination: URL, isCancelled: () -> Bool) throws {
-        try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: false)
         let device = volume(source)
-        let base = source.standardizedFileURL.path
-        guard let enumerator = FileManager.default.enumerator(at: source, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
-                                                              options: []) else { return }
-        while let url = enumerator.nextObject() as? URL {
-            if isCancelled() { throw CancellationError() }
-            let path = url.standardizedFileURL.path
-            guard path.hasPrefix(base + "/") else { continue }
-            let target = destination.appendingPathComponent(String(path.dropFirst(base.count + 1)))
-            let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
-            if values?.isSymbolicLink == true {
-                try FileManager.default.createSymbolicLink(atPath: target.path, withDestinationPath: try FileManager.default.destinationOfSymbolicLink(atPath: url.path))
-            } else if values?.isDirectory == true {
-                if volume(url) != device { enumerator.skipDescendants(); continue }
-                try FileManager.default.createDirectory(at: target, withIntermediateDirectories: false)
-            } else {
-                try FileManager.default.copyItem(at: url, to: target)
+        func copy(_ folder: URL, into target: URL) throws {
+            try FileManager.default.createDirectory(at: target, withIntermediateDirectories: false)
+            let children = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+                                                                       options: [])
+            for child in children {
+                if isCancelled() { throw CancellationError() }
+                let to = target.appendingPathComponent(child.lastPathComponent)
+                let values = try child.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+                if values.isSymbolicLink == true {
+                    try FileManager.default.createSymbolicLink(atPath: to.path, withDestinationPath: try FileManager.default.destinationOfSymbolicLink(atPath: child.path))
+                } else if values.isDirectory == true {
+                    guard volume(child) == device else { continue }
+                    try copy(child, into: to)
+                } else {
+                    try FileManager.default.copyItem(at: child, to: to)
+                }
+            }
+            if let dates = try? FileManager.default.attributesOfItem(atPath: folder.path)[.modificationDate] as? Date {
+                try? FileManager.default.setAttributes([.modificationDate: dates], ofItemAtPath: target.path)
             }
         }
+        try copy(source, into: destination)
     }
 }

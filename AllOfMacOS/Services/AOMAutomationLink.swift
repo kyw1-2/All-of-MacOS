@@ -43,6 +43,9 @@ enum AOMLinkConsent {
     /// Pure: whether `id` may run without asking.
     static func mayRun(_ id: UUID, allowed: Set<String>) -> Bool { allowed.contains(id.uuidString) }
 
+    /// A question already on screen: another link waits for no second dialog.
+    private static var asking = false
+
     /// Runs the Named Trigger a link names, asking first unless allowed.
     static func run(_ name: String, ask: (Trigger) -> Answer = askUser) {
         let candidates = ActionExecutor.namedTriggerCandidates(name)
@@ -52,13 +55,21 @@ enum AOMLinkConsent {
             return
         }
         if !mayRun(trigger.id, allowed: allowed) {
-            switch ask(trigger) {
+            guard !asking else {
+                GestureHUD.shared.show(title: "Link Ignored", detail: "Another link is waiting for your answer.")
+                return
+            }
+            asking = true
+            let answer = ask(trigger)
+            asking = false
+            switch answer {
             case .no: return
             case .always: allowed.insert(trigger.id.uuidString)
             case .once: break
             }
         }
-        ActionExecutor.executeNamedTrigger(name)
+        // The trigger that was checked runs, not whatever has the name now (Gemini 7.6).
+        ActionExecutor.executeActions(trigger.actions, triggerID: trigger.id)
     }
 
     static func askUser(_ trigger: Trigger) -> Answer {
@@ -66,12 +77,13 @@ enum AOMLinkConsent {
         let alert = NSAlert()
         alert.messageText = "A link asks to run “\(trigger.name)”"
         alert.informativeText = "aom:// links can come from other apps and web pages. Run it only if you opened this link yourself. Always Allow is remembered for this automation; Forget Link Permissions in the launcher undoes it."
-        alert.addButton(withTitle: "Run Once")
-        alert.addButton(withTitle: "Always Allow")
+        // Return means Don't Run: a link that steals focus while you type can't run anything (Gemini 7.6).
         alert.addButton(withTitle: "Don't Run")
+        alert.addButton(withTitle: "Run Once").keyEquivalent = ""
+        alert.addButton(withTitle: "Always Allow").keyEquivalent = ""
         switch alert.runModal() {
-        case .alertFirstButtonReturn: return .once
-        case .alertSecondButtonReturn: return .always
+        case .alertSecondButtonReturn: return .once
+        case .alertThirdButtonReturn: return .always
         default: return .no
         }
     }

@@ -37,6 +37,9 @@ struct WeatherReading: Codable, Equatable {
     var rainChance: Int?
     let fetchedAt: Date
     let unit: MenuBarWeather.Unit
+    /// The next hours' temperatures and rain chances, from the same request (Gemini 7.6 idea).
+    var nextHours: [Double]? = nil
+    var nextRain: [Int]? = nil
 }
 
 enum WeatherError: Error, Equatable {
@@ -71,6 +74,7 @@ struct WeatherProvider {
             parts.queryItems = [.init(name: "latitude", value: String(city.latitude)), .init(name: "longitude", value: String(city.longitude)),
                                 .init(name: "current", value: "temperature_2m,apparent_temperature,weather_code,is_day"),
                                 .init(name: "daily", value: "temperature_2m_max,temperature_2m_min,precipitation_probability_max"),
+                                .init(name: "hourly", value: "temperature_2m,precipitation_probability"), .init(name: "forecast_hours", value: "6"),
                                 .init(name: "forecast_days", value: "1"), .init(name: "timezone", value: city.timezone),
                                 .init(name: "temperature_unit", value: unit == .fahrenheit ? "fahrenheit" : "celsius")]
             return try MenuBarWeather.parseForecast(try await request(parts.url!), city: city, unit: unit, now: Date())
@@ -88,6 +92,8 @@ struct WeatherProvider {
             guard (200..<300).contains(http.statusCode) else { throw WeatherError.failed("Open-Meteo answered \(http.statusCode)") }
             return data
         } catch let error as URLError {
+            // A request AOM cancelled (city or unit changed) is not a failure.
+            if error.code == .cancelled { throw CancellationError() }
             switch error.code {
             case .notConnectedToInternet, .networkConnectionLost, .timedOut, .cannotFindHost, .cannotConnectToHost, .dataNotAllowed:
                 throw WeatherError.offline
@@ -109,6 +115,10 @@ final class MenuBarWeather: NSObject, ObservableObject, NSMenuDelegate {
     static let displayKey = "AOMWeather.display"
     static let unitKey = "AOMWeather.unit"
     static let maxAge: TimeInterval = 30 * 60
+    static let recentKey = "AOMWeather.recent.v1"
+
+    /// The last three cities chosen, newest first (Gemini 7.6 idea).
+    @Published private(set) var recent: [WeatherCity] = []
 
     @Published private(set) var city: WeatherCity?
     @Published private(set) var reading: WeatherReading?
@@ -136,6 +146,7 @@ final class MenuBarWeather: NSObject, ObservableObject, NSMenuDelegate {
         reading = defaults.data(forKey: Self.readingKey).flatMap { try? JSONDecoder().decode(WeatherReading.self, from: $0) }
         display = Display(rawValue: defaults.string(forKey: Self.displayKey) ?? "") ?? .temperature
         unit = Unit(rawValue: defaults.string(forKey: Self.unitKey) ?? "") ?? (Locale.current.measurementSystem == .us ? .fahrenheit : .celsius)
+        recent = defaults.data(forKey: Self.recentKey).flatMap { try? JSONDecoder().decode([WeatherCity].self, from: $0) } ?? []
         super.init()
     }
 
@@ -176,9 +187,26 @@ final class MenuBarWeather: NSObject, ObservableObject, NSMenuDelegate {
     func choose(_ city: WeatherCity) {
         self.city = city
         if let data = try? JSONEncoder().encode(city) { UserDefaults.standard.set(data, forKey: Self.cityKey) }
+        recent = Self.remember(city, in: recent)
+        if let data = try? JSONEncoder().encode(recent) { UserDefaults.standard.set(data, forKey: Self.recentKey) }
         reading = nil
         UserDefaults.standard.removeObject(forKey: Self.readingKey)
+        // The item shows the new city at once, even while a 429 wait holds the request.
+        updateItem()
         refresh(force: true)
+    }
+
+    /// Pure: `city` first, then up to two others, each once.
+    nonisolated static func remember(_ city: WeatherCity, in recent: [WeatherCity]) -> [WeatherCity] {
+        Array(([city] + recent.filter { $0.id != city.id }).prefix(3))
+    }
+
+    /// "Next 6 h: 3° → -1° · rain up to 40%".
+    nonisolated static func trend(_ reading: WeatherReading) -> String? {
+        guard let hours = reading.nextHours, let first = hours.first, let last = hours.last, hours.count >= 2 else { return nil }
+        var text = "Next \(hours.count) h: \(Int(first.rounded()))° → \(Int(last.rounded()))°"
+        if let rain = reading.nextRain?.max(), rain > 0 { text += " · rain up to \(rain)%" }
+        return text
     }
 
     // MARK: Refresh
@@ -203,9 +231,11 @@ final class MenuBarWeather: NSObject, ObservableObject, NSMenuDelegate {
             catch let error as WeatherError { result = .failure(error) }
             catch is CancellationError { return }
             catch { result = .failure(.failed(error.localizedDescription)) }
-            guard let self else { return }
+            // Only the current request clears the slot (Gemini 7.6: an old one
+            // used to clear the new one's, so two could run at once).
+            guard let self, generation == self.generation else { return }
             self.inFlight = nil
-            guard generation == self.generation, self.city?.id == city.id else { return }
+            guard self.city?.id == city.id else { return }
             switch result {
             case .success(let reading):
                 self.reading = reading
@@ -252,13 +282,16 @@ final class MenuBarWeather: NSObject, ObservableObject, NSMenuDelegate {
               let temperature = (current["temperature_2m"] as? NSNumber)?.doubleValue else { throw WeatherError.failed("The forecast had no temperature") }
         let daily = object["daily"] as? [String: Any]
         func first(_ key: String) -> Double? { ((daily?[key] as? [Any])?.first as? NSNumber)?.doubleValue }
+        let hourly = object["hourly"] as? [String: Any]
+        let hours = (hourly?["temperature_2m"] as? [Any])?.compactMap { ($0 as? NSNumber)?.doubleValue }
+        let rain = (hourly?["precipitation_probability"] as? [Any])?.compactMap { ($0 as? NSNumber)?.intValue }
         return WeatherReading(cityID: city.id, temperature: temperature,
                               feelsLike: (current["apparent_temperature"] as? NSNumber)?.doubleValue,
                               code: (current["weather_code"] as? NSNumber)?.intValue ?? 0,
                               isDay: ((current["is_day"] as? NSNumber)?.intValue ?? 1) == 1,
                               low: first("temperature_2m_min"), high: first("temperature_2m_max"),
                               rainChance: first("precipitation_probability_max").map { Int($0.rounded()) },
-                              fetchedAt: now, unit: unit)
+                              fetchedAt: now, unit: unit, nextHours: hours?.isEmpty == false ? hours : nil, nextRain: rain?.isEmpty == false ? rain : nil)
     }
 
     /// "6°", the feels-like value (or the actual one when it's missing), or nothing beside the icon.
@@ -346,6 +379,7 @@ final class MenuBarWeather: NSObject, ObservableObject, NSMenuDelegate {
                 if let low = reading.low, let high = reading.high {
                     info("Today \(Int(low.rounded()))° – \(Int(high.rounded()))°" + (reading.rainChance.map { " · rain \($0)%" } ?? ""))
                 }
+                if let trend = Self.trend(reading) { info(trend) }
                 info("Updated \(reading.fetchedAt.formatted(date: .omitted, time: .shortened))" + (problem.map { " · now: \($0.message)" } ?? ""))
             } else {
                 info(problem.map { "No weather: \($0.message)" } ?? "No weather yet")
@@ -380,6 +414,13 @@ final class MenuBarWeather: NSObject, ObservableObject, NSMenuDelegate {
         let choose = NSMenuItem(title: city == nil ? "Choose City…" : "Change City…", action: #selector(chooseCity), keyEquivalent: "")
         choose.target = self
         menu.addItem(choose)
+        for other in recent where other.id != city?.id {
+            let entry = NSMenuItem(title: "Switch to \(other.name)", action: #selector(pickRecent(_:)), keyEquivalent: "")
+            entry.target = self
+            entry.representedObject = other.id
+            entry.toolTip = other.label
+            menu.addItem(entry)
+        }
         menu.addItem(.separator())
         let off = NSMenuItem(title: "Turn Off Weather", action: #selector(turnOff), keyEquivalent: "")
         off.target = self
@@ -391,6 +432,9 @@ final class MenuBarWeather: NSObject, ObservableObject, NSMenuDelegate {
     @objc private func pickUnit(_ sender: NSMenuItem) { unit = Unit(rawValue: sender.representedObject as? String ?? "") ?? unit }
     @objc private func refreshNow() { waitUntil = waitUntil.flatMap { $0 > Date() ? $0 : nil }; refresh(force: true) }
     @objc private func chooseCity() { Self.openCityPicker() }
+    @objc private func pickRecent(_ sender: NSMenuItem) {
+        if let id = sender.representedObject as? Int, let other = recent.first(where: { $0.id == id }) { choose(other) }
+    }
     @objc private func turnOff() { AOMModuleSwitches.shared.set(.weather, on: false) }
 
     static func openCityPicker() {

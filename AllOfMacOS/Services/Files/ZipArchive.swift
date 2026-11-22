@@ -331,7 +331,7 @@ enum ZipArchive {
         }
         // 7.6 (Codex Z03): the folder is still the one made or checked before writing (not swapped for a link).
         let identity = FileTools.anyIdentity(folder).map { $0.split(separator: ":").prefix(3).joined(separator: ":") }
-        guard resolvesInside(folder, root), identity == parentIdentity else { throw Failure.outside(name) }
+        guard resolvesInside(folder, root), let identity, let parentIdentity, identity == parentIdentity else { throw Failure.outside(name) }
         let final = try commitExclusive(temporary, in: folder, name: name)
         committed = true
         return final

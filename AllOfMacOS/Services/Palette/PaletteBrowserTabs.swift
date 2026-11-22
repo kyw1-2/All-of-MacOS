@@ -156,10 +156,12 @@ enum PaletteBrowserTabs {
             if (\(windowID) !== null) { for (const c of all) { try { if (String(c.id()) === \(windowID)) { w = c; break; } } catch (e) {} } }
             if (w === null && \(windowID) === null && all.length >= \(tab.window)) { w = all[\(tab.window - 1)]; }
             if (w !== null) {
-              let urls = [];
+              let urls = [], names = [];
               try { urls = w.tabs.url(); } catch (e) {}
-              // The address must name one tab in the window when the script runs.
-              const hits = urls.reduce((a, u, i) => (u === \(jsString(tab.url)) ? a.concat([i]) : a), []);
+              try { names = w.tabs.name(); } catch (e) {}
+              // The address (then the title, as in the Swift check) must name one tab when the script runs.
+              let hits = urls.reduce((a, u, i) => (u === \(jsString(tab.url)) ? a.concat([i]) : a), []);
+              if (hits.length > 1) { hits = hits.filter(i => names[i] === \(jsString(tab.title))); }
               k = hits.length === 1 ? hits[0] : -1;
             }
             """

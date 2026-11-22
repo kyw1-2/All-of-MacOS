@@ -168,11 +168,19 @@ enum AirPlayGapCause: UInt64, Equatable {
 
     /// Pure: which of the eight entry-interval bins (× the cycle: ≤1.1, ≤1.25,
     /// ≤1.5, ≤2, ≤3, ≤5, ≤10, more) an interval falls in.
+    /// Literal comparisons: no static array touched on the IO thread (its
+    /// first read would take a lock and allocate; Gemini 7.6 review).
     static func bin(intervalTicks: UInt64, periodTicks: UInt64) -> Int {
         guard periodTicks > 0 else { return 0 }
         let ratio = Double(intervalTicks) / Double(periodTicks)
-        for (index, edge) in binEdges.enumerated() where ratio <= edge { return index }
-        return binEdges.count
+        if ratio <= 1.1 { return 0 }
+        if ratio <= 1.25 { return 1 }
+        if ratio <= 1.5 { return 2 }
+        if ratio <= 2 { return 3 }
+        if ratio <= 3 { return 4 }
+        if ratio <= 5 { return 5 }
+        if ratio <= 10 { return 6 }
+        return 7
     }
 
     static let binEdges: [Double] = [1.1, 1.25, 1.5, 2, 3, 5, 10]
@@ -565,7 +573,7 @@ final class AirPlayDirectStream: AppAudioActivitySource {
         costCycles.add()
         costMaxTicks.raise(to: cost)
         // The work itself took longer than the cycle (AUD-01: "after entry").
-        if frames > 0, Double(cost) > Double(frames) * ticksPerFrame { slowCycles.add() }
+        if frames > 0, ticksPerFrame > 0, Double(cost) > Double(frames) * ticksPerFrame { slowCycles.add() }
     }
 
     private static func silence(_ outputs: UnsafeMutableAudioBufferListPointer) {

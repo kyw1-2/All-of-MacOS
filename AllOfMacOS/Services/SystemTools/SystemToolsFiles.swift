@@ -184,7 +184,8 @@ enum FileTools {
     /// One set's decision: the copies that may go, or why the set stays.
     enum SetDecision: Equatable {
         case skip
-        case trash([DuplicateSet.Member], keptFirst: String?)
+        /// The copies to move, and the copies that stay that passed the check.
+        case trash([DuplicateSet.Member], staying: [DuplicateSet.Member], keptFirst: String?)
         case hold(String)
     }
 
@@ -217,10 +218,11 @@ enum FileTools {
         }
         for member in chosen { if let reason = problem(member) { return .hold("\(label): \(reason)") } }
         var stayingProblem: String?
+        var verified: [DuplicateSet.Member] = []
         for member in staying {
-            guard let reason = problem(member) else { return .trash(chosen, keptFirst: keptFirst) }
-            stayingProblem = stayingProblem ?? reason
+            if let reason = problem(member) { stayingProblem = stayingProblem ?? reason } else { verified.append(member) }
         }
+        guard verified.isEmpty else { return .trash(chosen, staying: verified, keptFirst: keptFirst) }
         return .hold("\(label): no copy that stays is the same any more (\(stayingProblem ?? "changed"))")
     }
 
@@ -234,7 +236,7 @@ enum FileTools {
             switch decide(set, label: label, selected: selected, fingerprint: fingerprint, hash: hash) {
             case .skip: break
             case .hold(let reason): plan.held.append(reason)
-            case .trash(let members, let keptFirst):
+            case .trash(let members, _, let keptFirst):
                 if let keptFirst { plan.keptLast.append(keptFirst) }
                 plan.trash += members.map { CleanupCandidate(url: $0.url, size: $0.fingerprint.size, note: label) }
             }
@@ -274,9 +276,9 @@ enum FileTools {
             switch decide(set, label: label, selected: selected, fingerprint: fingerprint, hash: hash) {
             case .skip: continue
             case .hold(let reason): result.held.append(reason)
-            case .trash(let members, let keptFirst):
+            case .trash(let members, let staying, let keptFirst):
+                // Only copies that passed the full check (hash included) can vouch for the set.
                 if let keptFirst { result.keptLast.append(keptFirst) }
-                let staying = set.members.filter { member in !members.contains { $0.url == member.url } }
                 for member in members {
                     // The copy that stays must still be there and unchanged right now.
                     guard staying.contains(where: { fingerprint($0.url) == $0.fingerprint }) else {

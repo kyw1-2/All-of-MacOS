@@ -29,6 +29,8 @@ final class MenuBarHider: NSObject {
     }
     /// Shown everything (⌥-click), not only the "when needed" section.
     private(set) var showsAll = false
+    /// The check that the chevron stayed on its display (cancelled by any change).
+    private var visibilityCheck: DispatchWorkItem?
     private(set) var isCollapsed = false
     private var rehide: DispatchWorkItem?
     /// 7.6 (Codex MB04): the delayed collapse after a start, cancelled by stop.
@@ -83,6 +85,7 @@ final class MenuBarHider: NSObject {
         startCollapse?.cancel()
         startCollapse = nil
         rehide?.cancel()
+        visibilityCheck?.cancel()
         for item in [toggle, divider, always].compactMap({ $0 }) { NSStatusBar.system.removeStatusItem(item) }
         always = nil
         showsAll = false
@@ -132,12 +135,14 @@ final class MenuBarHider: NSObject {
         Self.alwaysSectionOn = on
         if on {
             addAlwaysDivider()
-            GestureHUD.shared.show(title: "Always-Hidden Section", detail: "⌘-drag items left of the new fainter divider; they stay hidden until you ⌥-click the chevron.")
+            // Both dividers show, held open, so the new one can be ⌘-dragged (Gemini 7.6).
+            expand(all: true, holdOpen: true)
+            GestureHUD.shared.show(title: "Always-Hidden Section", detail: "⌘-drag items left of the new fainter divider; they stay hidden until you ⌥-click the chevron. Click the chevron when you're done.")
         } else {
             if let always { NSStatusBar.system.removeStatusItem(always) }
             always = nil
+            apply()
         }
-        apply()
     }
 
     private func showOptions() {
@@ -149,6 +154,10 @@ final class MenuBarHider: NSObject {
         let all = NSMenuItem(title: "Show Everything (⌥-Click)", action: #selector(showEverything), keyEquivalent: "")
         all.target = self
         menu.addItem(all)
+        let hold = NSMenuItem(title: "Keep Open Until I Click", action: #selector(keepOpen), keyEquivalent: "")
+        hold.target = self
+        hold.isEnabled = !isCollapsed
+        menu.addItem(hold)
         menu.addItem(.separator())
         let header = NSMenuItem(title: "Hide Again After", action: nil, keyEquivalent: "")
         header.isEnabled = false
@@ -167,6 +176,7 @@ final class MenuBarHider: NSObject {
 
     @objc private func toggleAlwaysSection() { setAlwaysSection(!Self.alwaysSectionOn) }
     @objc private func showEverything() { expand(all: true) }
+    @objc private func keepOpen() { rehide?.cancel() }
     @objc private func pickRehide(_ sender: NSMenuItem) { Self.rehideSeconds = sender.representedObject as? Double ?? 15 }
 
     /// Sets both lengths for the state, then checks the chevron is still on a
@@ -185,16 +195,31 @@ final class MenuBarHider: NSObject {
         divider.length = lengths.divider
         divider.button?.image = lengths.divider == Self.collapsedLength ? nil
             : NSImage(systemSymbolName: "line.diagonal", accessibilityDescription: "Menu Bar Hider divider")
-        if let always { always.length = lengths.always ?? Self.dividerLength }
+        if let always {
+            always.length = lengths.always ?? Self.dividerLength
+            always.button?.image = always.length == Self.collapsedLength ? nil
+                : NSImage(systemSymbolName: "line.diagonal", accessibilityDescription: "Always-hidden divider")
+        }
         updateAppearance()
+        visibilityCheck?.cancel()
         guard always != nil, lengths.always == Self.collapsedLength else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-            guard let self, let frame = self.toggle?.button?.window?.frame else { return }
-            let visible = NSScreen.screens.contains { $0.frame.intersects(frame) && $0.frame.minX <= frame.minX }
-            guard !visible else { return }
+        let check = DispatchWorkItem { [weak self] in
+            guard let self, self.always != nil, !self.isCollapsed, !self.showsAll else { return }
+            guard !Self.chevronVisible(self.toggle?.button?.window) else { return }
             self.setAlwaysSection(false)
             GestureHUD.shared.show(title: "Always-Hidden Section Off", detail: "On this display it pushed the chevron off the menu bar, so AOM went back to one section.")
         }
+        visibilityCheck = check
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: check)
+    }
+
+    /// The chevron is on its own display's menu bar and not behind the notch.
+    private static func chevronVisible(_ window: NSWindow?) -> Bool {
+        guard let window, let screen = window.screen else { return false }
+        let frame = window.frame
+        guard screen.frame.contains(CGPoint(x: frame.midX, y: frame.midY)) else { return false }
+        if let notch = GestureHUD.notchRect(screen), notch.intersects(frame) { return false }
+        return true
     }
 
     /// Pure: collapsing is safe only while the divider sits left of the
@@ -224,11 +249,14 @@ final class MenuBarHider: NSObject {
         _ = divider
     }
 
-    func expand(all: Bool = false) {
+    func expand(all: Bool = false, holdOpen: Bool = false) {
         guard toggle != nil, divider != nil else { return }
+        startCollapse?.cancel()
+        startCollapse = nil
         isCollapsed = false
         showsAll = all
         apply()
+        if holdOpen { rehide?.cancel(); return }
         rehide?.cancel()
         let seconds = Self.rehideSeconds
         guard seconds > 0 else { return }

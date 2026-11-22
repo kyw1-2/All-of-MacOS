@@ -360,4 +360,63 @@ final class AOM76Tests: XCTestCase {
         XCTAssertTrue(summary.headline.hasPrefix("1 output gap (1 late callback)"))
         XCTAssertTrue(AudioGlitchMarker.summarize([], around: mark).headline.hasPrefix("AOM recorded no output gap"))
     }
+
+    // MARK: Gemini 7.6 review, checked against the code
+
+    func testReviewFolderCopyFailsWholeOnAnUnreadableFolder() throws {
+        let (left, right) = try folders()
+        let locked = left.appendingPathComponent("New/locked", isDirectory: true)
+        try FileManager.default.createDirectory(at: locked, withIntermediateDirectories: true)
+        try Data("a".utf8).write(to: left.appendingPathComponent("New/a.txt"))
+        try Data("b".utf8).write(to: locked.appendingPathComponent("b.txt"))
+        let comparison = try XCTUnwrap(FolderCompare.compare(left, right))
+        chmod(locked.path, 0o000)
+        defer { chmod(locked.path, 0o755) }
+        // The signature saw the folder readable; copying it now must fail whole.
+        let result = FolderCompare.copyMissing(comparison.items.map { item in
+            var copy = item
+            if var side = copy.left, side.isFolder { side.signature = FolderCompare.treeSignature(side.url); copy.left = side }
+            return copy
+        }, direction: .leftToRight)
+        XCTAssertTrue(result.copied.isEmpty)
+        XCTAssertNotNil(result.skipped["new"])
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: right.path), [], "no half-copied folder")
+    }
+
+    func testReviewTreeSignatureSeesRenamesAndEmptyFolders() throws {
+        let folder = scratch.appendingPathComponent("Sig", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: folder.appendingPathComponent("a.txt"))
+        let first = FolderCompare.treeSignature(folder)
+        try FileManager.default.moveItem(at: folder.appendingPathComponent("a.txt"), to: folder.appendingPathComponent("b.txt"))
+        let renamed = FolderCompare.treeSignature(folder)
+        XCTAssertNotEqual(first.digest, renamed.digest, "same size and date, another name")
+        try FileManager.default.createDirectory(at: folder.appendingPathComponent("empty"), withIntermediateDirectories: false)
+        XCTAssertNotEqual(renamed.digest, FolderCompare.treeSignature(folder).digest, "an empty folder counts")
+    }
+
+    func testReviewLoneTwinIsNotPressedForTheOther() {
+        let twin = AOMMenuShelfItem(pid: 1, ownerBundleID: "x", ownerName: "X", title: "B", axIdentifier: "status", ordinal: 1,
+                                    siblings: 2, identifierIsUnique: false)
+        XCTAssertNil(AOMMenuShelfPolicy.resolve(twin, in: [.init(identifier: "status", title: "A")]), "its twin closed: no click on the other")
+        let unique = AOMMenuShelfItem(pid: 1, ownerBundleID: "x", ownerName: "X", title: "C", axIdentifier: "only", ordinal: 3, siblings: 4)
+        XCTAssertEqual(AOMMenuShelfPolicy.resolve(unique, in: [.init(identifier: "only", title: "C")]), 0, "a unique identifier finds its item anywhere")
+        XCTAssertNotEqual(AOMMenuShelfItem(pid: 1, ownerBundleID: "x", ownerName: "X", title: "", axIdentifier: "", ordinal: 0).id,
+                          AOMMenuShelfItem(pid: 2, ownerBundleID: "x", ownerName: "X", title: "", axIdentifier: "", ordinal: 0).id,
+                          "two processes of one app are two rows")
+        XCTAssertTrue(MenuBarStripPolicy.isOwnDivider(AOMMenuShelfItem(pid: 7, ownerBundleID: "a", ownerName: "AOM", title: "Menu Bar Hider divider",
+                                                                       axIdentifier: "", ordinal: 0), ownPID: 7))
+    }
+
+    func testReviewWeatherTrendAndRecentCities() throws {
+        let city = WeatherCity(id: 9, name: "Busan", timezone: "Asia/Seoul", latitude: 35, longitude: 129)
+        let reading = try MenuBarWeather.parseForecast(Data(#"{"current":{"temperature_2m":10,"apparent_temperature":8,"weather_code":61,"is_day":1},"hourly":{"temperature_2m":[10,9,8,7,6,5],"precipitation_probability":[10,40,30,0,0,0]}}"#.utf8),
+                                                       city: city, unit: .celsius, now: Date())
+        XCTAssertEqual(MenuBarWeather.trend(reading), "Next 6 h: 10° → 5° · rain up to 40%")
+        let a = WeatherCity(id: 1, name: "A", timezone: "UTC", latitude: 0, longitude: 0)
+        let b = WeatherCity(id: 2, name: "B", timezone: "UTC", latitude: 0, longitude: 0)
+        let c = WeatherCity(id: 3, name: "C", timezone: "UTC", latitude: 0, longitude: 0)
+        XCTAssertEqual(MenuBarWeather.remember(a, in: [c, a, b]).map(\.id), [1, 3, 2])
+        XCTAssertEqual(MenuBarWeather.remember(city, in: [a, b, c]).map(\.id), [9, 1, 2], "three at most")
+    }
 }

@@ -586,6 +586,8 @@ struct QuickCommandPalette: View {
                 keywords: "menu bar icons notch hidden status items ice bar bartender 메뉴바 노치 숨은 아이콘") { MenuBarStripController.shared.show() }
         command("audio.mark", "I Just Heard a Glitch", "Save what AOM saw 10 s before and after; playback isn't touched · 방금 잡음 들림", "waveform.badge.exclamationmark",
                 keywords: "crackle glitch noise airplay homepod audio mark 지지직 잡음 끊김 표시") { AudioGlitchMarker.mark() }
+        command("audio.mark.reveal", "Reveal Last Glitch Mark", "The newest audio-marks file in Finder · 잡음 기록 보기", "doc.text.magnifyingglass",
+                keywords: "glitch mark file audio diagnostics finder 잡음 기록") { AudioGlitchMarker.revealLast() }
         // 7.6 (Codex SEC04): aom://trigger links ask again.
         command("links.forget", "Forget Link Permissions", "aom:// links ask again before running an automation · 링크 권한 초기화", "link.badge.plus",
                 keywords: "aom link url scheme trigger permission allow reset 링크 권한") { AOMLinkConsent.forgetAll() }
