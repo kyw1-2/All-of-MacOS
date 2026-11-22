@@ -590,12 +590,15 @@ struct AOMModuleTile<Control: View, MenuItems: View>: View {
     var active = true
     var running = false
     let open: () -> Void
+    /// 7.11 (spec §3): the card's commands also behind a visible button, not
+    /// only the right-click menu.
+    var menuButton = false
     @ViewBuilder var control: Control
     @ViewBuilder var menuItems: MenuItems
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(_ module: AOMModule, metric: String, unit: String? = nil, status: String, statusTone: AOMTone? = nil,
-         active: Bool = true, running: Bool = false, open: @escaping () -> Void,
+         active: Bool = true, running: Bool = false, menuButton: Bool = false, open: @escaping () -> Void,
          @ViewBuilder control: () -> Control, @ViewBuilder menu: () -> MenuItems) {
         self.module = module
         self.metric = metric
@@ -607,6 +610,7 @@ struct AOMModuleTile<Control: View, MenuItems: View>: View {
         self.open = open
         self.control = control()
         self.menuItems = menu()
+        self.menuButton = menuButton
     }
 
     /// Warning, danger and recording statuses carry their glyph and text colour.
@@ -658,6 +662,18 @@ struct AOMModuleTile<Control: View, MenuItems: View>: View {
                     .fixedSize()
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
+                }
+                if menuButton {
+                    Menu { menuItems } label: {
+                        Image(systemName: "chevron.down.circle")
+                            .font(AOMFont.callout)
+                            .foregroundStyle(AOMColor.textSecondary)
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .help("\(module.title) commands")
+                    .accessibilityLabel("\(module.title) commands")
                 }
                 control
                     .labelsHidden()

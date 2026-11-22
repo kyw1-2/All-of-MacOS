@@ -36,6 +36,8 @@ final class AOMMenuBarPanelModel: ObservableObject {
     /// 6.7: sessions that are running now, shown as rows with their control.
     @Published var recording = false
     @Published var keepAwakeRemaining: String?
+    /// 7.11: whole minutes left on a timed Keep Awake (nil: off or until turned off).
+    @Published var keepAwakeMinutesLeft: Int?
     let appState: AppState?
 
     init(appState: AppState?) {
@@ -54,6 +56,7 @@ final class AOMMenuBarPanelModel: ObservableObject {
         let awake = KeepAwakeService.shared
         set(\.keepAwake, awake.isActive)
         set(\.keepAwakeRemaining, awake.isActive ? awake.remainingDescription : nil)
+        set(\.keepAwakeMinutesLeft, awake.isActive ? awake.endsAt.map { max(1, Int(($0.timeIntervalSinceNow / 60).rounded(.up))) } : nil)
         set(\.hud, UserDefaults.standard.object(forKey: "AOMHUDEnabled") as? Bool ?? true)
         set(\.focusRunning, FocusModule.isSessionActive)
         set(\.micMuted, MicMuteController.shared.isMuted)
@@ -134,7 +137,18 @@ struct AOMMenuBarPanel: View {
                 actions.close()
                 DispatchQueue.main.async { AOMMenuEditorNavigation.open() }
             },
-            accessory: battery.power?.percent != nil ? AnyView(batteryRow) : nil)
+            accessory: battery.power?.percent != nil ? AnyView(batteryRow) : nil,
+            onCommand: { command in
+                // A capture or a window starts after the panel is gone.
+                if command.closesPanel {
+                    actions.close()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { command.run() }
+                } else {
+                    command.run()
+                    model.refresh()
+                }
+            },
+            onResize: actions.resized)
         .aomButtonDefaults()
         .onAppear { model.refresh(); battery.refreshBattery() }
         .onChange(of: model.hasActiveSessions) { _, _ in DispatchQueue.main.async { actions.resized() } }
@@ -165,19 +179,25 @@ struct AOMMenuBarPanel: View {
 
     private var tiles: [AOMMenuBarCraftPanel.ToggleTile] {
         var tiles: [AOMMenuBarCraftPanel.ToggleTile] = [
+            // 7.11 (spec §3): Capture is a menu only — opening it captures nothing.
+            .init(id: "capture", title: "Capture", subtitle: "Area · Window · Full Screen", symbol: "camera.viewfinder",
+                  tint: AOMModule.capture.hue, isOn: false, onToggle: nil, menu: AOMFeatureMenus.capture()),
             .init(id: "snap", title: "Drag to Snap", subtitle: !model.engineOn ? "AOM paused" : model.snapping ? "On" : "Off",
                   symbol: "rectangle.split.2x2", tint: AOMModule.tiling.hue, isOn: model.snapping && model.engineOn,
                   onToggle: { if model.engineOn { model.toggleSnapping() } }),
             .init(id: "clip", title: "Clipboard", subtitle: model.clipboardOn ? "Saving copies" : "Paused",
-                  symbol: "doc.on.clipboard", tint: AOMModule.clipboard.hue, isOn: model.clipboardOn, onToggle: model.toggleClipboard),
+                  symbol: "doc.on.clipboard", tint: AOMModule.clipboard.hue, isOn: model.clipboardOn, onToggle: model.toggleClipboard,
+                  menu: AOMFeatureMenus.clipboard()),
         ]
         if #available(macOS 14.2, *) {
             tiles.append(.init(id: "audio", title: "App Audio", subtitle: model.appAudio ? "Per-app volume" : "Off",
                                symbol: "speaker.wave.2", tint: AOMModule.audio.hue, isOn: model.appAudio, onToggle: model.toggleAppAudio))
         }
         tiles += [
-            .init(id: "awake", title: "Keep Awake", subtitle: model.keepAwake ? (model.keepAwakeRemaining ?? "On") : "Off",
-                  symbol: "cup.and.saucer", tint: AOMModule.focus.hue, isOn: model.keepAwake, onToggle: model.toggleKeepAwake),
+            .init(id: "awake", title: "Keep Awake",
+                  subtitle: model.keepAwake ? (model.keepAwakeMinutesLeft.map { "\($0) min left" } ?? "Until turned off") : "Off",
+                  symbol: "cup.and.saucer", tint: AOMModule.focus.hue, isOn: model.keepAwake, onToggle: model.toggleKeepAwake,
+                  menu: AOMFeatureMenus.keepAwake(), menuNote: model.keepAwake ? (model.keepAwakeMinutesLeft.map { "\($0) min left" } ?? "Until turned off") : nil),
             .init(id: "hud", title: "Gesture HUD", subtitle: model.hud ? "On" : "Off", symbol: "rectangle.on.rectangle",
                   tint: AOMModule.automation.hue, isOn: model.hud, onToggle: model.toggleHUD),
             .init(id: "mic", title: "Mute Mic", subtitle: model.micMuted ? "Muted" : "Live",

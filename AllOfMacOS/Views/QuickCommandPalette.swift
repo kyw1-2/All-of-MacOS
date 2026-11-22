@@ -357,10 +357,15 @@ struct QuickCommandPalette: View {
     static let screenCommands: [ScreenCommand] = [
         .init(id: "automation.catalog", route: .automationCatalog, subtitle: "Choose an action to configure · 자동화 만들기",
               aliases: ["configure automation", "자동화 만들기"]),
+        // 7.11 (spec §1): force quit any process with one Return.
+        .init(id: "system.screen.killProcess", route: .killProcess,
+              subtitle: "Force quit an app, helper or command-line process · 프로세스 강제 종료",
+              aliases: ["kill process", "killprocess", "kill", "killapps", "kill apps", "force quit", "kill -9", "pkill",
+                        "프로세스 강제 종료", "프로세스 종료", "강종", "강제 종료", "강제종료"],
+              keywords: "process pid activity monitor helper cli terminal sigkill 프로세스 작업 관리자"),
         .init(id: "system.screen.killApps", route: .killApps,
-              subtitle: "Quit or force quit a running app · 앱 종료",
-              aliases: ["killapps", "kill apps", "kill app", "kill", "quit apps", "quit app", "force quit",
-                        "앱 종료", "강제 종료", "종료", "앱 끄기"],
+              subtitle: "Quit an app the normal way, so it can save · 일반 종료",
+              aliases: ["quit app", "quit apps", "killapps", "kill apps", "kill app", "앱 종료", "일반 종료", "종료", "앱 끄기"],
               keywords: "process activity monitor memory 메모리 작업 관리자"),
         .init(id: "system.screen.uninstall", route: .uninstallApps,
               subtitle: "Review an app and its leftovers, then move them to the Trash · 앱 삭제",
@@ -1226,6 +1231,7 @@ struct QuickCommandPalette: View {
              .scriptArgument, .snippetArguments, .schedule, .contacts, .sendTo, .hotkey, .themes: break
         case .hotkeyFinder: PaletteHotkeyFinder.shared.shortcut = nil
         case .killApps: screens.watchApps(true)
+        case .killProcess: screens.watchProcesses(true)
         case .uninstallReview(let app): screens.beginUninstall(app)
         case .soundDevices: screens.loadSound()
         // Read once when the screen opens, never per keystroke.
@@ -1246,6 +1252,8 @@ struct QuickCommandPalette: View {
         switch route {
         case .killApps where !navigation.frames.contains { $0.route == .killApps }:
             screens.watchApps(false)
+        case .killProcess where !navigation.frames.contains { $0.route == .killProcess }:
+            screens.watchProcesses(false)
         case .uninstallReview:
             screens.endUninstall()
         case .soundDevices:
@@ -1640,6 +1648,7 @@ struct QuickCommandPalette: View {
         case .tool(let tool): return toolItems(tool)
         case .automationCatalog: return automationCatalogItems()
         case .killApps: return killAppItems()
+        case .killProcess: return killProcessItems()
         case .uninstallApps: return uninstallListItems()
         case .uninstallReview: return uninstallReviewItems()
         case .soundDevices: return soundItems()
@@ -1685,6 +1694,38 @@ struct QuickCommandPalette: View {
     func folder(of path: String?) -> String {
         guard let path else { return "" }
         return (URL(fileURLWithPath: path).deletingLastPathComponent().path as NSString).abbreviatingWithTildeInPath
+    }
+
+    // Kill Process (7.11, spec §1): one row per instance; ↩ force quits that
+    // one at once — no question, no action menu — and the list and search stay.
+    private func killProcessItems() -> [PaletteItem] {
+        guard let entries = screens.processes else { return [] }
+        let quittable = entries.filter { !$0.isProtected }.count
+        return entries.map { entry in
+            let image = entry.kind == .process ? nil : entry.path.flatMap(Self.bundlePath).map { session.icon(forPath: $0) }
+            let origin = [entry.kind.label, entry.owner.map { entry.kind == .process ? "from \($0)" : $0 }]
+                .compactMap { $0 }.joined(separator: " · ")
+            let place = entry.kind == .process ? entry.path.map { ($0 as NSString).abbreviatingWithTildeInPath } : nil
+            let subtitle = ["PID \(entry.pid)", origin, place].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
+            if entry.isProtected {
+                return screenRow(entry.id, entry.name, subtitle + " · keeps your session running",
+                                 icon: "lock", group: "Not ended from here", primary: PaletteAction(title: "Protected") {},
+                                 image: image, dimmed: true)
+            }
+            var item = screenRow(entry.id, entry.name, subtitle,
+                                 icon: entry.kind == .process ? "terminal" : "app", group: "Processes · \(quittable)",
+                                 primary: PaletteAction(title: "강제 종료", symbol: "xmark.octagon.fill", effect: .stay,
+                                                        isDestructive: true) { screens.forceQuit(entry) },
+                                 accessory: PaletteKillApps.memoryDescription(entry.memory), image: image)
+            item.keywords = PaletteProcesses.keywords(entry)
+            return item
+        }
+    }
+
+    /// The .app bundle a process's executable is in, for its icon.
+    private static func bundlePath(_ executable: String) -> String? {
+        guard let range = executable.range(of: ".app/", options: .backwards) else { return nil }
+        return String(executable[..<range.lowerBound]) + ".app"
     }
 
     // Kill Apps (Codex spec 03): ↩ quits the normal way and keeps the list,
@@ -2317,6 +2358,12 @@ struct QuickCommandPalette: View {
         .onKeyPress(.upArrow) { moveSelection(-1, in: items, selected: selected); return .handled }
         .onKeyPress(.downArrow) { moveSelection(1, in: items, selected: selected); return .handled }
         .onKeyPress(.return, phases: .down) { press in
+            // 7.11 (spec §1): on Kill Process a Return that commits Korean
+            // input, or a held key repeating, never ends the selected row.
+            if navigation.current == .killProcess {
+                if (NSApp.keyWindow?.firstResponder as? NSTextView)?.hasMarkedText() == true { return .ignored }
+                if NSApp.currentEvent?.isARepeat == true { return .handled }
+            }
             // On Ask AI a typed line is a question, not a row choice.
             if navigation.current == .ai, !trimmed.isEmpty, !press.modifiers.contains(.command) {
                 askAI(trimmed)
@@ -2468,7 +2515,7 @@ struct QuickCommandPalette: View {
                         askAI(question)
                         return
                     }
-                    let routes: [String: PaletteRoute] = ["ai": .ai, "killApps": .killApps, "uninstallApps": .uninstallApps,
+                    let routes: [String: PaletteRoute] = ["ai": .ai, "killApps": .killApps, "killProcess": .killProcess, "uninstallApps": .uninstallApps,
                                                           "sound": .soundDevices, "clipboard": .clipboard,
                                                           "windows": .windowLayouts, "keepAwake": .keepAwake, "system": .system]
                     if let route = routes[name] ?? Self.previewRoute72(name) { push(route) }
@@ -2749,6 +2796,7 @@ struct QuickCommandPalette: View {
         switch navigation.current {
         case nil: return "No results for “\(query)”"
         case .killApps?: return isSearching ? "No running app matches “\(query)”" : "No app AOM can quit is running"
+        case .killProcess?: return screens.processes == nil ? "Reading processes…" : (isSearching ? "No process matches “\(query)”" : "No process to end")
         case .uninstallApps?: return isSearching ? "No installed app matches “\(query)”" : "No app AOM can uninstall"
         case .clipboard? where clipboardFilter != nil:
             let kind = Self.filterTitle(clipboardFilter).lowercased()
@@ -2762,6 +2810,7 @@ struct QuickCommandPalette: View {
         switch navigation.current {
         case nil: return "Try an automation name, an app, a menu item or a sum such as 12 × 11."
         case .killApps?: return "Only apps with a Dock icon are listed; Finder and AOM itself are never quit from here."
+        case .killProcess?: return "Your apps, menu bar apps, helpers and command-line processes. ↩ force quits the selected one at once."
         case .uninstallApps?: return "Apps that come with macOS and All of MacOS itself aren't listed."
         default: return "esc goes back to the previous screen."
         }

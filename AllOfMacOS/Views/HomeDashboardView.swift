@@ -742,6 +742,7 @@ struct AOMHomeView: View {
                           statusTone: recording.isRecording ? .recording : (needsSetup ? .warning : nil),
                           active: !needsSetup,
                           running: recording.isRecording,
+                          menuButton: true,
                           open: { appState.selectedMainTab = .capture }) {
                 if recording.isRecording {
                     Button {
@@ -764,7 +765,7 @@ struct AOMHomeView: View {
                 }
             } menu: {
                 if !needsSetup && !recording.isRecording {
-                    Button("Capture Area") { CaptureCoordinator.shared.captureArea() }
+                    AOMFeatureMenus.menuItems(AOMFeatureMenus.capture())
                     Button("Record Screen") { recording.toggleRecording() }
                 }
                 tileMenu(.capture)
@@ -781,18 +782,15 @@ struct AOMHomeView: View {
                                  : "Saving history" + (pinnedCount > 0 ? " · \(pinnedCount) pinned" : "")),
                           statusTone: saving ? nil : .neutral,
                           active: saving,
+                          menuButton: true,
                           open: { appState.selectedMainTab = .clipboard }) {
                 Toggle("Save clipboard history", isOn: Binding(get: { !clipboard.paused },
                                                                set: { $0 ? clipboard.resume() : clipboard.pause() }))
                     .disabled(globalPaused)
                     .help(clipboard.paused ? "Resume clipboard history" : "Stop saving what you copy until you resume")
             } menu: {
-                Button("Show Clipboard Shelf") { ClipboardPanelController.shared.show() }
-                if !globalPaused {
-                    Button(clipboard.paused ? "Resume Clipboard History" : "Pause Clipboard History") {
-                        if clipboard.paused { clipboard.resume() } else { clipboard.pause() }
-                    }
-                }
+                // The same commands as the menu bar panel's Clipboard menu.
+                AOMFeatureMenus.menuItems(AOMFeatureMenus.clipboard().filter { !globalPaused || $0.id == "clipboard.open" })
                 tileMenu(.clipboard)
             }
         case .audio:
@@ -829,9 +827,11 @@ struct AOMHomeView: View {
                               : SystemToolsInventory.subtitle,
                           statusTone: keepAwake.isActive ? .info : nil,
                           active: true,
+                          menuButton: true,
                           open: { appState.selectedMainTab = .tools }) {
                 WorkspaceTileChevron()
             } menu: {
+                Section("Keep Awake") { AOMFeatureMenus.menuItems(AOMFeatureMenus.keepAwake()) }
                 tileMenu(.systemTools)
             }
         }

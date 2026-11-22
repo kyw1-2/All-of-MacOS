@@ -27,7 +27,7 @@ struct WeatherCity: Codable, Equatable, Identifiable, Hashable {
 
 struct WeatherReading: Codable, Equatable {
     let cityID: Int
-    let temperature: Double
+    var temperature: Double
     /// Nil when the provider left it out: the actual temperature stands in.
     var feelsLike: Double?
     let code: Int
@@ -36,7 +36,7 @@ struct WeatherReading: Codable, Equatable {
     var high: Double?
     var rainChance: Int?
     let fetchedAt: Date
-    let unit: MenuBarWeather.Unit
+    var unit: MenuBarWeather.Unit
     /// The next hours' temperatures and rain chances, from the same request (Gemini 7.6 idea).
     var nextHours: [Double]? = nil
     var nextRain: [Int]? = nil
@@ -56,7 +56,7 @@ struct WeatherReading: Codable, Equatable {
 struct WeatherHour: Codable, Equatable {
     /// "2026-11-22T16:00", the city's local time.
     let time: String
-    let temperature: Double
+    var temperature: Double
     var rain: Int?
     let code: Int
     let isDay: Bool
@@ -67,9 +67,31 @@ struct WeatherDay: Codable, Equatable {
     /// "2026-11-22".
     let date: String
     let code: Int
-    let high: Double
-    let low: Double
+    var high: Double
+    var low: Double
     var rain: Int?
+}
+
+extension WeatherReading {
+    /// 7.11: the same observation in another unit — 20 °C reads 68 °F, never
+    /// "20°F" — so a unit switch shows at once and offline too. Wind follows
+    /// (km/h with °C, mph with °F, as Open-Meteo is asked).
+    func converted(to target: MenuBarWeather.Unit) -> WeatherReading {
+        guard unit != target else { return self }
+        let degrees: (Double) -> Double = target == .fahrenheit ? { $0 * 9 / 5 + 32 } : { ($0 - 32) * 5 / 9 }
+        let speed: (Double) -> Double = target == .fahrenheit ? { $0 / 1.609344 } : { $0 * 1.609344 }
+        var out = self
+        out.temperature = degrees(temperature)
+        out.feelsLike = feelsLike.map(degrees)
+        out.low = low.map(degrees)
+        out.high = high.map(degrees)
+        out.nextHours = nextHours?.map(degrees)
+        out.windSpeed = windSpeed.map(speed)
+        out.hours = hours?.map { hour in var hour = hour; hour.temperature = degrees(hour.temperature); return hour }
+        out.days = days?.map { day in var day = day; day.high = degrees(day.high); day.low = degrees(day.low); return day }
+        out.unit = target
+        return out
+    }
 }
 
 enum WeatherError: Error, Equatable {
@@ -139,6 +161,34 @@ final class MenuBarWeather: NSObject, ObservableObject, NSMenuDelegate {
     static let shared = MenuBarWeather()
 
     enum Display: String, CaseIterable, Codable { case temperature, feelsLike, iconOnly }
+
+    /// 7.11: what sits beside the icon, in the person's order (Menu Bar ›
+    /// Weather). An empty list is the icon alone.
+    enum Field: String, CaseIterable, Codable, Identifiable {
+        case temperature, feelsLike, highLow, rainChance, humidity, wind
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .temperature: return "Temperature · 기온"
+            case .feelsLike: return "Feels like · 체감"
+            case .highLow: return "Today's high and low · 최고/최저"
+            case .rainChance: return "Chance of rain today · 강수확률"
+            case .humidity: return "Humidity · 습도"
+            case .wind: return "Wind speed · 풍속"
+            }
+        }
+    }
+
+    static let fieldsKey = "AOMWeather.fields.v1"
+
+    /// Pure: the fields an older setting means (Temp, Feels or Icon only).
+    nonisolated static func fields(migrating display: Display) -> [Field] {
+        switch display {
+        case .temperature: return [.temperature]
+        case .feelsLike: return [.feelsLike]
+        case .iconOnly: return []
+        }
+    }
     enum Unit: String, CaseIterable, Codable { case celsius, fahrenheit }
 
     static let cityKey = "AOMWeather.city.v1"
@@ -155,6 +205,20 @@ final class MenuBarWeather: NSObject, ObservableObject, NSMenuDelegate {
     @Published private(set) var reading: WeatherReading?
     @Published private(set) var problem: WeatherError?
     @Published var display: Display { didSet { UserDefaults.standard.set(display.rawValue, forKey: Self.displayKey); updateItem() } }
+    /// 7.11: the menu bar's fields, in order; saved at once, restored at launch.
+    @Published var fields: [Field] {
+        didSet {
+            UserDefaults.standard.set(fields.map(\.rawValue), forKey: Self.fieldsKey)
+            updateItem()
+        }
+    }
+
+    /// The reading for the chosen city in the chosen unit (converted from the
+    /// cached one until a new one arrives), or nil.
+    var current: WeatherReading? {
+        guard let reading, let city, reading.cityID == city.id else { return nil }
+        return reading.converted(to: unit)
+    }
     @Published var unit: Unit {
         didSet {
             UserDefaults.standard.set(unit.rawValue, forKey: Self.unitKey)
@@ -175,7 +239,14 @@ final class MenuBarWeather: NSObject, ObservableObject, NSMenuDelegate {
         let defaults = UserDefaults.standard
         city = defaults.data(forKey: Self.cityKey).flatMap { try? JSONDecoder().decode(WeatherCity.self, from: $0) }
         reading = defaults.data(forKey: Self.readingKey).flatMap { try? JSONDecoder().decode(WeatherReading.self, from: $0) }
-        display = Display(rawValue: defaults.string(forKey: Self.displayKey) ?? "") ?? .temperature
+        let oldDisplay = Display(rawValue: defaults.string(forKey: Self.displayKey) ?? "") ?? .temperature
+        display = oldDisplay
+        // An upgrade keeps what the menu bar showed (an icon-only bar stays icon only).
+        if let saved = defaults.stringArray(forKey: Self.fieldsKey) {
+            fields = saved.compactMap(Field.init(rawValue:))
+        } else {
+            fields = Self.fields(migrating: oldDisplay)
+        }
         unit = Unit(rawValue: defaults.string(forKey: Self.unitKey) ?? "") ?? (Locale.current.measurementSystem == .us ? .fahrenheit : .celsius)
         recent = defaults.data(forKey: Self.recentKey).flatMap { try? JSONDecoder().decode([WeatherCity].self, from: $0) } ?? []
         super.init()
@@ -393,6 +464,34 @@ final class MenuBarWeather: NSObject, ObservableObject, NSMenuDelegate {
         }
     }
 
+    /// 7.11: the text beside the icon — "20°C · 습도 64% · 강수 30%" — and the
+    /// whole of it for the tooltip. Missing values are left out; a long
+    /// combination drops its last fields first to stay within `limit`.
+    nonisolated static func line(_ reading: WeatherReading?, fields: [Field], limit: Int = 30) -> (text: String, full: String) {
+        guard !fields.isEmpty else { return ("", "") }
+        guard let reading else { return ("—", "") }
+        let suffix = reading.unit == .fahrenheit ? "°F" : "°C"
+        func degrees(_ value: Double) -> String { "\(Int(value.rounded()))\(suffix)" }
+        let parts: [String] = fields.compactMap { field in
+            switch field {
+            case .temperature: return degrees(reading.temperature)
+            case .feelsLike: return reading.feelsLike.map { "체감 " + degrees($0) }
+            case .highLow:
+                guard let high = reading.high, let low = reading.low else { return nil }
+                return "↑\(degrees(high)) ↓\(degrees(low))"
+            case .rainChance: return reading.rainChance.map { "강수 \($0)%" }
+            case .humidity: return reading.humidity.map { "습도 \($0)%" }
+            case .wind:
+                return reading.windSpeed.map { "바람 \(Int($0.rounded()))" + (reading.unit == .fahrenheit ? "mph" : "km/h") }
+            }
+        }
+        guard !parts.isEmpty else { return ("—", "") }
+        let full = parts.joined(separator: " · ")
+        var shown = parts
+        while shown.count > 1, shown.joined(separator: " · ").count > limit { shown.removeLast() }
+        return (shown.joined(separator: " · "), full)
+    }
+
     /// "6°", the feels-like value (or the actual one when it's missing), or nothing beside the icon.
     nonisolated static func title(_ reading: WeatherReading?, display: Display) -> String {
         guard let reading else { return "—" }
@@ -450,40 +549,45 @@ final class MenuBarWeather: NSObject, ObservableObject, NSMenuDelegate {
 
     private func updateItem() {
         guard let button = item?.button else { return }
-        let current = reading.flatMap { $0.cityID == city?.id && $0.unit == unit ? $0 : nil }
+        let current = self.current
         let image = NSImage(systemSymbolName: current.map { Self.symbol(code: $0.code, isDay: $0.isDay) } ?? "cloud.sun",
                             accessibilityDescription: nil)
         image?.isTemplate = true
         button.image = image?.withSymbolConfiguration(.init(pointSize: 13, weight: .semibold)) ?? image
         button.font = .monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
-        button.imagePosition = display == .iconOnly ? .imageOnly : .imageLeading
-        button.title = city == nil ? "" : Self.title(current, display: display)
+        let line = Self.line(current, fields: fields)
+        button.imagePosition = fields.isEmpty ? .imageOnly : .imageLeading
+        button.title = city == nil ? "" : line.text
         // A disabled NSStatusBarButton renders all weather content washed out.
         // Keep contrast even offline; stale data is called out by its timestamp
         // and the accessibility description, never by making the item illegible.
         button.appearsDisabled = false
-        button.setAccessibilityLabel(Self.spoken(city: city, reading: current, problem: problem))
-        button.toolTip = Self.spoken(city: city, reading: current, problem: problem)
+        let spoken = Self.spoken(city: city, reading: current, problem: problem)
+        button.setAccessibilityLabel(spoken)
+        // The whole line (when shortened) and when it was measured, also offline.
+        button.toolTip = line.full.isEmpty || line.full == line.text ? spoken : "\(line.full)\n\(spoken)"
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
         let card = NSMenuItem(title: "Weather details", action: nil, keyEquivalent: "")
-        let summary = NSHostingView(rootView: WeatherMenuCard(city: city,
-                            reading: reading.flatMap { $0.cityID == city?.id && $0.unit == unit ? $0 : nil },
-                            problem: problem))
+        let summary = NSHostingView(rootView: WeatherMenuCard(city: city, reading: current, problem: problem))
         summary.frame = NSRect(x: 0, y: 0, width: WeatherMenuCard.width, height: 10)
         summary.frame.size.height = summary.fittingSize.height
         card.view = summary
         menu.addItem(card)
         menu.addItem(.separator())
+        // 7.11: the menu bar's own fields, then the full editor in Settings.
+        let display = NSMenuItem(title: "Menu Bar Display…", action: #selector(openDisplaySettings), keyEquivalent: ",")
+        display.target = self
+        menu.addItem(display)
         let show = NSMenuItem(title: "Show", action: nil, keyEquivalent: "")
         let showMenu = NSMenu()
-        for (choice, title) in [(Display.temperature, "Temperature"), (.feelsLike, "Feels Like"), (.iconOnly, "Icon Only")] {
-            let entry = NSMenuItem(title: title, action: #selector(pickDisplay(_:)), keyEquivalent: "")
+        for field in Field.allCases {
+            let entry = NSMenuItem(title: field.title, action: #selector(toggleField(_:)), keyEquivalent: "")
             entry.target = self
-            entry.representedObject = choice.rawValue
-            entry.state = display == choice ? .on : .off
+            entry.representedObject = field.rawValue
+            entry.state = fields.contains(field) ? .on : .off
             showMenu.addItem(entry)
         }
         showMenu.addItem(.separator())
@@ -547,8 +651,14 @@ final class MenuBarWeather: NSObject, ObservableObject, NSMenuDelegate {
         problem = nil
     }
 
-    @objc private func pickDisplay(_ sender: NSMenuItem) { display = Display(rawValue: sender.representedObject as? String ?? "") ?? display }
     @objc private func pickUnit(_ sender: NSMenuItem) { unit = Unit(rawValue: sender.representedObject as? String ?? "") ?? unit }
+    @objc private func toggleField(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let field = Field(rawValue: raw) else { return }
+        if let index = fields.firstIndex(of: field) { fields.remove(at: index) } else { fields.append(field) }
+    }
+
+    @objc private func openDisplaySettings() { MenuBarNavigation.open(tab: .weather) }
+
     @objc private func refreshNow() { waitUntil = waitUntil.flatMap { $0 > Date() ? $0 : nil }; refresh(force: true) }
     @objc private func chooseCity() { Self.openCityPicker() }
     @objc private func openManagement() { MenuBarNavigation.open() }

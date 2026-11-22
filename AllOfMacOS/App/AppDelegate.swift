@@ -599,7 +599,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// the icon no longer activates AOM, so its main window stays where it was.
     @MainActor private func toggleStatusPanel() {
         let controller = AOMStatusPanelController.shared
-        if controller.isShown { controller.close(); return }
+        if controller.isShown {
+            controller.close()
+            // Closed by this click itself: the next click may open it at once.
+            _ = controller.consumeIconPressClose()
+            return
+        }
+        // 7.11 (spec §4): this click's own press already closed it.
+        if controller.consumeIconPressClose() { return }
         guard let button = statusItem?.button else { return }
         let model = AOMMenuBarPanelModel(appState: appState)
         let actions = AOMMenuBarPanelActions(

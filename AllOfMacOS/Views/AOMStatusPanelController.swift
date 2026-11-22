@@ -21,6 +21,12 @@ final class AOMStatusPanelController: NSObject, NSWindowDelegate {
     private var panel: AOMStatusPanelWindow?
     private var clickMonitor: Any?
     private var keyMonitor: Any?
+    /// The status item's frame on screen while the panel is open.
+    private var anchor: CGRect = .null
+    /// 7.11 (spec §4): a press on the icon itself can close the panel before
+    /// its click arrives (the panel resigns key on mouse-down); that click
+    /// must not open it again. Uptime until which a reopen is refused.
+    private var reopenBlockedUntil: TimeInterval = 0
 
     var isShown: Bool { panel?.isVisible == true }
 
@@ -53,6 +59,7 @@ final class AOMStatusPanelController: NSObject, NSWindowDelegate {
         panel.delegate = self
         panel.contentView = hosting
         let anchor = buttonWindow.convertToScreen(button.convert(button.bounds, to: nil))
+        self.anchor = anchor
         let screen = buttonWindow.screen ?? NSScreen.main
         panel.setFrame(Self.frame(size: size, under: anchor, visible: screen?.visibleFrame ?? anchor), display: true)
         panel.alphaValue = 0
@@ -83,7 +90,23 @@ final class AOMStatusPanelController: NSObject, NSWindowDelegate {
         panel.setFrame(frame, display: true)
     }
 
+    /// True once when the panel was just closed by a press on the icon: the
+    /// click that follows is that same press, so it closes, not reopens.
+    func consumeIconPressClose() -> Bool {
+        defer { reopenBlockedUntil = 0 }
+        return ProcessInfo.processInfo.systemUptime < reopenBlockedUntil
+    }
+
+    /// Pure: a close happening while a button is held over the icon.
+    static func isIconPress(pointer: CGPoint, anchor: CGRect, buttonsDown: Int) -> Bool {
+        buttonsDown != 0 && !anchor.isNull && anchor.insetBy(dx: -3, dy: -3).contains(pointer)
+    }
+
     func close() {
+        if Self.isIconPress(pointer: NSEvent.mouseLocation, anchor: anchor, buttonsDown: NSEvent.pressedMouseButtons) {
+            reopenBlockedUntil = ProcessInfo.processInfo.systemUptime + 0.8
+        }
+        anchor = .null
         if let clickMonitor { NSEvent.removeMonitor(clickMonitor); self.clickMonitor = nil }
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor); self.keyMonitor = nil }
         guard let panel else { return }

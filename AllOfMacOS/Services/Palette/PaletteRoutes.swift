@@ -18,6 +18,8 @@ enum PaletteRoute: Hashable {
     case tool(LauncherTool)
     case automationCatalog
     case killApps
+    /// 7.11: every process, force quit with one Return (Raycast's Kill Process).
+    case killProcess
     case uninstallApps
     case uninstallReview(URL)
     case soundDevices
@@ -70,7 +72,8 @@ enum PaletteRoute: Hashable {
         switch self {
         case .tool(let tool): return tool.title
         case .automationCatalog: return "Configure Automation"
-        case .killApps: return "Kill Apps"
+        case .killApps: return "Quit App"
+        case .killProcess: return "Kill Process"
         case .uninstallApps: return "Uninstall App"
         case .uninstallReview(let url): return "Uninstall \(url.deletingPathExtension().lastPathComponent)"
         case .soundDevices: return "Sound Devices"
@@ -108,6 +111,7 @@ enum PaletteRoute: Hashable {
         case .tool(let tool): return tool.placeholder
         case .automationCatalog: return "Find an automation action…"
         case .killApps: return "Search running apps…"
+        case .killProcess: return "Search processes by name or PID…"
         case .uninstallApps: return "Search installed apps…"
         case .uninstallReview: return "Filter the items to remove…"
         case .soundDevices: return "Search outputs, inputs and volume…"
@@ -145,6 +149,7 @@ enum PaletteRoute: Hashable {
         case .tool(let tool): return tool.symbol
         case .automationCatalog: return "bolt"
         case .killApps: return "xmark.octagon"
+        case .killProcess: return "bolt.horizontal.circle"
         case .uninstallApps, .uninstallReview: return "trash"
         case .soundDevices: return "hifispeaker.2"
         case .clipboard: return "doc.on.clipboard"
@@ -862,6 +867,75 @@ final class PaletteRouteModels: ObservableObject {
         }
     }
 
+    // Kill Process (7.11)
+
+    /// The last read of every process; nil until the first read lands.
+    @Published private(set) var processes: [PaletteProcesses.Entry]?
+    private var processTimer: Timer?
+    private var processTicket = 0
+
+    func watchProcesses(_ on: Bool) {
+        processTimer?.invalidate()
+        processTimer = nil
+        guard on else { processes = nil; return }
+        loadProcesses()
+        // Fresh while the screen is open; reading ~500 processes takes a few ms.
+        let timer = Timer(timeInterval: 3, repeats: true) { _ in MainActor.assumeIsolated { [weak self] in self?.loadProcesses() } }
+        RunLoop.main.add(timer, forMode: .common)
+        processTimer = timer
+    }
+
+    /// Only the newest read may land (an older one finishing late would
+    /// bring back a row that was just ended).
+    func loadProcesses() {
+        processTicket &+= 1
+        let ticket = processTicket
+        let apps = PaletteProcesses.runningApps()
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let list = PaletteProcesses.snapshot(apps: apps)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self, ticket == self.processTicket else { return }
+                    self.processes = list
+                }
+            }
+        }
+    }
+
+    /// Force quits that one instance and says how it went; the row goes once
+    /// the process is confirmed gone, and the list and search stay.
+    func forceQuit(_ entry: PaletteProcesses.Entry) {
+        let label = "\(entry.name) (PID \(entry.pid))"
+        switch PaletteProcesses.forceQuit(entry) {
+        case .protected: notice = "\(entry.name) keeps your session running; AOM doesn't end it"
+        case .notPermitted: notice = "\(label): not allowed — it belongs to the system or another user"
+        case .alreadyGone, .changed:
+            notice = "\(label) had already ended"
+            drop(entry)
+        case .sent:
+            GestureLog.shared.logFromAnyThread("Kill Process: SIGKILL \(label)", level: .action)
+            notice = "Ending \(label)…"
+            confirmEnded(entry, label: label, triesLeft: 20)
+        }
+    }
+
+    private func confirmEnded(_ entry: PaletteProcesses.Entry, label: String, triesLeft: Int) {
+        if !PaletteProcesses.isAlive(entry) {
+            notice = "Ended \(label)"
+            drop(entry)
+            return
+        }
+        guard triesLeft > 0 else { notice = "\(label) is still running after the kill request"; return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            self?.confirmEnded(entry, label: label, triesLeft: triesLeft - 1)
+        }
+    }
+
+    private func drop(_ entry: PaletteProcesses.Entry) {
+        processes?.removeAll { $0.id == entry.id }
+        processTicket &+= 1 // a read already under way would bring it back
+    }
+
     // Sound
 
     private var soundTicket = 0
@@ -897,6 +971,7 @@ final class PaletteRouteModels: ObservableObject {
 
     func end() {
         watchApps(false)
+        watchProcesses(false)
         endUninstall()
         sound = nil
         notice = nil

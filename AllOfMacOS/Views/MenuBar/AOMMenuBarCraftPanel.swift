@@ -18,7 +18,13 @@ struct AOMMenuBarCraftPanel: View {
         let symbol: String
         let tint: Color
         let isOn: Bool
-        let onToggle: () -> Void
+        /// Nil for a tile that is only a menu (Capture).
+        let onToggle: (() -> Void)?
+        /// 7.11 (spec §3): the feature's commands — clicking the tile's name
+        /// opens them under the tiles; the round switch keeps its own click.
+        var menu: [AOMFeatureCommand]? = nil
+        /// A line at the top of the open menu ("25 min left").
+        var menuNote: String? = nil
     }
 
     struct QuickAction: Identifiable {
@@ -45,6 +51,11 @@ struct AOMMenuBarCraftPanel: View {
     var onEditMenu: () -> Void = {}
     /// 7.0: a row of the host's own under the tiles (AOM's battery line).
     var accessory: AnyView? = nil
+    /// 7.11: runs a tile menu's command (the host closes the panel first when asked).
+    var onCommand: (AOMFeatureCommand) -> Void = { $0.run() }
+    /// 7.11: the panel's height changed (a tile menu opened or closed).
+    var onResize: () -> Void = {}
+    @State private var openMenu: String?
 
     var body: some View {
         VStack(spacing: 12) {
@@ -90,39 +101,10 @@ struct AOMMenuBarCraftPanel: View {
 
             // 3. Control Center 26 스타일 2열 토글 타일 (호버 시 스케일 확대 없음)
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
-                ForEach(toggles) { tile in
-                    Button(action: tile.onToggle) {
-                        HStack(spacing: 9) {
-                            ZStack {
-                                Circle()
-                                    .fill(tile.isOn ? tile.tint : Color.primary.opacity(0.10))
-                                    .frame(width: 28, height: 28)
-                                Image(systemName: tile.symbol)
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .foregroundStyle(tile.isOn ? .white : .secondary)
-                            }
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(tile.title)
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .lineLimit(1)
-                                Text(tile.subtitle)
-                                    .font(.system(size: 10.5))
-                                    .foregroundStyle(AOMCraftColor.inkSecondary)
-                                    .lineLimit(1)
-                            }
-                            Spacer(minLength: 0)
-                        }
-                        .padding(.horizontal, 10)
-                        .frame(height: 48)
-                        .background(
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .fill(tile.isOn ? tile.tint.opacity(0.14) : Color.primary.opacity(0.05))
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .aomCalmHover(radius: 12)
-                    .accessibilityValue(tile.isOn ? Text("On") : Text("Off"))
-                }
+                ForEach(toggles) { tile in tileView(tile) }
+            }
+            if let id = openMenu, let tile = toggles.first(where: { $0.id == id }), let commands = tile.menu {
+                tileMenu(tile, commands)
             }
 
             if let accessory { accessory }
@@ -156,7 +138,7 @@ struct AOMMenuBarCraftPanel: View {
                     Text("Open Launcher…")
                         .font(.system(size: 12.5, weight: .medium))
                         .foregroundStyle(AOMCraftColor.ink)
-                    Text("Ask AI · Kill Apps")
+                    Text("Ask AI · Kill Process")
                         .font(.system(size: 11))
                         .foregroundStyle(AOMCraftColor.inkTertiary)
                         .lineLimit(1)
@@ -230,9 +212,136 @@ struct AOMMenuBarCraftPanel: View {
         }
         .padding(14)
         .frame(width: 340)
+        .onChange(of: openMenu) { _, _ in DispatchQueue.main.async { onResize() } }
         // 7.1: Apple's Liquid Glass again (macOS 26+; a material before, an
         // opaque surface with Reduce Transparency or Increase Contrast). The
         // text keeps the launcher ink, so it stays readable on the glass.
         .aomFloatingGlass(radius: AOMCraftRadius.floatingPanel)
+    }
+
+    // MARK: Tiles and their menus (7.11)
+
+    private func tileCircle(_ tile: ToggleTile) -> some View {
+        ZStack {
+            Circle()
+                .fill(tile.isOn ? tile.tint : Color.primary.opacity(0.10))
+                .frame(width: 28, height: 28)
+            Image(systemName: tile.symbol)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(tile.isOn ? .white : .secondary)
+        }
+    }
+
+    private func tileText(_ tile: ToggleTile) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(tile.title)
+                .font(.system(size: 12, weight: .semibold))
+                .lineLimit(1)
+            Text(tile.subtitle)
+                .font(.system(size: 10.5))
+                .foregroundStyle(AOMCraftColor.inkSecondary)
+                .lineLimit(1)
+        }
+    }
+
+    private func tileBackground(_ tile: ToggleTile) -> some View {
+        RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .fill(tile.isOn ? tile.tint.opacity(0.14) : Color.primary.opacity(0.05))
+    }
+
+    @ViewBuilder
+    private func tileView(_ tile: ToggleTile) -> some View {
+        if tile.menu == nil {
+            // A plain switch: the whole tile flips it (as through 7.10).
+            Button { tile.onToggle?() } label: {
+                HStack(spacing: 9) {
+                    tileCircle(tile)
+                    tileText(tile)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 10)
+                .frame(height: 48)
+                .background(tileBackground(tile))
+            }
+            .buttonStyle(.plain)
+            .aomCalmHover(radius: 12)
+            .accessibilityValue(tile.isOn ? Text("On") : Text("Off"))
+        } else {
+            let isOpen = openMenu == tile.id
+            HStack(spacing: 9) {
+                // The switch has its own click area; the name only opens the menu.
+                Button { if let toggle = tile.onToggle { toggle() } else { toggleMenu(tile.id) } } label: { tileCircle(tile) }
+                    .buttonStyle(.plain)
+                    .help(tile.onToggle == nil ? tile.title : (tile.isOn ? "Turn off \(tile.title)" : "Turn on \(tile.title)"))
+                    .accessibilityLabel(tile.onToggle == nil ? "\(tile.title) commands" : "\(tile.title) switch")
+                    .accessibilityValue(tile.onToggle == nil ? Text("") : (tile.isOn ? Text("On") : Text("Off")))
+                Button { toggleMenu(tile.id) } label: {
+                    HStack(spacing: 4) {
+                        tileText(tile)
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 9.5, weight: .bold))
+                            .foregroundStyle(AOMCraftColor.inkSecondary)
+                            .rotationEffect(.degrees(isOpen ? 180 : 0))
+                    }
+                    .frame(maxHeight: .infinity)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(tile.title) commands")
+                .accessibilityHint("Opens the \(tile.title) menu")
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 48)
+            .background(tileBackground(tile))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(isOpen ? tile.tint.opacity(0.7) : .clear, lineWidth: 1.5))
+            .aomCalmHover(radius: 12)
+        }
+    }
+
+    private func toggleMenu(_ id: String) {
+        withAnimation(.easeOut(duration: 0.12)) { openMenu = openMenu == id ? nil : id }
+    }
+
+    private func tileMenu(_ tile: ToggleTile, _ commands: [AOMFeatureCommand]) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                Image(systemName: tile.symbol).font(.system(size: 11, weight: .semibold)).foregroundStyle(tile.tint)
+                Text(tile.title).font(.system(size: 12, weight: .semibold))
+                if let note = tile.menuNote {
+                    Text(note).font(.system(size: 11)).foregroundStyle(AOMCraftColor.inkSecondary).lineLimit(1)
+                }
+                Spacer()
+                Button { toggleMenu(tile.id) } label: {
+                    Image(systemName: "xmark").font(.system(size: 9.5, weight: .bold)).foregroundStyle(AOMCraftColor.inkSecondary)
+                        .frame(width: 20, height: 18)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Close \(tile.title) menu")
+            }
+            .padding(.horizontal, 6)
+            .padding(.bottom, 2)
+            ForEach(commands) { command in
+                Button {
+                    openMenu = nil
+                    onCommand(command)
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: command.symbol).font(.system(size: 12)).frame(width: 18)
+                        Text(command.title).font(.system(size: 12.5))
+                        Spacer()
+                    }
+                    .padding(.horizontal, 8)
+                    .frame(height: 28)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .aomCalmHover(radius: 7)
+            }
+        }
+        .padding(8)
+        .background(tile.tint.opacity(0.10), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .transition(.opacity)
     }
 }

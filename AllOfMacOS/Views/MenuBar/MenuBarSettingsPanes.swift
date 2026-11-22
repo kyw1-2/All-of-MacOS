@@ -479,12 +479,6 @@ struct MenuBarWeatherPane: View {
                         Spacer(minLength: 4)
                         Button(weather.city == nil ? "Choose…" : "Change…") { MenuBarWeather.openCityPicker() }.controlSize(.small)
                     }
-                    Picker("Menu bar", selection: $weather.display) {
-                        Text("Temp").tag(MenuBarWeather.Display.temperature)
-                        Text("Feels").tag(MenuBarWeather.Display.feelsLike)
-                        Text("Icon").tag(MenuBarWeather.Display.iconOnly)
-                    }
-                    .pickerStyle(.segmented)
                     Picker("Units", selection: $weather.unit) {
                         Text("°C").tag(MenuBarWeather.Unit.celsius)
                         Text("°F").tag(MenuBarWeather.Unit.fahrenheit)
@@ -500,13 +494,69 @@ struct MenuBarWeatherPane: View {
                     }
                 }
                 .frame(minWidth: 220, maxWidth: .infinity, alignment: .leading)
-                WeatherMenuCard(city: weather.city, reading: weather.reading.flatMap { $0.cityID == weather.city?.id ? $0 : nil },
-                                problem: weather.problem)
+                WeatherMenuCard(city: weather.city, reading: weather.current, problem: weather.problem)
                     .background(AOMColor.overlaySurface, in: RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous).strokeBorder(AOMColor.hairline, lineWidth: 0.5))
                     .accessibilityLabel("Weather menu preview")
             }
         }
+        AOMSection("Beside the icon", detail: "Tick what the menu bar shows; ↑↓ sets the order", padding: 14) {
+            VStack(alignment: .leading, spacing: 10) {
+                // The same formatter as the menu bar itself.
+                HStack(spacing: 6) {
+                    Text("Menu bar").font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
+                    HStack(spacing: 5) {
+                        Image(systemName: weather.current.map { MenuBarWeather.symbol(code: $0.code, isDay: $0.isDay) } ?? "cloud.sun")
+                        Text(previewLine.isEmpty ? "(icon only)" : previewLine).monospacedDigit()
+                    }
+                    .font(.system(size: 13, weight: .semibold))
+                    .padding(.horizontal, 10).padding(.vertical, 4)
+                    .background(AOMColor.sunken, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .help(MenuBarWeather.line(previewReading, fields: weather.fields).full)
+                }
+                ForEach(orderedFields, id: \.self) { field in
+                    let index = weather.fields.firstIndex(of: field)
+                    HStack(spacing: 8) {
+                        Toggle(field.title, isOn: Binding(get: { index != nil }, set: { on in
+                            if on { if !weather.fields.contains(field) { weather.fields.append(field) } }
+                            else { weather.fields.removeAll { $0 == field } }
+                        }))
+                        .toggleStyle(.checkbox)
+                        Spacer()
+                        if let index {
+                            Button { move(index, by: -1) } label: { Image(systemName: "chevron.up") }
+                                .buttonStyle(.borderless).disabled(index == 0)
+                                .accessibilityLabel("Move \(field.title) up")
+                            Button { move(index, by: 1) } label: { Image(systemName: "chevron.down") }
+                                .buttonStyle(.borderless).disabled(index == weather.fields.count - 1)
+                                .accessibilityLabel("Move \(field.title) down")
+                        }
+                    }
+                }
+                Text("Untick everything for the icon alone. A long line drops its last items first; the tooltip and the weather menu show all of it.")
+                    .font(.system(size: 11)).foregroundStyle(AOMColor.textTertiary)
+            }
+        }
+    }
+
+    /// Ticked fields in their order, then the others.
+    private var orderedFields: [MenuBarWeather.Field] {
+        weather.fields + MenuBarWeather.Field.allCases.filter { !weather.fields.contains($0) }
+    }
+
+    /// The live reading, or Seoul's sample when there is none yet.
+    private var previewReading: WeatherReading? {
+        weather.current ?? WeatherReading(cityID: 0, temperature: 12, feelsLike: 10, code: 3, isDay: true, low: 7, high: 15,
+                                          rainChance: 30, fetchedAt: Date(), unit: .celsius, humidity: 64, windSpeed: 11)
+            .converted(to: weather.unit)
+    }
+
+    private var previewLine: String { MenuBarWeather.line(previewReading, fields: weather.fields).text }
+
+    private func move(_ index: Int, by delta: Int) {
+        let target = index + delta
+        guard weather.fields.indices.contains(index), weather.fields.indices.contains(target) else { return }
+        weather.fields.swapAt(index, target)
     }
 }
 
