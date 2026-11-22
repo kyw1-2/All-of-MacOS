@@ -3,55 +3,77 @@ import ApplicationServices
 import SwiftUI
 import UniformTypeIdentifiers
 
-// 7.10: Bartender's Menu Bar Items page. Three bars that look like the menu
-// bar — its colour, each icon's own picture without a box — for Shown,
-// Hidden and Always Hidden; drag an icon from one bar to another. Under them
-// every app with an icon, one row each, with the same three choices as a
-// segmented control (Bartender's item list), a menu for rename and open.
-// On macOS 27 a change applies at once (an app's icons move together);
-// macOS's own items always stay shown.
+// 7.10: Bartender 7's "Menu Bar Items" pane, laid out as its nib
+// (MenuBarLayoutPreferences.nib): the title, two lines on how to arrange,
+// the applied preset, then "Shown / Hidden / Always Hidden menu bar items" —
+// each a 60 pt strip in the menu bar's colour, icons right-aligned as in the
+// menu bar and dragged between strips — and the paragraph that explains the
+// three sections and the New Menu Bar Items pill. The per-app list is its
+// own pane (`MenuBarItemSettingsList`, Bartender's MenuItemsPreferences).
+
+/// What can be dropped on a strip: an icon's id, or the New Items pill.
+private enum LayoutDrag {
+    static let pill = "aom.pill.newItems"
+}
 
 struct MenuBarLayoutEditor: View {
     @ObservedObject private var model = MenuBarLayoutModel.shared
-    @ObservedObject private var aliases = AOMMenuBarAliasStore.shared
     @ObservedObject private var modules = AOMModuleSwitches.shared
     @State private var targeted: MenuBarSection?
     @State private var hovered: String?
     @State private var renaming: String?
+    @State private var newItems = MenuBarPrefs.newItemsSection
+    @State private var presets = MenuBarPresets.all
+    @State private var applied = MenuBarPresets.applied
+    @State private var naming = false
+    @State private var presetName = ""
 
     private var hiderOn: Bool { modules.isOn(.menuBarHider) || model.isSample }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             header
+            if !hiderOn {
+                AOMNotice(.info, "Hiding is off", detail: "Turn it on to hide the icons you put in Hidden and Always Hidden.") {
+                    Button("Turn On") { _ = modules.set(.menuBarHider, on: true) }.controlSize(.small)
+                }
+            }
+            if let applied { presetRow(applied) }
             if !AXIsProcessTrusted() && !model.isSample {
                 permissionNotice
             } else {
                 let lanes = model.lanes
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 14) {
                     ForEach(MenuBarSection.allCases) { section in
-                        bar(section, items: lanes[section] ?? [])
+                        strip(section, items: lanes[section] ?? [])
                     }
                 }
-                itemList
+                Text(Self.help)
+                    .font(.system(size: 11.5)).foregroundStyle(AOMColor.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 2)
             }
         }
         .onAppear { if model.lastRefresh == nil { model.refresh() } }
+        .sheet(isPresented: $naming) { presetSheet }
     }
 
-    // MARK: Header
+    static let help = """
+    Drag your menu bar items to the Shown section to keep them in the menu bar. Drag them to the Hidden section to hide them until you click ❮ (or empty menu bar space). Drag them to the Always Hidden section to keep them hidden until you ⌥-click ❮ or choose Show All. Set where new menu bar items go by moving the New Menu Bar Items pill to any section. On macOS 27 hiding works by app, so an app's icons move together, and macOS's own icons (clock, Control Center) stay shown.
+    """
+
+    // MARK: Title and the two lines under it
 
     private var header: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(hiderOn ? "Drag icons between the bars, or choose a section for each app below."
-                             : "Turn on Hide icons below, then drag icons into Hidden.")
-                    .font(.system(size: 12.5))
+        HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Menu Bar Items").font(.system(size: 17, weight: .semibold))
+                Text("Drag menu bar item icons between the sections below to arrange them as you want")
+                    .font(.system(size: 12.5)).foregroundStyle(AOMColor.textSecondary)
+                Text("You can also change their order quickly by ⌘ + dragging them in the menu bar")
+                    .font(.system(size: 12.5)).foregroundStyle(AOMColor.textSecondary)
                 if let status = model.status {
-                    Text(status).font(AOMFont.caption).foregroundStyle(AOMColor.accent).lineLimit(1)
-                } else {
-                    Text("Hidden icons come back when you click ❮ or open the Bar. macOS keeps its own icons shown.")
-                        .font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
+                    Text(status).font(AOMFont.caption).foregroundStyle(AOMColor.accent).lineLimit(2).padding(.top, 2)
                 }
             }
             Spacer(minLength: 8)
@@ -61,6 +83,7 @@ struct MenuBarLayoutEditor: View {
                     .controlSize(.small)
                     .help("Allow Screen Recording so AOM can draw each icon as it looks in the menu bar")
             }
+            presetMenu
             Button { model.refresh() } label: { Image(systemName: "arrow.clockwise") }
                 .buttonStyle(.borderless)
                 .disabled(model.busy)
@@ -70,57 +93,135 @@ struct MenuBarLayoutEditor: View {
     }
 
     private var permissionNotice: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "lock.shield").font(.system(size: 18)).foregroundStyle(AOMColor.warningText)
-            Text("AOM needs Accessibility to read the menu bar.").font(AOMFont.callout)
-            Spacer()
-            Button("Allow…") { AOMMenuShelfController.shared.requestPermission() }
+        AOMNotice(.warning, "AOM needs Accessibility to read the menu bar",
+                  detail: "System Settings › Privacy & Security › Accessibility › All of MacOS.") {
+            Button("Allow…") { AOMMenuShelfController.shared.requestPermission() }.controlSize(.small)
         }
-        .padding(12)
+    }
+
+    // MARK: Presets (Bartender: "Preset:" row and its menu)
+
+    private var presetMenu: some View {
+        Menu {
+            if presets.isEmpty { Text("No presets yet") }
+            ForEach(presets) { preset in
+                Button(preset.name + (applied == preset.name ? " ✓" : "")) { MenuBarPresets.apply(preset.name); reloadPresets() }
+            }
+            Divider()
+            Button("Save Current Layout as Preset…") { presetName = ""; naming = true }
+            if !presets.isEmpty {
+                Menu("Delete Preset") {
+                    ForEach(presets) { preset in Button(preset.name) { MenuBarPresets.delete(preset.name); reloadPresets() } }
+                }
+            }
+        } label: {
+            Label("Presets", systemImage: "square.stack.3d.up")
+        }
+        .menuStyle(.borderlessButton).fixedSize()
+        .help("Save this layout and switch between layouts")
+    }
+
+    private func presetRow(_ name: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Text("Preset:").font(.system(size: 13, weight: .semibold))
+                Image(systemName: "square.stack.3d.up.fill").foregroundStyle(AOMColor.accent)
+                Text(name).font(.system(size: 13))
+                Spacer()
+                Button("Remove Applied Preset") { MenuBarPresets.removeApplied(); reloadPresets() }.controlSize(.small)
+            }
+            Text("Changes made here while a preset is applied are not saved to the default menu bar layout or to the preset.")
+                .font(.system(size: 11)).foregroundStyle(AOMColor.textTertiary)
+        }
+        .padding(10)
         .background(AOMColor.sunken, in: RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous))
     }
 
-    // MARK: The three bars
+    private var presetSheet: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Save Preset").font(.headline)
+            Text("Keeps which section every app is in.").font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
+            TextField("Preset name (e.g. Work, Presenting)", text: $presetName).textFieldStyle(.roundedBorder).frame(width: 300)
+            HStack {
+                Spacer()
+                Button("Cancel") { naming = false }.keyboardShortcut(.cancelAction)
+                Button("Save") { MenuBarPresets.saveCurrent(as: presetName); naming = false; reloadPresets() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(presetName.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+        .padding(18)
+    }
 
-    private func bar(_ section: MenuBarSection, items: [MenuBarLayoutItem]) -> some View {
-        let shape = RoundedRectangle(cornerRadius: 7, style: .continuous)
+    private func reloadPresets() {
+        presets = MenuBarPresets.all
+        applied = MenuBarPresets.applied
+    }
+
+    // MARK: The three strips
+
+    private func strip(_ section: MenuBarSection, items: [MenuBarLayoutItem]) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
         let isTarget = targeted == section
-        return VStack(alignment: .leading, spacing: 5) {
+        return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
-                Image(systemName: section.symbol).font(.system(size: 11, weight: .semibold)).foregroundStyle(AOMColor.textSecondary)
-                Text(section.title + " Items").font(.system(size: 12, weight: .semibold))
-                Text("\(items.count)").font(.system(size: 11).monospacedDigit()).foregroundStyle(AOMColor.textTertiary)
-                Text("· " + section.caption).font(.system(size: 11)).foregroundStyle(AOMColor.textTertiary).lineLimit(1)
+                Text(section.stripTitle).font(.system(size: 13, weight: .semibold))
+                Text("\(items.count)").font(.system(size: 11, weight: .medium).monospacedDigit())
+                    .foregroundStyle(AOMColor.textTertiary)
+                Spacer()
+                Text(section.caption).font(.system(size: 11)).foregroundStyle(AOMColor.textTertiary).lineLimit(1)
             }
             GeometryReader { geometry in
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 4) {
+                ScrollView(.horizontal, showsIndicators: true) {
+                    HStack(spacing: 2) {
+                        if newItems == section { pill }
                         Spacer(minLength: 0)
                         if items.isEmpty {
                             Text(isTarget ? "Drop here" : "Drag icons here")
-                                .font(.system(size: 11)).foregroundStyle(laneInk.opacity(0.55))
-                                .padding(.horizontal, 10)
+                                .font(.system(size: 11.5)).foregroundStyle(laneInk.opacity(0.6))
+                                .padding(.horizontal, 12)
                         }
                         ForEach(items) { entry in icon(entry) }
                     }
-                    .padding(.horizontal, 8)
-                    .frame(minWidth: geometry.size.width, minHeight: 30, alignment: .trailing)
+                    .padding(.horizontal, 10)
+                    .frame(minWidth: geometry.size.width, minHeight: 44, alignment: .trailing)
                 }
             }
-            .frame(height: 30)
+            .frame(height: 52)
             .background(laneColor, in: shape)
-            .overlay(shape.strokeBorder(isTarget ? AOMColor.accent : Color.black.opacity(0.08), lineWidth: isTarget ? 2 : 0.5))
+            .overlay(shape.strokeBorder(isTarget ? AOMColor.accent : Color.black.opacity(0.1), lineWidth: isTarget ? 2 : 0.5))
             .clipShape(shape)
             .dropDestination(for: String.self) { ids, _ in
                 guard let id = ids.first else { return false }
+                if id == LayoutDrag.pill {
+                    newItems = section
+                    MenuBarPrefs.newItemsSection = section
+                    return true
+                }
                 model.move(id, to: section)
                 return true
             } isTargeted: { inside in
                 targeted = inside ? section : (targeted == section ? nil : targeted)
             }
             .accessibilityElement(children: .contain)
-            .accessibilityLabel("\(section.title) items, \(items.count)")
+            .accessibilityLabel("\(section.stripTitle), \(items.count)")
         }
+    }
+
+    /// Bartender's "New Menu Bar Items" pill: where apps seen for the first time go.
+    private var pill: some View {
+        Label("New Menu Bar Items", systemImage: "sparkles")
+            .font(.system(size: 11, weight: .semibold))
+            .lineLimit(1).fixedSize()
+            .foregroundStyle(.white)
+            .padding(.horizontal, 9).padding(.vertical, 4)
+            .background(Capsule().fill(AOMColor.accent))
+            .draggable(LayoutDrag.pill) {
+                Label("New Menu Bar Items", systemImage: "sparkles").font(.system(size: 11, weight: .semibold))
+                    .padding(6).background(Capsule().fill(AOMColor.accent)).foregroundStyle(.white)
+            }
+            .help("Apps that show a menu bar icon for the first time go to this section. Drag the pill to another section.")
+            .accessibilityLabel("New Menu Bar Items go to this section")
     }
 
     private var laneColor: Color {
@@ -135,104 +236,89 @@ struct MenuBarLayoutEditor: View {
         return luminance > 0.55 ? .black : .white
     }
 
-    /// An icon as it looks in the menu bar: its picture, no box; hover lights
-    /// it like the menu bar does; locked ones are dimmed.
+    /// An icon as it looks in the menu bar, a little larger: its picture, no
+    /// box; hover lights it as the menu bar does; locked ones are dimmed.
     private func icon(_ entry: MenuBarLayoutItem) -> some View {
         let lit = hovered == entry.id
-        return picture(entry, height: 20)
-            .padding(.horizontal, 5)
-            .frame(height: 24)
-            .background(lit ? laneInk.opacity(0.14) : .clear, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+        return picture(entry, height: 22)
+            .padding(.horizontal, 6)
+            .frame(height: 32)
+            .background(lit ? laneInk.opacity(0.16) : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
             .opacity(entry.lockedReason == nil ? 1 : 0.5)
             .contentShape(Rectangle())
             .onHover { hovered = $0 ? entry.id : (hovered == entry.id ? nil : hovered) }
-            .help("\(entry.item.displayName) — \(entry.item.ownerName)" + (entry.lockedReason.map { "\n\($0)" } ?? ""))
-            .modifier(DraggableUnlessLocked(id: entry.id, locked: entry.lockedReason != nil, preview: { picture(entry, height: 20) }))
-            .contextMenu { itemMenu(entry) }
+            .help("\(entry.item.displayName) — \(entry.item.ownerName)" + (entry.lockedReason.map { "\n\($0)" } ?? "\nDrag to another section"))
+            .modifier(DraggableUnlessLocked(id: entry.id, locked: entry.lockedReason != nil, preview: { picture(entry, height: 22) }))
+            .contextMenu { MenuBarItemMenu(entry: entry, rename: { renaming = entry.id }) }
+            .popover(isPresented: Binding(get: { renaming == entry.id }, set: { if !$0 { renaming = nil } }), arrowEdge: .bottom) {
+                MenuBarItemAliasEditor(item: entry.item) { renaming = nil }
+            }
             .accessibilityElement()
             .accessibilityLabel("\(entry.item.displayName), \(entry.section.title)")
     }
 
-    @ViewBuilder
     private func picture(_ entry: MenuBarLayoutItem, height: CGFloat) -> some View {
-        if let image = model.images[entry.imageKey] {
-            Image(nsImage: image).resizable().interpolation(.high).aspectRatio(contentMode: .fit)
-                .frame(maxWidth: 80, maxHeight: height)
-        } else {
-            MenuBarItemGlyph(item: entry.item, size: height * 0.85)
-                .foregroundStyle(laneInk)
+        MenuBarItemPicture(entry: entry, height: height, ink: laneInk)
+    }
+}
+
+extension MenuBarSection {
+    /// Bartender's strip titles.
+    var stripTitle: String {
+        switch self {
+        case .shown: return "Shown menu bar items"
+        case .hidden: return "Hidden menu bar items"
+        case .alwaysHidden: return "Always Hidden menu bar items"
         }
     }
 
-    @ViewBuilder
-    private func itemMenu(_ entry: MenuBarLayoutItem) -> some View {
-        Button("Open Its Menu") { open(entry) }
-        Button("Rename…") { renaming = entry.id }.disabled(entry.item.stableKey == nil)
+    /// Bartender's "Menu bar item should:" choices.
+    var shouldTitle: String {
+        switch self {
+        case .shown: return "Show"
+        case .hidden: return "Hide"
+        case .alwaysHidden: return "Always Hide"
+        }
+    }
+}
+
+/// The icon's own picture, or its glyph until a picture is taken.
+struct MenuBarItemPicture: View {
+    let entry: MenuBarLayoutItem
+    var height: CGFloat = 20
+    var ink: Color = AOMColor.text
+    @ObservedObject private var model = MenuBarLayoutModel.shared
+
+    var body: some View {
+        if let image = model.images[entry.imageKey], image.size.height > 0 {
+            // Its own width at this height (a fixed frame: `.fit` with a max
+            // width spread the icons across the strip).
+            let width = min(height * 4, max(height * 0.6, height * image.size.width / image.size.height))
+            Image(nsImage: image).resizable().interpolation(.high)
+                .frame(width: width, height: height)
+        } else {
+            MenuBarItemGlyph(item: entry.item, size: height * 0.85).foregroundStyle(ink)
+        }
+    }
+}
+
+/// Right-click menu of an icon, in the strips and the list.
+struct MenuBarItemMenu: View {
+    let entry: MenuBarLayoutItem
+    let rename: () -> Void
+
+    var body: some View {
+        Button("Open Its Menu") {
+            guard !MenuBarLayoutModel.shared.isSample else { return }
+            MenuBarStripController.shared.openItem(entry.item, section: entry.section)
+        }
+        Button("Rename…", action: rename).disabled(entry.item.stableKey == nil)
         if entry.lockedReason == nil {
             Divider()
             ForEach(MenuBarSection.allCases.filter { $0 != entry.section }) { section in
-                Button("Move to \(section.title)") { model.move(entry.id, to: section) }
+                Button("Move to \(section.title)") { MenuBarLayoutModel.shared.move(entry.id, to: section) }
             }
         }
-    }
-
-    // MARK: Every app, one row (Bartender's item list)
-
-    private var itemList: some View {
-        let apps = model.apps
-        return VStack(alignment: .leading, spacing: 0) {
-            Text("Apps in the menu bar").font(.system(size: 12, weight: .semibold)).padding(.bottom, 6)
-            ForEach(Array(apps.enumerated()), id: \.element.bundle) { index, app in
-                let first = app.items[0]
-                HStack(spacing: 10) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 6, style: .continuous).fill(laneColor)
-                        picture(first, height: 16)
-                    }
-                    .frame(width: 34, height: 24)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(app.items.count == 1 ? first.item.displayName : app.name)
-                            .font(.system(size: 12.5, weight: .medium)).lineLimit(1)
-                        Text(app.items.count == 1 ? app.name : "\(app.items.count) icons · \(app.items.map(\.item.displayName).joined(separator: ", "))")
-                            .font(.system(size: 11)).foregroundStyle(AOMColor.textSecondary).lineLimit(1).truncationMode(.tail)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    if let locked = first.lockedReason {
-                        Text(locked).font(.system(size: 11)).foregroundStyle(AOMColor.textTertiary).lineLimit(1)
-                    } else {
-                        Picker("Section", selection: Binding(get: { first.section },
-                                                             set: { model.move(first.id, to: $0) })) {
-                            ForEach(MenuBarSection.allCases) { Text($0.title).tag($0) }
-                        }
-                        .pickerStyle(.segmented).labelsHidden().fixedSize()
-                        .disabled(!hiderOn && !model.isSample)
-                    }
-                    Menu {
-                        itemMenu(first)
-                    } label: { Image(systemName: "ellipsis") }
-                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                    .popover(isPresented: Binding(get: { renaming.map { id in app.items.contains { $0.id == id } } ?? false },
-                                                  set: { if !$0 { renaming = nil } }), arrowEdge: .trailing) {
-                        if let id = renaming, let entry = app.items.first(where: { $0.id == id }) {
-                            MenuBarItemAliasEditor(item: entry.item) { renaming = nil }
-                        }
-                    }
-                }
-                .padding(.vertical, 6)
-                .overlay(alignment: .top) {
-                    if index > 0 { Rectangle().fill(AOMColor.hairline).frame(height: 0.5) }
-                }
-            }
-            if apps.isEmpty {
-                Text(model.busy ? "Reading the menu bar…" : "No icons read yet — Refresh.")
-                    .font(AOMFont.caption).foregroundStyle(AOMColor.textTertiary)
-            }
-        }
-    }
-
-    private func open(_ entry: MenuBarLayoutItem) {
-        guard !model.isSample else { return }
-        MenuBarStripController.shared.openItem(entry.item, section: entry.section)
     }
 }
 
@@ -244,6 +330,153 @@ private struct DraggableUnlessLocked<Preview: View>: ViewModifier {
 
     func body(content: Content) -> some View {
         if locked { content } else { content.draggable(id) { preview() } }
+    }
+}
+
+// MARK: - Item Settings (Bartender's MenuItemsPreferences)
+
+/// Every app with a menu bar icon, one group each: "Menu bar item should:"
+/// for the app, and under it each icon with its search name.
+struct MenuBarItemSettingsList: View {
+    @ObservedObject private var model = MenuBarLayoutModel.shared
+    @ObservedObject private var modules = AOMModuleSwitches.shared
+    @State private var filter = ""
+    @State private var open: Set<String> = []
+    @State private var renaming: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass").foregroundStyle(AOMColor.textTertiary)
+                TextField("Filter apps and icons", text: $filter).textFieldStyle(.plain)
+                Spacer()
+                if model.busy { ProgressView().controlSize(.small) }
+                Button("Refresh Items") { model.refresh() }.controlSize(.small).disabled(model.busy)
+            }
+            .padding(.horizontal, 10).padding(.vertical, 7)
+            .background(AOMColor.sunken, in: RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous))
+            Text("Sets what AOM should do with each app's menu bar items. When searching for menu bar items you can give an icon its own name.")
+                .font(.system(size: 11.5)).foregroundStyle(AOMColor.textSecondary)
+            let apps = filtered
+            VStack(spacing: 0) {
+                ForEach(Array(apps.enumerated()), id: \.element.bundle) { index, app in
+                    appGroup(app, first: index == 0)
+                }
+            }
+            .background(AOMColor.field.opacity(0.5), in: RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous).strokeBorder(AOMColor.hairline, lineWidth: 0.5))
+            if apps.isEmpty {
+                Text(model.busy ? "Reading the menu bar…" : (filter.isEmpty ? "No icons read yet — Refresh Items." : "Nothing matches “\(filter)”."))
+                    .font(AOMFont.caption).foregroundStyle(AOMColor.textTertiary)
+            }
+        }
+        .onAppear { if model.lastRefresh == nil { model.refresh() } }
+    }
+
+    private var filtered: [(bundle: String, name: String, items: [MenuBarLayoutItem])] {
+        let query = filter.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !query.isEmpty else { return model.apps }
+        return model.apps.filter { app in
+            app.name.lowercased().contains(query) || app.items.contains { $0.item.displayName.lowercased().contains(query) }
+        }
+    }
+
+    @ViewBuilder
+    private func appGroup(_ app: (bundle: String, name: String, items: [MenuBarLayoutItem]), first: Bool) -> some View {
+        let lead = app.items[0]
+        let expanded = open.contains(app.bundle)
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Button { toggle(app.bundle) } label: {
+                    Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                        .frame(width: 14, height: 14)
+                }
+                .buttonStyle(.plain).foregroundStyle(AOMColor.textSecondary)
+                .accessibilityLabel(expanded ? "Collapse \(app.name)" : "Expand \(app.name)")
+                AppIconView(bundle: app.bundle)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(app.name).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                    Text(app.items.count == 1 ? "1 menu bar item" : "\(app.items.count) menu bar items")
+                        .font(.system(size: 11)).foregroundStyle(AOMColor.textTertiary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .onTapGesture { toggle(app.bundle) }
+                if let locked = lead.lockedReason {
+                    Text(locked).font(.system(size: 11)).foregroundStyle(AOMColor.textTertiary).lineLimit(1)
+                } else {
+                    Text("Menu bar item should:").font(.system(size: 12)).foregroundStyle(AOMColor.textSecondary)
+                    Picker("Menu bar item should", selection: Binding(get: { lead.section }, set: { model.move(lead.id, to: $0) })) {
+                        ForEach(MenuBarSection.allCases) { Text($0.shouldTitle).tag($0) }
+                    }
+                    .labelsHidden().fixedSize()
+                    .disabled(!modules.isOn(.menuBarHider) && !model.isSample)
+                }
+            }
+            .padding(.horizontal, 12).padding(.vertical, 8)
+            if expanded {
+                ForEach(app.items) { entry in itemRow(entry) }
+            }
+        }
+        .overlay(alignment: .top) { if !first { Rectangle().fill(AOMColor.hairline).frame(height: 0.5) } }
+    }
+
+    private func itemRow(_ entry: MenuBarLayoutItem) -> some View {
+        HStack(spacing: 10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 5, style: .continuous).fill(model.barColor.map { Color(nsColor: $0) } ?? AOMColor.sunken)
+                MenuBarItemPicture(entry: entry, height: 16, ink: .white)
+            }
+            .frame(width: 40, height: 24)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(entry.item.displayName).font(.system(size: 12.5)).lineLimit(1)
+                Text("Text search name: " + (AOMMenuBarAliasStore.shared.alias(for: entry.item.stableKey)?.name ?? "—"))
+                    .font(.system(size: 11)).foregroundStyle(AOMColor.textTertiary).lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Button("Rename…") { renaming = entry.id }
+                .controlSize(.small)
+                .disabled(entry.item.stableKey == nil)
+                .popover(isPresented: Binding(get: { renaming == entry.id }, set: { if !$0 { renaming = nil } }), arrowEdge: .leading) {
+                    MenuBarItemAliasEditor(item: entry.item) { renaming = nil }
+                }
+            Button("Open") { MenuBarStripController.shared.openItem(entry.item, section: entry.section) }
+                .controlSize(.small)
+                .disabled(model.isSample)
+        }
+        .padding(.leading, 48).padding(.trailing, 12).padding(.vertical, 6)
+        .background(AOMColor.sunken.opacity(0.5))
+    }
+
+    private func toggle(_ bundle: String) {
+        if open.contains(bundle) { open.remove(bundle) } else { open.insert(bundle) }
+    }
+}
+
+/// An app's Finder icon (the macOS group shows the gear).
+struct AppIconView: View {
+    let bundle: String
+    var size: CGFloat = 24
+
+    var body: some View {
+        Image(nsImage: Self.icon(bundle)).resizable().frame(width: size, height: size)
+    }
+
+    private static var cache: [String: NSImage] = [:]
+
+    static func icon(_ bundle: String) -> NSImage {
+        if let cached = cache[bundle] { return cached }
+        let image: NSImage
+        if MenuBarSectionStore.systemOwners.contains(bundle) {
+            image = NSWorkspace.shared.icon(forFile: "/System/Applications/System Settings.app")
+        } else if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle) {
+            image = NSWorkspace.shared.icon(forFile: url.path)
+        } else {
+            image = NSWorkspace.shared.icon(for: .application)
+        }
+        cache[bundle] = image
+        return image
     }
 }
 
@@ -259,22 +492,19 @@ struct MenuBarBarPreview: View {
             if entries.isEmpty {
                 Text("Nothing hidden").font(AOMFont.caption).foregroundStyle(AOMColor.textTertiary).padding(.horizontal, 8)
             }
-            ForEach(entries.prefix(10)) { entry in
-                Group {
-                    if let image = model.images[entry.imageKey] {
-                        Image(nsImage: image).resizable().aspectRatio(contentMode: .fit).frame(maxWidth: 60, maxHeight: 18)
-                    } else {
-                        MenuBarItemGlyph(item: entry.item, size: 15)
-                    }
-                }
-                .help(entry.item.displayName)
+            ForEach(entries.prefix(12)) { entry in
+                MenuBarItemPicture(entry: entry, height: 18).help(entry.item.displayName)
             }
-            if entries.count > 10 {
-                Text("+\(entries.count - 10)").font(.system(size: 10, weight: .semibold)).foregroundStyle(AOMColor.textSecondary)
+            if entries.count > 12 {
+                Text("+\(entries.count - 12)").font(.system(size: 10, weight: .semibold)).foregroundStyle(AOMColor.textSecondary)
+            }
+            Rectangle().fill(Color.white.opacity(0.25)).frame(width: 1, height: 16)
+            ForEach(["eye", "magnifyingglass", "gearshape"], id: \.self) { symbol in
+                Image(systemName: symbol).font(.system(size: 11)).foregroundStyle(.white.opacity(0.85))
             }
         }
-        .padding(.horizontal, 8)
-        .frame(height: 28)
+        .padding(.horizontal, 10)
+        .frame(height: 30)
         .background(model.barColor.map { Color(nsColor: $0.withAlphaComponent(1)) } ?? AOMColor.sunken, in: shape)
         .overlay(shape.strokeBorder(AOMColor.hairline, lineWidth: 0.5))
         .accessibilityElement(children: .ignore)

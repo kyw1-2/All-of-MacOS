@@ -64,6 +64,8 @@ final class AOMLauncherController: NSObject, NSWindowDelegate {
     /// other row is found by a launcher that stays invisible unless the row
     /// opens a screen (or can't be found), so a command runs without a flash.
     func run(_ hotkey: PaletteHotkey) {
+        // 7.10: Menu Bar › Hotkeys run without the launcher.
+        if hotkey.itemID.hasPrefix(MenuBarHotkeys.prefix) { MenuBarHotkeys.fire(hotkey); return }
         if hotkey.itemID.hasPrefix("app.") {
             let url = URL(fileURLWithPath: String(hotkey.itemID.dropFirst("app.".count)))
             if FileManager.default.fileExists(atPath: url.path) {

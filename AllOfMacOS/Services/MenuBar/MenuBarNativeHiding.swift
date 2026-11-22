@@ -36,6 +36,11 @@ enum MenuBarSectionStore {
         UserDefaults.standard.set(raw, forKey: key)
     }
 
+    /// A preset's whole map at once (Shown entries are dropped, as in `set`).
+    static func replaceAll(_ sections: [String: MenuBarSection]) {
+        UserDefaults.standard.set(sections.filter { $0.value != .shown }.mapValues(\.rawValue), forKey: key)
+    }
+
     /// Pure: which running apps may show, given what is to be hidden. AOM
     /// itself always shows (its chevron must stay).
     static func allowed(running: [String], sections: [String: MenuBarSection], hiding: Set<MenuBarSection>, own: String) -> [String] {
@@ -87,7 +92,10 @@ final class MenuBarNativeHiding {
         hiding = sections
         guard !sections.isEmpty else { release(); completion?(true); return }
         let running = NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier)
-        let list = MenuBarSectionStore.allowed(running: running, sections: MenuBarSectionStore.all, hiding: sections,
+        // 7.10: an app never placed starts where the "New Menu Bar Items" pill is.
+        let placed = MenuBarTriggerPolicy.sections(running: running, stored: MenuBarSectionStore.all, seen: MenuBarPrefs.seenApps,
+                                                   newItems: MenuBarPrefs.newItemsSection)
+        let list = MenuBarSectionStore.allowed(running: running, sections: placed, hiding: sections,
                                                own: Bundle.main.bundleIdentifier ?? "com.kyw.allofmacos")
         // The same list again (a helper process started) changes nothing.
         if isHolding, list == allowed { completion?(true) } else { activate(list, completion: completion) }
@@ -167,12 +175,15 @@ final class MenuBarNativeHiding {
 
     private func startLift(bundle: String?) {
         var quietTicks = 0
+        // Bartender's "Delay before hiding temporarily shown menu bar items"
+        // (15 s); the clock's lift ends as soon as its panel closes.
+        let needed = bundle == nil ? 3 : max(3, Int(MenuBarPrefs.temporaryShowSeconds * 2))
         let timer = Timer(timeInterval: 0.5, repeats: true) { _ in
             MainActor.assumeIsolated {
                 let native = MenuBarNativeHiding.shared
                 // Give the menu a moment to open, then wait until it closes.
                 if MenuBarHider.isMenuBarBusy() { quietTicks = 0 } else { quietTicks += 1 }
-                if quietTicks >= 3 { native.endLift(); if !native.hiding.isEmpty { native.hide(native.hiding) } }
+                if quietTicks >= needed { native.endLift(); if !native.hiding.isEmpty { native.hide(native.hiding) } }
             }
         }
         RunLoop.main.add(timer, forMode: .common)

@@ -148,10 +148,11 @@ final class MenuBarStripController: NSObject, ObservableObject, NSWindowDelegate
     /// Bartender: the bar goes a moment after the pointer leaves it.
     func pointerInside(_ inside: Bool) {
         leaveWork?.cancel()
-        guard !inside, !PresetManager.isUIPreview else { return }
+        // 7.10: Bartender's "Hide the bar when your pointer leaves it" and its delay.
+        guard !inside, !PresetManager.isUIPreview, MenuBarPrefs.barAutohide else { return }
         let work = DispatchWorkItem { [weak self] in self?.dismiss() }
         leaveWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + MenuBarPrefs.barLeaveDelay, execute: work)
     }
 
     /// Pure: each tile is its picture's width (28–44 pt) plus padding; the
@@ -169,7 +170,8 @@ final class MenuBarStripController: NSObject, ObservableObject, NSWindowDelegate
         let anchorScreen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main
         let width = Self.width(tiles: tiles, screen: anchorScreen?.frame.width ?? 1200)
         let height: CGFloat = 34
-        let chevron = MenuBarHider.shared.isRunning ? MenuBarHider.shared.toggleWindowFrame : nil
+        // 7.10: "Show Bartender Bar at mouse" centres it under the pointer.
+        let chevron = MenuBarHider.shared.isRunning && !MenuBarPrefs.barAtMouse ? MenuBarHider.shared.toggleWindowFrame : nil
         let anchorPoint = chevron.map { CGPoint(x: $0.maxX, y: $0.midY) } ?? NSEvent.mouseLocation
         guard let screen = NSScreen.screens.first(where: { $0.frame.contains(anchorPoint) }) ?? NSScreen.main else { return }
         let menuBar = max(24, screen.frame.maxY - screen.visibleFrame.maxY)

@@ -52,7 +52,7 @@ enum AOMModuleSwitch: String, CaseIterable, Identifiable, Codable {
         case .inputSources: return "Per-app input sources and the 한/A badge"
         case .screenRuler: return "Measure on screen"
         case .clickHints: return "Click by typing letters over buttons"
-        case .menuBarHider: return "Hides the menu bar items you ⌘-drag left of its divider"
+        case .menuBarHider: return "Hides the menu bar icons you put in Hidden; ❮ shows them"
         case .memoryWatch: return "Alerts on memory pressure or heavy swap, with the apps using most"
         case .meetingAlerts: return "Countdown in the menu bar and a full-screen alert as a meeting starts"
         case .weather: return "A city's temperature in the menu bar, details a click away; no location permission"

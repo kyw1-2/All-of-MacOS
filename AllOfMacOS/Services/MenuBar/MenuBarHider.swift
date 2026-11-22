@@ -59,6 +59,8 @@ final class MenuBarHider: NSObject {
     func start() {
         guard toggle == nil else { return }
         native = MenuBarNativeHiding.isAvailable
+        // 7.10: Bartender's click / scroll / hover on empty menu bar space.
+        MenuBarTriggers.shared.start()
         if native { startNative(); return }
         // Items are added right to left, so the chevron comes first and the
         // divider lands on its left.
@@ -131,13 +133,19 @@ final class MenuBarHider: NSObject {
 
     /// The chevron's picture and VoiceOver text always follow the real state.
     fileprivate func updateAppearance() {
-        toggle?.button?.image = isCollapsed
-            ? NSImage(systemSymbolName: "chevron.left", accessibilityDescription: "Show hidden menu bar items")
-            : NSImage(systemSymbolName: "chevron.right", accessibilityDescription: "Hide menu bar items")
+        let symbols = MenuBarPrefs.toggleIcon.symbols
+        let image = isCollapsed
+            ? NSImage(systemSymbolName: symbols.collapsed, accessibilityDescription: "Show hidden menu bar items")
+            : NSImage(systemSymbolName: symbols.expanded, accessibilityDescription: "Hide menu bar items")
+        // The dot is drawn smaller, like Bartender's own icon choices.
+        toggle?.button?.image = MenuBarPrefs.toggleIcon == .dot
+            ? image?.withSymbolConfiguration(.init(pointSize: 7, weight: .regular)) : image
         toggle?.button?.setAccessibilityLabel(isCollapsed ? "Show hidden menu bar items" : "Hide menu bar items")
     }
 
     func stop() {
+        MenuBarTriggers.shared.stop()
+        arrangingBefore = nil
         startCollapse?.cancel()
         startCollapse = nil
         hoverWork?.cancel()
@@ -159,9 +167,81 @@ final class MenuBarHider: NSObject {
         // 7.9 (Bartender Bar): the hidden icons can open in a bar below instead;
         // ⌥ brings the Always Hidden ones too, in either place.
         let option = NSEvent.modifierFlags.contains(.option)
-        if Self.revealMode == .bar, isCollapsed { MenuBarStripController.shared.toggle(includeAlways: option); return }
-        if option { expand(all: true); return }
-        if isCollapsed { expand() } else { collapse() }
+        if MenuBarStripController.shared.isVisible { MenuBarStripController.shared.dismiss(); return }
+        if isCollapsed { revealFromTrigger(includeAlways: option); return }
+        if option, !showsAll { expand(all: true); return }
+        collapse()
+    }
+
+    /// Icon picture or hover choice changed in Settings.
+    func refreshAppearance() { updateAppearance() }
+
+    // MARK: 7.10 — Bartender's triggers
+
+    /// A click on empty menu bar space: show if hidden, hide if shown.
+    func toggleFromTrigger() {
+        if MenuBarStripController.shared.isVisible { MenuBarStripController.shared.dismiss(); return }
+        if isCollapsed { revealFromTrigger() } else { hideFromTrigger() }
+    }
+
+    /// Shows the hidden icons where the settings say: in the menu bar, or in
+    /// the Bar — also when the menu bar has no room for them (Bartender:
+    /// "the Bar will show these items instead").
+    func revealFromTrigger(includeAlways: Bool = false) {
+        guard isRunning, isCollapsed else { return }
+        if Self.revealMode == .bar || (MenuBarPrefs.barWhenNoRoom && !hasRoomForHidden(includeAlways: includeAlways)) {
+            MenuBarStripController.shared.show(includeAlways: includeAlways)
+            return
+        }
+        expand(all: includeAlways)
+    }
+
+    func hideFromTrigger() {
+        if MenuBarStripController.shared.isVisible { MenuBarStripController.shared.dismiss() }
+        guard isRunning, !isCollapsed, !MenuBarTriggers.shared.wideHold else { return }
+        collapse()
+    }
+
+    /// The hidden icons fit between the app's menus (or the notch) and the
+    /// icons already shown. Widths come from the last read of the menu bar.
+    func hasRoomForHidden(includeAlways: Bool) -> Bool {
+        let model = MenuBarLayoutModel.shared
+        guard let screen = NSScreen.main, !model.items.isEmpty else { return true }
+        func width(_ entry: MenuBarLayoutItem) -> CGFloat {
+            max(18, entry.item.frame?.width ?? model.images[entry.imageKey]?.size.width ?? 28)
+        }
+        let lanes = model.lanes
+        let hidden = ((lanes[.hidden] ?? []) + (includeAlways ? lanes[.alwaysHidden] ?? [] : [])).reduce(0) { $0 + width($1) }
+        let shown = (lanes[.shown] ?? []).reduce(0) { $0 + width($1) } + 30
+        let available: CGFloat
+        if let notch = GestureHUD.notchRect(screen) {
+            available = screen.frame.maxX - notch.maxX
+        } else {
+            available = screen.frame.width - MenuBarAppMenus.maxX(on: screen)
+        }
+        return MenuBarTriggerPolicy.hasRoom(hiddenWidth: hidden, shownWidth: shown, available: available)
+    }
+
+    /// ⌘ pressed on the menu bar: every section shows while icons are dragged
+    /// ("When ⌘+dragging menu bar items, show all sections").
+    private var arrangingBefore: (collapsed: Bool, showsAll: Bool)?
+
+    func showAllForArranging() {
+        guard isRunning, arrangingBefore == nil, isCollapsed || !showsAll else { return }
+        arrangingBefore = (isCollapsed, showsAll)
+        expand(all: true, holdOpen: true)
+    }
+
+    func endArranging() {
+        guard let before = arrangingBefore else { return }
+        // Still dragging, or a menu is open: try again shortly.
+        if NSEvent.pressedMouseButtons != 0 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { MenuBarHider.shared.endArranging() }
+            return
+        }
+        arrangingBefore = nil
+        if before.collapsed { collapse(quiet: true) } else { expand(all: before.showsAll) }
+        MenuBarLayoutModel.shared.refresh(quietly: true, reveal: false)
     }
 
     // MARK: 7.9 — Bartender Bar, hover, layout inspection
@@ -230,7 +310,7 @@ final class MenuBarHider: NSObject {
         hoverWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self, self.isCollapsed else { return }
-            if Self.revealMode == .bar { MenuBarStripController.shared.show() } else { self.expand() }
+            self.revealFromTrigger()
         }
         hoverWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: work)
@@ -296,53 +376,53 @@ final class MenuBarHider: NSObject {
         }
     }
 
+    /// Right-click on ❮ (Bartender's menu bar item menu).
     private func showOptions() {
         let menu = NSMenu()
-        let section = NSMenuItem(title: "Always-Hidden Section", action: #selector(toggleAlwaysSection), keyEquivalent: "")
-        section.target = self
-        section.state = Self.alwaysSectionOn ? .on : .off
-        menu.addItem(section)
-        let all = NSMenuItem(title: "Show Everything (⌥-Click)", action: #selector(showEverything), keyEquivalent: "")
-        all.target = self
-        menu.addItem(all)
-        // 7.9: Bartender Bar or in place, and hover.
-        let bar = NSMenuItem(title: "Show Hidden Icons in a Bar Below", action: #selector(toggleRevealMode), keyEquivalent: "")
-        bar.target = self
-        bar.state = Self.revealMode == .bar ? .on : .off
-        menu.addItem(bar)
-        let hoverItem = NSMenuItem(title: "Reveal on Hover", action: #selector(toggleHover), keyEquivalent: "")
-        hoverItem.target = self
-        hoverItem.state = Self.hoverReveal ? .on : .off
-        menu.addItem(hoverItem)
-        let hold = NSMenuItem(title: "Keep Open Until I Click", action: #selector(keepOpen), keyEquivalent: "")
-        hold.target = self
-        hold.isEnabled = !isCollapsed
-        menu.addItem(hold)
+        func add(_ title: String, _ action: Selector, on: Bool? = nil, enabled: Bool = true) {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            item.target = self
+            if let on { item.state = on ? .on : .off }
+            item.isEnabled = enabled
+            menu.addItem(item)
+        }
+        add(isCollapsed ? "Show Hidden Icons" : "Hide Icons", #selector(toggleShown))
+        add("Show All Icons (⌥-Click)", #selector(showEverything), enabled: isCollapsed || !showsAll)
+        add("Search Menu Bar Icons…", #selector(searchIcons))
+        add("Keep Shown Until I Hide Them", #selector(keepOpen), enabled: !isCollapsed)
         menu.addItem(.separator())
-        let manage = NSMenuItem(title: "Arrange Menu Bar…", action: #selector(openManagement), keyEquivalent: "")
-        manage.target = self
-        menu.addItem(manage)
-        menu.addItem(.separator())
-        let header = NSMenuItem(title: "Hide Again After", action: nil, keyEquivalent: "")
-        header.isEnabled = false
-        menu.addItem(header)
+        add("Show Hidden Icons in a Bar Below", #selector(toggleRevealMode), on: Self.revealMode == .bar)
+        add("Show When Hovering Over Empty Space", #selector(toggleHover), on: Self.hoverReveal)
+        add("Show When Clicking Empty Space", #selector(toggleEmptyClick), on: MenuBarPrefs.showOnEmptyClick)
+        if !native { add("Always-Hidden Section", #selector(toggleAlwaysSection), on: Self.alwaysSectionOn) }
+        let rehide = NSMenuItem(title: "Hide Again After", action: nil, keyEquivalent: "")
+        let sub = NSMenu()
         for seconds in [0.0, 10, 15, 30, 60] {
             let entry = NSMenuItem(title: seconds == 0 ? "Never" : "\(Int(seconds)) Seconds", action: #selector(pickRehide(_:)), keyEquivalent: "")
             entry.target = self
             entry.representedObject = seconds
             entry.state = Self.rehideSeconds == seconds ? .on : .off
-            menu.addItem(entry)
+            sub.addItem(entry)
         }
+        rehide.submenu = sub
+        menu.addItem(rehide)
+        menu.addItem(.separator())
+        add("Menu Bar Settings…", #selector(openManagement))
+        add("Setup Guide…", #selector(openSetup))
         toggle?.menu = menu
         toggle?.button?.performClick(nil)
         toggle?.menu = nil
     }
 
+    @objc private func toggleShown() { if isCollapsed { revealFromTrigger() } else { collapse() } }
+    @objc private func searchIcons() { AOMMenuShelfController.shared.show() }
+    @objc private func toggleEmptyClick() { MenuBarPrefs.showOnEmptyClick.toggle() }
+    @objc private func openSetup() { MenuBarNavigation.open(setup: true) }
     @objc private func toggleAlwaysSection() { setAlwaysSection(!Self.alwaysSectionOn) }
     @objc private func toggleRevealMode() { Self.revealMode = Self.revealMode == .bar ? .menuBar : .bar }
     @objc private func toggleHover() { Self.hoverReveal.toggle() }
     @objc private func openManagement() { MenuBarNavigation.open() }
-    @objc private func showEverything() { expand(all: true) }
+    @objc private func showEverything() { if isCollapsed { revealFromTrigger(includeAlways: true) } else { expand(all: true) } }
     @objc private func keepOpen() { cancelRehide() }
     @objc private func pickRehide(_ sender: NSMenuItem) { setRehideSeconds(sender.representedObject as? Double ?? 15) }
 

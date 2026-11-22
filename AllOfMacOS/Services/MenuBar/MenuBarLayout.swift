@@ -411,6 +411,17 @@ final class MenuBarLayoutModel: ObservableObject {
                         for (bundle, section) in seed { MenuBarSectionStore.set(section, for: bundle) }
                         UserDefaults.standard.set(true, forKey: "AOMMenuBarSections.seeded")
                     }
+                    // 7.10: an app seen for the first time starts where the
+                    // "New Menu Bar Items" pill is (once AOM knows the others).
+                    var seen = MenuBarPrefs.seenApps
+                    let owners = Set(snapshot.items.filter { $0.pid != own }.map(\.ownerBundleID))
+                    if native, !seen.isEmpty, MenuBarPrefs.newItemsSection != .shown {
+                        for bundle in owners.subtracting(seen) where MenuBarSectionStore.all[bundle] == nil
+                            && !MenuBarSectionStore.systemOwners.contains(bundle) {
+                            MenuBarSectionStore.set(MenuBarPrefs.newItemsSection, for: bundle)
+                        }
+                    }
+                    if !owners.isSubset(of: seen) { seen.formUnion(owners); MenuBarPrefs.seenApps = seen }
                     let sections = MenuBarSectionStore.all
                     let laid = snapshot.items.filter { !MenuBarLayoutPolicy.isHiderControl($0, ownPID: own) }.map { item -> MenuBarLayoutItem in
                         let locked = MenuBarLayoutPolicy.lockedReason(item, ownPID: own, native: native)
@@ -536,6 +547,15 @@ final class MenuBarLayoutModel: ObservableObject {
         case .shown: status = "\(name) stays in the menu bar."
         case .hidden: status = hider.isRunning ? "\(name) hides; ❮ or the Bar shows it." : "\(name) will hide once Hide icons is on."
         case .alwaysHidden: status = hider.isRunning ? "\(name) shows only with ⌥-click or Show All." : "\(name) will hide once Hide icons is on."
+        }
+    }
+
+    /// A preset changed every app's section: the lanes follow at once.
+    func reloadSections() {
+        guard !isSample else { return }
+        let sections = MenuBarSectionStore.all
+        for index in items.indices where items[index].lockedReason == nil {
+            items[index].section = sections[items[index].item.ownerBundleID] ?? .shown
         }
     }
 
