@@ -41,6 +41,7 @@ struct MainWindow: View {
                 case .textActions: TextActionsPage()
                 case .files: FilesPage()
                 case .focus: FocusPage()
+                case .menuBar: MenuBarControlPage()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

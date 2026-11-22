@@ -17,6 +17,7 @@ enum AOMMainTab: String, CaseIterable, Identifiable {
     case textActions = "Text Actions"
     case files = "Files"
     case focus = "Focus"
+    case menuBar = "Menu Bar"
 
     var id: String { rawValue }
 
@@ -35,6 +36,7 @@ enum AOMMainTab: String, CaseIterable, Identifiable {
         case .textActions: return "Text Actions"
         case .files: return "Files"
         case .focus: return "Focus"
+        case .menuBar: return "Menu Bar"
         }
     }
 
@@ -52,6 +54,7 @@ enum AOMMainTab: String, CaseIterable, Identifiable {
         case .textActions: return "A bar of actions over the text you select"
         case .files: return "Open and Save dialog shortcuts, a drop shelf and recent files"
         case .focus: return "Focus sessions, hiding distractions and quitting idle apps"
+        case .menuBar: return "Weather, hidden icons, search, layout and menu bar extras"
         }
     }
 
@@ -69,6 +72,7 @@ enum AOMMainTab: String, CaseIterable, Identifiable {
         case .textActions: return "character.cursor.ibeam"
         case .files: return "folder.fill"
         case .focus: return "timer"
+        case .menuBar: return "menubar.rectangle"
         }
     }
 
@@ -87,6 +91,7 @@ enum AOMMainTab: String, CaseIterable, Identifiable {
         case .textActions: return "character.cursor.ibeam"
         case .files: return "folder"
         case .focus: return "timer"
+        case .menuBar: return "menubar.rectangle"
         }
     }
 

@@ -127,7 +127,7 @@ final class MenuBarWeather: NSObject, ObservableObject, NSMenuDelegate {
     @Published var unit: Unit {
         didSet {
             UserDefaults.standard.set(unit.rawValue, forKey: Self.unitKey)
-            if oldValue != unit { refresh(force: true) }
+            if oldValue != unit { updateItem(); refresh(force: true) }
         }
     }
 
@@ -351,14 +351,18 @@ final class MenuBarWeather: NSObject, ObservableObject, NSMenuDelegate {
 
     private func updateItem() {
         guard let button = item?.button else { return }
-        let current = reading.flatMap { $0.cityID == city?.id ? $0 : nil }
+        let current = reading.flatMap { $0.cityID == city?.id && $0.unit == unit ? $0 : nil }
         let image = NSImage(systemSymbolName: current.map { Self.symbol(code: $0.code, isDay: $0.isDay) } ?? "cloud.sun",
                             accessibilityDescription: nil)
         image?.isTemplate = true
-        button.image = image
+        button.image = image?.withSymbolConfiguration(.init(pointSize: 13, weight: .semibold)) ?? image
+        button.font = .monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
         button.imagePosition = display == .iconOnly ? .imageOnly : .imageLeading
         button.title = city == nil ? "" : Self.title(current, display: display)
-        button.appearsDisabled = current == nil || !Self.isFresh(current, city: city, unit: unit, now: Date().addingTimeInterval(-Self.maxAge * 3))
+        // A disabled NSStatusBarButton renders all weather content washed out.
+        // Keep contrast even offline; stale data is called out by its timestamp
+        // and the accessibility description, never by making the item illegible.
+        button.appearsDisabled = false
         button.setAccessibilityLabel(Self.spoken(city: city, reading: current, problem: problem))
         button.toolTip = Self.spoken(city: city, reading: current, problem: problem)
     }
@@ -370,23 +374,13 @@ final class MenuBarWeather: NSObject, ObservableObject, NSMenuDelegate {
             entry.isEnabled = false
             menu.addItem(entry)
         }
-        if let city {
-            info(city.label)
-            if let reading, reading.cityID == city.id {
-                let actual = Int(reading.temperature.rounded()), unitMark = reading.unit == .fahrenheit ? "°F" : "°C"
-                let feels = reading.feelsLike.map { " · feels like \(Int($0.rounded()))\(unitMark)" } ?? " · feels like: not given (actual shown)"
-                info("\(Self.describe(code: reading.code)), \(actual)\(unitMark)\(feels)")
-                if let low = reading.low, let high = reading.high {
-                    info("Today \(Int(low.rounded()))° – \(Int(high.rounded()))°" + (reading.rainChance.map { " · rain \($0)%" } ?? ""))
-                }
-                if let trend = Self.trend(reading) { info(trend) }
-                info("Updated \(reading.fetchedAt.formatted(date: .omitted, time: .shortened))" + (problem.map { " · now: \($0.message)" } ?? ""))
-            } else {
-                info(problem.map { "No weather: \($0.message)" } ?? "No weather yet")
-            }
-        } else {
-            info("Choose a city to see its weather")
-        }
+        let card = NSMenuItem(title: "Weather details", action: nil, keyEquivalent: "")
+        let summary = NSHostingView(rootView: WeatherMenuSummary(city: city,
+                            reading: reading.flatMap { $0.cityID == city?.id && $0.unit == unit ? $0 : nil },
+                            problem: problem))
+        summary.frame = NSRect(x: 0, y: 0, width: 336, height: 225)
+        card.view = summary
+        menu.addItem(card)
         menu.addItem(.separator())
         let show = NSMenuItem(title: "Show", action: nil, keyEquivalent: "")
         let showMenu = NSMenu()
@@ -422,6 +416,9 @@ final class MenuBarWeather: NSObject, ObservableObject, NSMenuDelegate {
             menu.addItem(entry)
         }
         menu.addItem(.separator())
+        let manage = NSMenuItem(title: "Manage Menu Bar…", action: #selector(openManagement), keyEquivalent: "")
+        manage.target = self
+        menu.addItem(manage)
         let off = NSMenuItem(title: "Turn Off Weather", action: #selector(turnOff), keyEquivalent: "")
         off.target = self
         menu.addItem(off)
@@ -432,6 +429,7 @@ final class MenuBarWeather: NSObject, ObservableObject, NSMenuDelegate {
     @objc private func pickUnit(_ sender: NSMenuItem) { unit = Unit(rawValue: sender.representedObject as? String ?? "") ?? unit }
     @objc private func refreshNow() { waitUntil = waitUntil.flatMap { $0 > Date() ? $0 : nil }; refresh(force: true) }
     @objc private func chooseCity() { Self.openCityPicker() }
+    @objc private func openManagement() { MenuBarNavigation.open() }
     @objc private func pickRecent(_ sender: NSMenuItem) {
         if let id = sender.representedObject as? Int, let other = recent.first(where: { $0.id == id }) { choose(other) }
     }
@@ -511,5 +509,79 @@ struct WeatherCityPicker: View {
                 problem = (error as? WeatherError)?.message ?? error.localizedDescription
             }
         }
+    }
+}
+
+
+/// Native-resolution weather card in the menu (not disabled gray NSMenuItem
+/// rows). Inspired by the information hierarchy of dedicated weather apps;
+/// no third-party imagery, code or proprietary assets are used.
+private struct WeatherMenuSummary: View {
+    let city: WeatherCity?
+    let reading: WeatherReading?
+    let problem: WeatherError?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(city?.name ?? "Choose a city").font(.system(size: 14, weight: .semibold)).lineLimit(1)
+                Spacer()
+                if let reading {
+                    Text(reading.fetchedAt.formatted(date: .omitted, time: .shortened))
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+            }
+            if let reading {
+                HStack(spacing: 12) {
+                    Image(systemName: MenuBarWeather.symbol(code: reading.code, isDay: reading.isDay))
+                        .font(.system(size: 32, weight: .medium))
+                        .symbolRenderingMode(.hierarchical)
+                    Text("\(Int(reading.temperature.rounded()))°")
+                        .font(.system(size: 35, weight: .semibold, design: .rounded).monospacedDigit())
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(MenuBarWeather.describe(code: reading.code)).font(.system(size: 12, weight: .medium))
+                        if let feels = reading.feelsLike {
+                            Text("Feels like \(Int(feels.rounded()))°").font(.system(size: 11)).foregroundStyle(.secondary)
+                        }
+                    }
+                    Spacer(minLength: 0)
+                }.frame(maxWidth: .infinity, alignment: .leading)
+                Divider()
+                HStack(spacing: 16) {
+                    if let high = reading.high { Label("H \(Int(high.rounded()))°", systemImage: "arrow.up").fixedSize() }
+                    if let low = reading.low { Label("L \(Int(low.rounded()))°", systemImage: "arrow.down").fixedSize() }
+                    if let rain = reading.rainChance { Label("\(rain)%", systemImage: "drop.fill").fixedSize() }
+                    Spacer(minLength: 0)
+                }.font(.system(size: 11, weight: .medium))
+                if let hours = reading.nextHours, !hours.isEmpty {
+                    HStack(spacing: 4) {
+                        ForEach(Array(hours.prefix(6).enumerated()), id: \.offset) { index, temp in
+                            VStack(spacing: 3) {
+                                Text(index == 0 ? "Now" : "+\(index)h").foregroundStyle(.secondary)
+                                Text("\(Int(temp.rounded()))°").fontWeight(.semibold)
+                            }
+                            .font(.system(size: 10).monospacedDigit())
+                            .frame(maxWidth: .infinity)
+                        }
+                    }
+                    .padding(.vertical, 7)
+                    .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+                }
+            } else {
+                Text(city == nil ? "Choose City below to show live conditions." : "No reading yet. Refresh when connected.")
+                    .font(.system(size: 12)).foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+            }
+            if let problem {
+                Text(problem.message).font(.system(size: 10)).foregroundStyle(.orange).lineLimit(2)
+            } else if let reading, Date().timeIntervalSince(reading.fetchedAt) > MenuBarWeather.maxAge {
+                Text("Last saved reading · refresh for current weather")
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .frame(width: 336, height: 225, alignment: .topLeading)
+        .accessibilityElement(children: .contain)
     }
 }

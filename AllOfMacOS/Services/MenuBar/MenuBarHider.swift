@@ -131,7 +131,7 @@ final class MenuBarHider: NSObject {
         always = item
     }
 
-    private func setAlwaysSection(_ on: Bool) {
+    func setAlwaysSection(_ on: Bool) {
         Self.alwaysSectionOn = on
         if on {
             addAlwaysDivider()
@@ -159,6 +159,10 @@ final class MenuBarHider: NSObject {
         hold.isEnabled = !isCollapsed
         menu.addItem(hold)
         menu.addItem(.separator())
+        let manage = NSMenuItem(title: "Manage Menu Bar…", action: #selector(openManagement), keyEquivalent: "")
+        manage.target = self
+        menu.addItem(manage)
+        menu.addItem(.separator())
         let header = NSMenuItem(title: "Hide Again After", action: nil, keyEquivalent: "")
         header.isEnabled = false
         menu.addItem(header)
@@ -175,9 +179,15 @@ final class MenuBarHider: NSObject {
     }
 
     @objc private func toggleAlwaysSection() { setAlwaysSection(!Self.alwaysSectionOn) }
+    @objc private func openManagement() { MenuBarNavigation.open() }
     @objc private func showEverything() { expand(all: true) }
     @objc private func keepOpen() { rehide?.cancel() }
-    @objc private func pickRehide(_ sender: NSMenuItem) { Self.rehideSeconds = sender.representedObject as? Double ?? 15 }
+    @objc private func pickRehide(_ sender: NSMenuItem) { setRehideSeconds(sender.representedObject as? Double ?? 15) }
+
+    func setRehideSeconds(_ seconds: Double) {
+        Self.rehideSeconds = seconds
+        if !isCollapsed { expand(all: showsAll) } // update the active timeout too
+    }
 
     /// Sets both lengths for the state, then checks the chevron is still on a
     /// display; if the second section pushed it off, that section is turned

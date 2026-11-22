@@ -1,3 +1,13 @@
+## 7.7.0 — Menu Bar control center (2026-11-22)
+
+- A dedicated **Menu Bar** page now appears in the main window's left sidebar, without changing existing ⌘1–⌘9 page shortcuts. The launcher and feature-directory search also find it by Menu Bar, weather, Ice, Bartender or 메뉴바.
+- The page consolidates weather enablement, city, reading and units; the searchable and pinnable menu bar Shelf, a one-row Icon Strip and its optional hover; menu bar Hider and its always-hidden divider, reveal actions and auto-rehide; current-host icon spacing; live Accessibility guidance, inventory and per-item favorite/open actions. Existing module preferences and pins are retained.
+- The status-bar weather icon and digits stay sharp and readable when data is absent or stale; no fake disabled alpha. The weather menu now opens a native SwiftUI condition card with last-update time, large temperature, feels-like, today's high/low, rain chance and six-hour temperatures, while preserving city switch, data source credit, refresh and controls below it. Unit changes never briefly display a cached value with the wrong unit.
+- Hider rehide changes update an open section immediately. Spacing writes stay transactional and report system UI restart results; no unadvertised modification of another application's status items.
+- Background AX scanning is still on-demand/once per page activation. Hover requires explicit opt-in. No new global event tap or continuous weather polling; Open-Meteo retains its five-minute timer / 30-minute cache policy.
+
+Design / compatibility: `docs/design-7.7-menubar.md`. Oracle Bartender 7.1 and Ice 0.11.12 static-analysis evidence was consulted, with the proprietary behavior and private API boundaries distinguished from supported macOS functionality.
+
 ## [7.6.0] - 2026-11-22
 
 Codex's audit of 7.5 is fixed where it found data, privacy or wrong-target risks, and four of its menu bar ideas are added: weather in the menu bar, a strip of every menu bar icon, an always-hidden section, and a way to mark an audio glitch so the next crackle can be explained. A Gemini review of the whole change was checked against the code: its confirmed points are fixed and three claims were disproved. Details: `docs/design-7.6.md`.

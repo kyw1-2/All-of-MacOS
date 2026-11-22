@@ -10,7 +10,7 @@ enum AOMFeatureGroup: String, CaseIterable, Identifiable {
         case .create: [.capture, .clipboard, .textActions]
         case .organize: [.files, .folderRules, .focus]
         case .automate: [.gestures, .snapping]
-        case .system: [.audio, .tools, .insights]
+        case .system: [.audio, .menuBar, .tools, .insights]
         }
     }
 }
@@ -29,6 +29,7 @@ extension AOMMainTab {
         case .snapping: "window snap tiling zone layout display 창 타일링 배치 영역 모니터"
         case .audio: "sound volume EQ equalizer output microphone HomePod AirPlay 소리 볼륨 오디오 마이크 홈팟"
         case .tools: "network battery fan storage cleanup VPN homebrew system 시스템 네트워크 배터리 팬 저장공간 청소"
+        case .menuBar: "menubar menu bar weather ice bartender hidden icons status bar 메뉴바 날씨 아이콘 숨기기"
         case .insights: "statistics usage activity stats 통계 사용 활동"
         }
     }

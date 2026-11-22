@@ -75,6 +75,7 @@ extension AOMMainTab {
         case .textActions: return AOMIdentity(symbol: "character.cursor.ibeam", color: AOMModule.textActions.hue)
         case .files: return AOMIdentity(symbol: "doc.on.doc.fill", color: AOMModule.files.hue)
         case .focus: return AOMIdentity(symbol: "timer", color: AOMModule.focus.hue)
+        case .menuBar: return AOMIdentity(symbol: "menubar.rectangle", color: AOMBrand.slate)
         }
     }
 
@@ -93,6 +94,7 @@ extension AOMMainTab {
         case .textActions: return "Act on selected text"
         case .files: return "Faster Open and Save"
         case .focus: return "Sessions without distraction"
+        case .menuBar: return "Your menu bar, under control"
         }
     }
 }
