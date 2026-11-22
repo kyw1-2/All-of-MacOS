@@ -2,142 +2,159 @@ import AppKit
 import ApplicationServices
 import SwiftUI
 
-/// A discoverable home for AOM's menu bar features. Foreign icons are only
-/// queried through Accessibility; AOM does not move or modify their windows.
+/// 7.9: the Menu Bar page, after Bartender's settings — the layout first
+/// (the real menu bar pulled down into lanes you drag between), then how
+/// hidden icons come back, the Bar, weather, AOM's own menu and spacing.
+/// One line of explanation where a control needs it, none where it doesn't.
 struct MenuBarControlPage: View {
     @ObservedObject private var modules = AOMModuleSwitches.shared
     @ObservedObject private var weather = MenuBarWeather.shared
     @ObservedObject private var shelf = AOMMenuShelfController.shared
+    @ObservedObject private var layout = MenuBarLayoutModel.shared
+    @ObservedObject private var menuStore = AOMStatusMenuStore.shared
     @State private var spacing = SystemToolsModel.MenuBarSpacing.current(spacing: SystemToolsModel.MenuBarSpacing.Store.live.read("NSStatusItemSpacing"))
     @State private var spacingBusy = false
     @State private var spacingMessage: String?
     @State private var alwaysHidden = MenuBarHider.alwaysSectionOn
     @State private var rehide = MenuBarHider.rehideSeconds
+    @State private var revealMode = MenuBarHider.revealMode
+    @State private var hover = MenuBarHider.hoverReveal
 
     private func module(_ id: AOMModuleSwitch) -> Binding<Bool> {
         Binding(get: { modules.isOn(id) }, set: { _ = modules.set(id, on: $0) })
     }
 
+    private var hiderOn: Bool { modules.isOn(.menuBarHider) }
+
     var body: some View {
         AOMPage {
-            AOMPageHeader("Menu Bar", subtitle: "One place for weather, icon search, visibility and spacing.")
-            AOMSection("Find menu bar items", detail: "Ice / Bartender-style access", padding: 14) {
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack {
-                        Button("Show Icon Strip") { MenuBarStripController.shared.show() }
-                        Button("Open Searchable Shelf") { shelf.show() }
-                        Button("Refresh") { shelf.refresh() }.disabled(shelf.loading)
-                    }
-                    Text("The strip gathers reachable icons (even some hidden by the notch). Search and favorite items in the Shelf, without moving another app's icon.")
-                        .font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
-                    if !AXIsProcessTrusted() {
-                        Label("Other apps' icons require Accessibility access.", systemImage: "lock.shield")
-                        Button("Request Access") { shelf.requestPermission() }
-                    } else {
-                        HStack {
-                            Text("\(shelf.items.count) items · \(shelf.pinned.count) favorites")
-                            if shelf.loading { ProgressView().controlSize(.small) }
-                        }.font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
-                        if let message = shelf.message { Text(message).font(AOMFont.caption) }
-                    }
-                    Toggle("Open Shelf when hovering at the top center", isOn: $shelf.hoverEnabled)
-                        .disabled(!AXIsProcessTrusted())
-                    Text("Hover is optional and adds no global keyboard tap.")
-                        .font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
-                }
+            AOMPageHeader("Menu Bar", subtitle: "Arrange, hide and reach every icon.")
+            AOMSection("Layout", detail: "Drag icons between lanes", padding: 14) {
+                MenuBarLayoutEditor()
             }
-            AOMSection("Hide and reveal icons", detail: "AOM divider and chevron", padding: 14) {
-                VStack(alignment: .leading, spacing: 10) {
-                    Toggle("Enable Menu Bar Hider", isOn: module(.menuBarHider))
-                    Text("⌘-drag icons left of AOM's divider to hide them; click the chevron to reveal them. AOM moves only its divider, never another app's icon.")
-                        .font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
-                    Toggle("Additional always-hidden section", isOn: Binding(get: { alwaysHidden }, set: {
-                        alwaysHidden = $0; MenuBarHider.shared.setAlwaysSection($0)
-                    })).disabled(!modules.isOn(.menuBarHider))
-                    Text("Place the faint divider left of the normal divider. ⌥-click the chevron to reveal all.")
-                        .font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
-                    Picker("Hide again after", selection: Binding(get: { rehide }, set: {
-                        rehide = $0; MenuBarHider.shared.setRehideSeconds($0)
-                    })) {
+            AOMSection("Hidden icons") {
+                AOMToggleRow("Hide icons", detail: "A ❮ button and a divider; icons left of it hide", symbol: "eye.slash",
+                             isOn: module(.menuBarHider))
+                AOMSettingRow("Show them", symbol: "rectangle.topthird.inset.filled") {
+                    Picker("Show them", selection: Binding(get: { revealMode }, set: { revealMode = $0; MenuBarHider.revealMode = $0 })) {
+                        ForEach(MenuBarHider.RevealMode.allCases) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.segmented).labelsHidden().fixedSize()
+                }
+                .disabled(!hiderOn)
+                AOMSettingRow("Hide again after", symbol: "timer") {
+                    Picker("Hide again after", selection: Binding(get: { rehide }, set: { rehide = $0; MenuBarHider.shared.setRehideSeconds($0) })) {
                         Text("Never").tag(0.0)
-                        Text("10 seconds").tag(10.0)
-                        Text("15 seconds").tag(15.0)
-                        Text("30 seconds").tag(30.0)
-                        Text("60 seconds").tag(60.0)
-                    }.disabled(!modules.isOn(.menuBarHider))
-                    HStack {
-                        Button("Reveal All Now") { MenuBarHider.shared.expand(all: true, holdOpen: true) }
-                        Button("Hide Now") { MenuBarHider.shared.collapse() }
-                    }.disabled(!modules.isOn(.menuBarHider))
+                        Text("10 s").tag(10.0)
+                        Text("15 s").tag(15.0)
+                        Text("30 s").tag(30.0)
+                        Text("60 s").tag(60.0)
+                    }
+                    .pickerStyle(.segmented).labelsHidden().fixedSize()
+                }
+                .disabled(!hiderOn)
+                AOMToggleRow("Reveal on hover", detail: "Rest the pointer on ❮", symbol: "cursorarrow.motionlines",
+                             isOn: Binding(get: { hover }, set: { hover = $0; MenuBarHider.hoverReveal = $0 }))
+                    .disabled(!hiderOn)
+                AOMToggleRow("Always Hidden lane", detail: "Shown only with ⌥-click or Show All", symbol: "lock",
+                             isOn: Binding(get: { alwaysHidden }, set: { alwaysHidden = $0; MenuBarHider.shared.setAlwaysSection($0) }))
+                    .disabled(!hiderOn)
+                AOMSettingRow("Right now", symbol: "hand.tap") {
+                    HStack(spacing: 6) {
+                        Button("Show All") { MenuBarHider.shared.expand(all: true, holdOpen: true) }
+                        Button("Hide") { MenuBarHider.shared.collapse() }
+                    }
+                    .controlSize(.small)
+                }
+                .disabled(!hiderOn)
+            }
+            AOMSection("Bar", detail: "Hidden icons in a bar under the menu bar") {
+                AOMSettingRow("Preview", symbol: "menubar.dock.rectangle") {
+                    HStack(spacing: 8) {
+                        MenuBarBarPreview()
+                        Button("Open") { MenuBarStripController.shared.show() }.controlSize(.small)
+                    }
+                }
+                AOMToggleRow("Open at the top center", detail: "When the pointer rests there", symbol: "arrow.up.to.line",
+                             isOn: $shelf.hoverEnabled)
+                    .disabled(!AXIsProcessTrusted())
+                AOMSettingRow("Search every icon", symbol: "magnifyingglass") {
+                    Button("Search…") { shelf.show() }.controlSize(.small)
                 }
             }
-            AOMSection("Weather", detail: "Open-Meteo · chosen city, no location permission", padding: 14) {
-                VStack(alignment: .leading, spacing: 10) {
-                    Toggle("Show in menu bar", isOn: module(.weather))
-                    HStack {
-                        Image(systemName: weather.reading.map { MenuBarWeather.symbol(code: $0.code, isDay: $0.isDay) } ?? "cloud.sun")
-                            .font(.system(size: 24, weight: .semibold))
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(weather.city?.label ?? "No city chosen").font(.headline)
-                            if let reading = weather.reading, reading.cityID == weather.city?.id {
-                                Text("\(MenuBarWeather.title(reading, display: .temperature)) · \(MenuBarWeather.describe(code: reading.code)) · \(reading.fetchedAt.formatted(date: .omitted, time: .shortened))")
-                                    .font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
+            AOMSection("Weather", detail: "Open-Meteo · no location permission", padding: 14) {
+                HStack(alignment: .top, spacing: 18) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Toggle("Show in menu bar", isOn: module(.weather))
+                        HStack(spacing: 8) {
+                            Image(systemName: "mappin.and.ellipse").foregroundStyle(AOMColor.textSecondary)
+                            Text(weather.city?.name ?? "No city").font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                            Spacer(minLength: 4)
+                            Button(weather.city == nil ? "Choose…" : "Change…") { MenuBarWeather.openCityPicker() }.controlSize(.small)
+                        }
+                        Picker("Menu bar", selection: $weather.display) {
+                            Text("Temp").tag(MenuBarWeather.Display.temperature)
+                            Text("Feels").tag(MenuBarWeather.Display.feelsLike)
+                            Text("Icon").tag(MenuBarWeather.Display.iconOnly)
+                        }
+                        .pickerStyle(.segmented)
+                        Picker("Units", selection: $weather.unit) {
+                            Text("°C").tag(MenuBarWeather.Unit.celsius)
+                            Text("°F").tag(MenuBarWeather.Unit.fahrenheit)
+                        }
+                        .pickerStyle(.segmented)
+                        HStack {
+                            Button("Refresh") { weather.refresh(force: true) }
+                                .controlSize(.small)
+                                .disabled(weather.city == nil || !modules.isOn(.weather))
+                            if let issue = weather.problem {
+                                Text(issue.message).font(AOMFont.caption).foregroundStyle(AOMColor.warningText).lineLimit(1)
                             }
                         }
-                        Spacer()
-                        Button("Choose City…") { MenuBarWeather.openCityPicker() }
                     }
-                    Picker("Show", selection: $weather.display) {
-                        Text("Temperature").tag(MenuBarWeather.Display.temperature)
-                        Text("Feels like").tag(MenuBarWeather.Display.feelsLike)
-                        Text("Icon only").tag(MenuBarWeather.Display.iconOnly)
-                    }
-                    Picker("Units", selection: $weather.unit) {
-                        Text("Celsius").tag(MenuBarWeather.Unit.celsius)
-                        Text("Fahrenheit").tag(MenuBarWeather.Unit.fahrenheit)
-                    }
-                    HStack {
-                        Button("Refresh Now") { weather.refresh(force: true) }.disabled(weather.city == nil || !modules.isOn(.weather))
-                        if let issue = weather.problem { Text(issue.message).font(AOMFont.caption).foregroundStyle(AOMColor.warningText) }
-                    }
-                    Text("The icon stays legible offline; click it for the update time, range and hourly trend.")
-                        .font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
+                    .frame(minWidth: 220, maxWidth: .infinity, alignment: .leading)
+                    WeatherMenuCard(city: weather.city, reading: weather.reading.flatMap { $0.cityID == weather.city?.id ? $0 : nil },
+                                    problem: weather.problem)
+                        .background(AOMColor.overlaySurface, in: RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous).strokeBorder(AOMColor.hairline, lineWidth: 0.5))
+                        .accessibilityLabel("Weather menu preview")
                 }
             }
-            AOMSection("Icon spacing", detail: "Fit more items beside the notch", padding: 14) {
-                VStack(alignment: .leading, spacing: 9) {
-                    Picker("Spacing", selection: Binding(get: { spacing }, set: { changeSpacing($0) })) {
-                        ForEach(SystemToolsModel.MenuBarSpacing.allCases, id: \.self) { choice in Text(choice.title).tag(choice) }
-                    }.disabled(spacingBusy)
-                    Text("System-wide preferences; Control Center and SystemUIServer restart. Third-party icons may update after their app relaunches.")
-                        .font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
-                    if spacingBusy { ProgressView("Applying…") }
-                    if let spacingMessage { Text(spacingMessage).font(AOMFont.caption) }
+            AOMSection("AOM menu") {
+                AOMSettingRow("Click panel and right-click menu", detail: menuSummary, symbol: "slider.horizontal.below.rectangle") {
+                    Button("Edit…") { AOMMenuEditorNavigation.open() }.controlSize(.small)
                 }
             }
-            AOMSection("Menu bar items", detail: "Name, symbol and group of your own", padding: 12) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Each item as macOS's own name (Battery, Sound, Control Center, Clock) or the name you give it. Open shows its own menu; favorites come first in the Shelf and Strip. Other apps' icons stay where macOS puts them.")
-                        .font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if shelf.items.isEmpty { Text("Refresh above to find accessible icons.").font(AOMFont.caption) }
-                    ForEach(Array(shelf.visibleItems.prefix(40))) { item in
-                        MenuBarItemRow(item: item, shelf: shelf)
-                    }
-                    if shelf.visibleItems.count > 40 {
-                        Text("40 of \(shelf.visibleItems.count) shown. Search the rest in the Shelf.").font(AOMFont.caption)
+            AOMSection("Icon spacing") {
+                AOMSettingRow("Spacing", detail: spacingMessage ?? "Tighter spacing fits more beside the notch", symbol: "arrow.left.and.right") {
+                    HStack(spacing: 6) {
+                        if spacingBusy { ProgressView().controlSize(.small) }
+                        Picker("Spacing", selection: Binding(get: { spacing }, set: { changeSpacing($0) })) {
+                            ForEach(SystemToolsModel.MenuBarSpacing.allCases, id: \.self) { choice in
+                                Text(choice.title.components(separatedBy: " — ").first ?? choice.title).tag(choice)
+                            }
+                        }
+                        .pickerStyle(.segmented).labelsHidden().fixedSize()
+                        .disabled(spacingBusy)
                     }
                 }
             }
-            AOMMenuEditorSection()
         }
         .aomPage("Menu Bar")
         .aomPageLifecycle(minimumInterval: 20, onActivate: {
-            if AXIsProcessTrusted() { shelf.refresh() }
+            if AXIsProcessTrusted() { layout.refresh(quietly: true) }
             spacing = SystemToolsModel.MenuBarSpacing.current(spacing: SystemToolsModel.MenuBarSpacing.Store.live.read("NSStatusItemSpacing"))
             alwaysHidden = MenuBarHider.alwaysSectionOn
             rehide = MenuBarHider.rehideSeconds
+            revealMode = MenuBarHider.revealMode
+            hover = MenuBarHider.hoverReveal
         })
+    }
+
+    private var menuSummary: String {
+        let menu = menuStore.layout.menu == nil ? "standard menu" : "your menu"
+        let panel = menuStore.layout.panel == nil ? "Workspace's quick actions" : "\(menuStore.layout.panel?.count ?? 0) quick commands"
+        return "\(panel.prefix(1).uppercased() + panel.dropFirst()) · \(menu)"
     }
 
     private func changeSpacing(_ choice: SystemToolsModel.MenuBarSpacing) {

@@ -294,6 +294,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 mainWindow?.makeKeyAndOrderFront(nil)
             }
             if let appState { AOMPageSwitchBench.runIfRequested(appState) }
+            // 7.9: `--aom-preview-menubar-sample` fills the Menu Bar page with
+            // 18 items (long Korean names) and a full weather reading, so it is
+            // checked with real-looking data; `--aom-preview-menubar-bar` opens the Bar.
+            if PresetManager.isUIPreview, ProcessInfo.processInfo.arguments.contains("--aom-preview-menubar-sample") {
+                MainActor.assumeIsolated {
+                    MenuBarLayoutModel.shared.loadSample()
+                    MenuBarWeather.shared.loadSample()
+                    if ProcessInfo.processInfo.arguments.contains("--aom-preview-menubar-bar") {
+                        MenuBarStripController.shared.show()
+                    }
+                }
+            }
             // Isolated previews can show the menu bar panel in a window for
             // screenshots (`--aom-preview-menubar-panel`).
             if PresetManager.isUIPreview, ProcessInfo.processInfo.arguments.contains("--aom-preview-menubar-panel") {

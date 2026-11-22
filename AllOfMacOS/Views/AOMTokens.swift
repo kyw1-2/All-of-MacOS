@@ -634,10 +634,12 @@ extension Color {
 ///
 /// 7.8 (Codex WIN-01): with a blue and an orange window behind it, 7.7's
 /// page margin changed by 8/255 and a card by 2/255 in light mode — the
-/// window read as opaque. Three layers stacked up: an `underWindowBackground`
-/// blur that lets ~10 % through, a 62 % page tint and an 82 % card. The
-/// default ("Balanced") now uses the sidebar blur under a 32 % page tint
-/// and 60 % cards; "Subtle" keeps 7.7's look, "Clear" goes further.
+/// window read as opaque. 7.8 moved to the sidebar blur under a 32 % tint;
+/// on macOS 26/27 that blur is light enough that the text of the windows
+/// behind showed through the Menu Bar page as ghost words (the user, 7.8).
+/// 7.9: every level keeps the heavy `underWindowBackground` blur, which
+/// passes the desktop's colour but never its detail, and only the tints
+/// differ. Legibility wins over the spec's ≥ 20/255 target.
 enum AOMTranslucency {
     static let defaultsKey = "AOMWindowTranslucency"
     static let levelKey = "AOMWindowTranslucencyLevel"
@@ -658,20 +660,20 @@ enum AOMTranslucency {
         var page: (light: CGFloat, dark: CGFloat) {
             switch self {
             case .subtle: return (0.62, 0.55)
-            case .balanced: return (0.32, 0.30)
-            case .clear: return (0.16, 0.16)
+            case .balanced: return (0.46, 0.42)
+            case .clear: return (0.30, 0.28)
             }
         }
         /// The card fill over the page (light, dark).
         var card: (light: CGFloat, dark: CGFloat) {
             switch self {
             case .subtle: return (0.82, 0.72)
-            case .balanced: return (0.60, 0.55)
-            case .clear: return (0.46, 0.42)
+            case .balanced: return (0.72, 0.64)
+            case .clear: return (0.62, 0.55)
             }
         }
-        /// The blur under everything: 7.7's quieter one for Subtle.
-        var material: NSVisualEffectView.Material { self == .subtle ? .underWindowBackground : .sidebar }
+        /// The blur under everything — heavy at every level (7.9).
+        var material: NSVisualEffectView.Material { .underWindowBackground }
     }
 
     static var level: Level {

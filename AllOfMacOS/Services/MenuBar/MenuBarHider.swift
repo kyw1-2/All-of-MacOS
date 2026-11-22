@@ -56,6 +56,7 @@ final class MenuBarHider: NSObject {
         toggle.button?.action = #selector(clicked)
         toggle.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         toggle.button?.toolTip = "Hidden menu bar items · ⌘-drag an item left of the divider to hide it · ⌥-click shows all · right-click for options"
+        installHover(on: toggle.button)
         let divider = NSStatusBar.system.statusItem(withLength: Self.dividerLength)
         divider.autosaveName = "AOMMenuBarHiderDivider"
         divider.button?.image = NSImage(systemSymbolName: "line.diagonal", accessibilityDescription: "Menu Bar Hider divider")
@@ -100,7 +101,88 @@ final class MenuBarHider: NSObject {
     @objc private func clicked() {
         if NSApp.currentEvent?.type == .rightMouseUp { showOptions(); return }
         if NSEvent.modifierFlags.contains(.option) { expand(all: true); return }
+        // 7.9 (Bartender Bar): the hidden icons can open in a bar below instead.
+        if Self.revealMode == .bar, isCollapsed { MenuBarStripController.shared.toggle(); return }
         if isCollapsed { expand() } else { collapse() }
+    }
+
+    // MARK: 7.9 — Bartender Bar, hover, layout inspection
+
+    enum RevealMode: String, CaseIterable, Identifiable {
+        /// Hidden Bar: the items come back in the menu bar.
+        case menuBar
+        /// Bartender Bar: they show in a bar under the menu bar.
+        case bar
+        var id: String { rawValue }
+        var title: String { self == .menuBar ? "In the menu bar" : "In a bar below" }
+    }
+
+    static let revealModeKey = "AOMMenuBarHider.revealMode"
+    static var revealMode: RevealMode {
+        get { RevealMode(rawValue: UserDefaults.standard.string(forKey: revealModeKey) ?? "") ?? .menuBar }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: revealModeKey) }
+    }
+
+    static let hoverKey = "AOMMenuBarHider.hoverReveal"
+    static var hoverReveal: Bool {
+        get { UserDefaults.standard.bool(forKey: hoverKey) }
+        set { UserDefaults.standard.set(newValue, forKey: hoverKey) }
+    }
+
+    var isRunning: Bool { toggle != nil }
+    /// The chevron's window (AppKit coordinates), to put the bar under it.
+    var toggleWindowFrame: CGRect? { toggle?.button?.window?.frame }
+    var hasAlwaysSection: Bool { always != nil }
+
+    /// Where AOM's own items are, in Accessibility coordinates (top-left).
+    func axFrames() -> (toggle: CGRect?, divider: CGRect?, always: CGRect?) {
+        let height = NSScreen.screens.first?.frame.height ?? 0
+        func ax(_ item: NSStatusItem?) -> CGRect? {
+            guard let frame = item?.button?.window?.frame, frame.width > 0 else { return nil }
+            return MenuBarStripPolicy.axRect(frame, primaryHeight: height)
+        }
+        return (ax(toggle), ax(divider), ax(always))
+    }
+
+    /// The layout page reads every item: show all for a moment, then put
+    /// the menu bar back as it was (`endInspection`).
+    private var inspection: (collapsed: Bool, showsAll: Bool)?
+    func revealForInspection() {
+        guard isRunning else { return }
+        if inspection == nil { inspection = (isCollapsed, showsAll) }
+        expand(all: true, holdOpen: true)
+    }
+
+    /// Back to how it was: hidden again, or shown with its timer running.
+    func endInspection() {
+        guard let before = inspection else { return }
+        inspection = nil
+        if before.collapsed { collapse(quiet: true) } else { expand(all: before.showsAll) }
+    }
+
+    private var hoverWork: DispatchWorkItem?
+
+    /// Hovering over the chevron for a moment reveals (Hidden Bar, Bartender).
+    @objc(mouseEntered:) func hoverEntered(_ event: NSEvent) {
+        guard Self.hoverReveal, isCollapsed else { return }
+        hoverWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.isCollapsed else { return }
+            if Self.revealMode == .bar { MenuBarStripController.shared.show() } else { self.expand() }
+        }
+        hoverWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: work)
+    }
+
+    @objc(mouseExited:) func hoverExited(_ event: NSEvent) {
+        hoverWork?.cancel()
+        hoverWork = nil
+    }
+
+    private func installHover(on button: NSStatusBarButton?) {
+        guard let button else { return }
+        button.addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                              owner: self, userInfo: nil))
     }
 
     // MARK: Always-hidden section (Codex M04)
@@ -134,13 +216,15 @@ final class MenuBarHider: NSObject {
         always = item
     }
 
-    func setAlwaysSection(_ on: Bool) {
+    func setAlwaysSection(_ on: Bool, announce: Bool = true) {
         Self.alwaysSectionOn = on
         if on {
             addAlwaysDivider()
             // Both dividers show, held open, so the new one can be ⌘-dragged (Gemini 7.6).
             expand(all: true, holdOpen: true)
-            GestureHUD.shared.show(title: "Always-Hidden Section", detail: "⌘-drag items left of the new fainter divider; they stay hidden until you ⌥-click the chevron. Click the chevron when you're done.")
+            if announce {
+                GestureHUD.shared.show(title: "Always-Hidden Section", detail: "⌘-drag items left of the new fainter divider; they stay hidden until you ⌥-click the chevron. Click the chevron when you're done.")
+            }
         } else {
             if let always { NSStatusBar.system.removeStatusItem(always) }
             always = nil
@@ -157,12 +241,21 @@ final class MenuBarHider: NSObject {
         let all = NSMenuItem(title: "Show Everything (⌥-Click)", action: #selector(showEverything), keyEquivalent: "")
         all.target = self
         menu.addItem(all)
+        // 7.9: Bartender Bar or in place, and hover.
+        let bar = NSMenuItem(title: "Show Hidden Icons in a Bar Below", action: #selector(toggleRevealMode), keyEquivalent: "")
+        bar.target = self
+        bar.state = Self.revealMode == .bar ? .on : .off
+        menu.addItem(bar)
+        let hoverItem = NSMenuItem(title: "Reveal on Hover", action: #selector(toggleHover), keyEquivalent: "")
+        hoverItem.target = self
+        hoverItem.state = Self.hoverReveal ? .on : .off
+        menu.addItem(hoverItem)
         let hold = NSMenuItem(title: "Keep Open Until I Click", action: #selector(keepOpen), keyEquivalent: "")
         hold.target = self
         hold.isEnabled = !isCollapsed
         menu.addItem(hold)
         menu.addItem(.separator())
-        let manage = NSMenuItem(title: "Manage Menu Bar…", action: #selector(openManagement), keyEquivalent: "")
+        let manage = NSMenuItem(title: "Arrange Menu Bar…", action: #selector(openManagement), keyEquivalent: "")
         manage.target = self
         menu.addItem(manage)
         menu.addItem(.separator())
@@ -182,6 +275,8 @@ final class MenuBarHider: NSObject {
     }
 
     @objc private func toggleAlwaysSection() { setAlwaysSection(!Self.alwaysSectionOn) }
+    @objc private func toggleRevealMode() { Self.revealMode = Self.revealMode == .bar ? .menuBar : .bar }
+    @objc private func toggleHover() { Self.hoverReveal.toggle() }
     @objc private func openManagement() { MenuBarNavigation.open() }
     @objc private func showEverything() { expand(all: true) }
     @objc private func keepOpen() { cancelRehide() }

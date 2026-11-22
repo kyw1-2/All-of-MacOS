@@ -40,6 +40,36 @@ struct WeatherReading: Codable, Equatable {
     /// The next hours' temperatures and rain chances, from the same request (Gemini 7.6 idea).
     var nextHours: [Double]? = nil
     var nextRain: [Int]? = nil
+    // 7.9: what a weather app's card shows, from the same one request.
+    var humidity: Int? = nil
+    var windSpeed: Double? = nil
+    var windDirection: Int? = nil
+    var uvIndex: Double? = nil
+    /// Local wall-clock times ("2026-11-22T07:18") in the city's time zone.
+    var sunrise: String? = nil
+    var sunset: String? = nil
+    var hours: [WeatherHour]? = nil
+    var days: [WeatherDay]? = nil
+}
+
+/// One hour of the forecast (7.9).
+struct WeatherHour: Codable, Equatable {
+    /// "2026-11-22T16:00", the city's local time.
+    let time: String
+    let temperature: Double
+    var rain: Int?
+    let code: Int
+    let isDay: Bool
+}
+
+/// One day of the forecast (7.9).
+struct WeatherDay: Codable, Equatable {
+    /// "2026-11-22".
+    let date: String
+    let code: Int
+    let high: Double
+    let low: Double
+    var rain: Int?
 }
 
 enum WeatherError: Error, Equatable {
@@ -72,11 +102,12 @@ struct WeatherProvider {
         fetch: { city, unit in
             var parts = URLComponents(string: "https://api.open-meteo.com/v1/forecast")!
             parts.queryItems = [.init(name: "latitude", value: String(city.latitude)), .init(name: "longitude", value: String(city.longitude)),
-                                .init(name: "current", value: "temperature_2m,apparent_temperature,weather_code,is_day"),
-                                .init(name: "daily", value: "temperature_2m_max,temperature_2m_min,precipitation_probability_max"),
-                                .init(name: "hourly", value: "temperature_2m,precipitation_probability"), .init(name: "forecast_hours", value: "6"),
-                                .init(name: "forecast_days", value: "1"), .init(name: "timezone", value: city.timezone),
-                                .init(name: "temperature_unit", value: unit == .fahrenheit ? "fahrenheit" : "celsius")]
+                                .init(name: "current", value: "temperature_2m,apparent_temperature,weather_code,is_day,relative_humidity_2m,wind_speed_10m,wind_direction_10m,uv_index"),
+                                .init(name: "daily", value: "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset"),
+                                .init(name: "hourly", value: "temperature_2m,precipitation_probability,weather_code,is_day"), .init(name: "forecast_hours", value: "13"),
+                                .init(name: "forecast_days", value: "7"), .init(name: "timezone", value: city.timezone),
+                                .init(name: "temperature_unit", value: unit == .fahrenheit ? "fahrenheit" : "celsius"),
+                                .init(name: "wind_speed_unit", value: unit == .fahrenheit ? "mph" : "kmh")]
             return try MenuBarWeather.parseForecast(try await request(parts.url!), city: city, unit: unit, now: Date())
         })
 
@@ -285,13 +316,76 @@ final class MenuBarWeather: NSObject, ObservableObject, NSMenuDelegate {
         let hourly = object["hourly"] as? [String: Any]
         let hours = (hourly?["temperature_2m"] as? [Any])?.compactMap { ($0 as? NSNumber)?.doubleValue }
         let rain = (hourly?["precipitation_probability"] as? [Any])?.compactMap { ($0 as? NSNumber)?.intValue }
-        return WeatherReading(cityID: city.id, temperature: temperature,
+        var reading = WeatherReading(cityID: city.id, temperature: temperature,
                               feelsLike: (current["apparent_temperature"] as? NSNumber)?.doubleValue,
                               code: (current["weather_code"] as? NSNumber)?.intValue ?? 0,
                               isDay: ((current["is_day"] as? NSNumber)?.intValue ?? 1) == 1,
                               low: first("temperature_2m_min"), high: first("temperature_2m_max"),
                               rainChance: first("precipitation_probability_max").map { Int($0.rounded()) },
                               fetchedAt: now, unit: unit, nextHours: hours?.isEmpty == false ? hours : nil, nextRain: rain?.isEmpty == false ? rain : nil)
+        // 7.9: the rest of the card. Every part is optional; a missing one
+        // just isn't drawn.
+        func number(_ key: String) -> Double? { (current[key] as? NSNumber)?.doubleValue }
+        reading.humidity = number("relative_humidity_2m").map { Int($0.rounded()) }
+        reading.windSpeed = number("wind_speed_10m")
+        reading.windDirection = number("wind_direction_10m").map { Int($0.rounded()) }
+        reading.uvIndex = number("uv_index")
+        func strings(_ source: [String: Any]?, _ key: String) -> [String] { (source?[key] as? [Any])?.compactMap { $0 as? String } ?? [] }
+        func numbers(_ source: [String: Any]?, _ key: String) -> [Double?] { (source?[key] as? [Any])?.map { ($0 as? NSNumber)?.doubleValue } ?? [] }
+        reading.sunrise = strings(daily, "sunrise").first
+        reading.sunset = strings(daily, "sunset").first
+        let times = strings(hourly, "time"), temps = numbers(hourly, "temperature_2m")
+        let rains = numbers(hourly, "precipitation_probability"), codes = numbers(hourly, "weather_code"), days = numbers(hourly, "is_day")
+        let hourRows: [WeatherHour] = times.indices.compactMap { index in
+            guard temps.indices.contains(index), let temp = temps[index] else { return nil }
+            return WeatherHour(time: times[index], temperature: temp,
+                               rain: rains.indices.contains(index) ? rains[index].map { Int($0.rounded()) } : nil,
+                               code: codes.indices.contains(index) ? Int(codes[index] ?? 0) : 0,
+                               isDay: days.indices.contains(index) ? (days[index] ?? 1) == 1 : true)
+        }
+        reading.hours = hourRows.isEmpty ? nil : hourRows
+        let dates = strings(daily, "time"), highs = numbers(daily, "temperature_2m_max"), lows = numbers(daily, "temperature_2m_min")
+        let dayCodes = numbers(daily, "weather_code"), dayRain = numbers(daily, "precipitation_probability_max")
+        let dayRows: [WeatherDay] = dates.indices.compactMap { index in
+            guard highs.indices.contains(index), lows.indices.contains(index), let high = highs[index], let low = lows[index] else { return nil }
+            return WeatherDay(date: dates[index], code: dayCodes.indices.contains(index) ? Int(dayCodes[index] ?? 0) : 0,
+                              high: high, low: low, rain: dayRain.indices.contains(index) ? dayRain[index].map { Int($0.rounded()) } : nil)
+        }
+        reading.days = dayRows.isEmpty ? nil : dayRows
+        return reading
+    }
+
+    /// Pure (7.9): N, NE … NW for a wind direction in degrees.
+    nonisolated static func compass(_ degrees: Int) -> String {
+        let points = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+        let normalized = ((degrees % 360) + 360) % 360
+        return points[Int((Double(normalized) / 45).rounded()) % 8]
+    }
+
+    /// Pure (7.9): the UV index's band (WHO).
+    nonisolated static func uvBand(_ index: Double) -> String {
+        switch index {
+        case ..<3: return "Low"
+        case ..<6: return "Moderate"
+        case ..<8: return "High"
+        case ..<11: return "Very high"
+        default: return "Extreme"
+        }
+    }
+
+    /// Filled, coloured symbols for the card (the menu bar keeps the outline ones).
+    nonisolated static func colorSymbol(code: Int, isDay: Bool) -> String {
+        switch code {
+        case 0: return isDay ? "sun.max.fill" : "moon.stars.fill"
+        case 1, 2: return isDay ? "cloud.sun.fill" : "cloud.moon.fill"
+        case 3: return "cloud.fill"
+        case 45, 48: return "cloud.fog.fill"
+        case 51...57: return "cloud.drizzle.fill"
+        case 61...67, 80...82: return "cloud.rain.fill"
+        case 71...77, 85, 86: return "cloud.snow.fill"
+        case 95...99: return "cloud.bolt.rain.fill"
+        default: return "thermometer.medium"
+        }
     }
 
     /// "6°", the feels-like value (or the actual one when it's missing), or nothing beside the icon.
@@ -369,16 +463,12 @@ final class MenuBarWeather: NSObject, ObservableObject, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        func info(_ text: String) {
-            let entry = NSMenuItem(title: text, action: nil, keyEquivalent: "")
-            entry.isEnabled = false
-            menu.addItem(entry)
-        }
         let card = NSMenuItem(title: "Weather details", action: nil, keyEquivalent: "")
-        let summary = NSHostingView(rootView: WeatherMenuSummary(city: city,
+        let summary = NSHostingView(rootView: WeatherMenuCard(city: city,
                             reading: reading.flatMap { $0.cityID == city?.id && $0.unit == unit ? $0 : nil },
                             problem: problem))
-        summary.frame = NSRect(x: 0, y: 0, width: 336, height: 225)
+        summary.frame = NSRect(x: 0, y: 0, width: WeatherMenuCard.width, height: 10)
+        summary.frame.size.height = summary.fittingSize.height
         card.view = summary
         menu.addItem(card)
         menu.addItem(.separator())
@@ -422,7 +512,34 @@ final class MenuBarWeather: NSObject, ObservableObject, NSMenuDelegate {
         let off = NSMenuItem(title: "Turn Off Weather", action: #selector(turnOff), keyEquivalent: "")
         off.target = self
         menu.addItem(off)
-        info("Weather data by Open-Meteo.com (CC BY 4.0)")
+    }
+
+    /// `--aom-preview-menubar-sample`: a full reading for Seoul, no network.
+    func loadSample() {
+        let seoul = WeatherCity(id: 1835848, name: "서울특별시", admin: "Seoul", country: "South Korea", timezone: "Asia/Seoul",
+                                latitude: 37.566, longitude: 126.978)
+        city = seoul
+        let hours = (0..<13).map { index in
+            WeatherHour(time: String(format: "2026-11-22T%02d:00", (16 + index) % 24), temperature: 4.4 - Double(index) * 0.6,
+                        rain: [0, 0, 10, 20, 40, 60, 40, 20, 10, 0, 0, 0, 0][index], code: [0, 1, 2, 3, 61, 61, 3, 2, 1, 0, 0, 0, 0][index],
+                        isDay: index < 2)
+        }
+        let days = [("2026-11-22", 0, 9.1, -1.2, 10), ("2026-11-23", 61, 7.4, 0.8, 70), ("2026-11-24", 3, 5.0, -2.5, 20),
+                    ("2026-11-25", 71, 1.2, -6.1, 60), ("2026-11-26", 1, 3.3, -4.8, 0), ("2026-11-27", 2, 6.0, -1.0, 10),
+                    ("2026-11-28", 0, 8.2, 0.4, 0)].map { WeatherDay(date: $0.0, code: $0.1, high: $0.2, low: $0.3, rain: $0.4) }
+        var sample = WeatherReading(cityID: seoul.id, temperature: 4.4, feelsLike: 1.1, code: 0, isDay: true, low: -1.2, high: 9.1,
+                                    rainChance: 10, fetchedAt: Date(), unit: .celsius,
+                                    nextHours: hours.map(\.temperature), nextRain: hours.compactMap(\.rain))
+        sample.humidity = 56
+        sample.windSpeed = 4.3
+        sample.windDirection = 246
+        sample.uvIndex = 3.1
+        sample.sunrise = "2026-11-22T07:18"
+        sample.sunset = "2026-11-22T17:16"
+        sample.hours = hours
+        sample.days = days
+        reading = sample
+        problem = nil
     }
 
     @objc private func pickDisplay(_ sender: NSMenuItem) { display = Display(rawValue: sender.representedObject as? String ?? "") ?? display }
@@ -513,75 +630,242 @@ struct WeatherCityPicker: View {
 }
 
 
-/// Native-resolution weather card in the menu (not disabled gray NSMenuItem
-/// rows). Inspired by the information hierarchy of dedicated weather apps;
-/// no third-party imagery, code or proprietary assets are used.
-private struct WeatherMenuSummary: View {
+/// 7.9: the weather card in the menu — a weather app's hierarchy in a menu's
+/// width: city and condition, the temperature large with today's range,
+/// six details (humidity, wind, UV, rain, sunrise, sunset), the next eight
+/// hours and the week with range bars on one scale. Tight spacing, every row
+/// earns its place; nothing is drawn for data the provider left out.
+struct WeatherMenuCard: View {
+    static let width: CGFloat = 360
+
     let city: WeatherCity?
     let reading: WeatherReading?
     let problem: WeatherError?
 
+    private var timeZone: TimeZone { city.flatMap { TimeZone(identifier: $0.timezone) } ?? .current }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(city?.name ?? "Choose a city").font(.system(size: 14, weight: .semibold)).lineLimit(1)
-                Spacer()
-                if let reading {
-                    Text(reading.fetchedAt.formatted(date: .omitted, time: .shortened))
-                        .font(.system(size: 11)).foregroundStyle(.secondary)
-                }
-            }
+        VStack(alignment: .leading, spacing: 10) {
+            header
             if let reading {
-                HStack(spacing: 12) {
-                    Image(systemName: MenuBarWeather.symbol(code: reading.code, isDay: reading.isDay))
-                        .font(.system(size: 32, weight: .medium))
-                        .symbolRenderingMode(.hierarchical)
-                    Text("\(Int(reading.temperature.rounded()))°")
-                        .font(.system(size: 35, weight: .semibold, design: .rounded).monospacedDigit())
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(MenuBarWeather.describe(code: reading.code)).font(.system(size: 12, weight: .medium))
-                        if let feels = reading.feelsLike {
-                            Text("Feels like \(Int(feels.rounded()))°").font(.system(size: 11)).foregroundStyle(.secondary)
-                        }
-                    }
-                    Spacer(minLength: 0)
-                }.frame(maxWidth: .infinity, alignment: .leading)
-                Divider()
-                HStack(spacing: 16) {
-                    if let high = reading.high { Label("H \(Int(high.rounded()))°", systemImage: "arrow.up").fixedSize() }
-                    if let low = reading.low { Label("L \(Int(low.rounded()))°", systemImage: "arrow.down").fixedSize() }
-                    if let rain = reading.rainChance { Label("\(rain)%", systemImage: "drop.fill").fixedSize() }
-                    Spacer(minLength: 0)
-                }.font(.system(size: 11, weight: .medium))
-                if let hours = reading.nextHours, !hours.isEmpty {
-                    HStack(spacing: 4) {
-                        ForEach(Array(hours.prefix(6).enumerated()), id: \.offset) { index, temp in
-                            VStack(spacing: 3) {
-                                Text(index == 0 ? "Now" : "+\(index)h").foregroundStyle(.secondary)
-                                Text("\(Int(temp.rounded()))°").fontWeight(.semibold)
-                            }
-                            .font(.system(size: 10).monospacedDigit())
-                            .frame(maxWidth: .infinity)
-                        }
-                    }
-                    .padding(.vertical, 7)
-                    .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
-                }
+                hero(reading)
+                details(reading)
+                if let hours = reading.hours, hours.count > 1 { hourly(hours) }
+                if let days = reading.days, days.count > 1 { weekly(days, now: reading) }
             } else {
-                Text(city == nil ? "Choose City below to show live conditions." : "No reading yet. Refresh when connected.")
+                Text(city == nil ? "Choose a city below to see the weather." : "No reading yet — Refresh when you're online.")
                     .font(.system(size: 12)).foregroundStyle(.secondary)
-                Spacer(minLength: 0)
+                    .padding(.vertical, 6)
             }
-            if let problem {
-                Text(problem.message).font(.system(size: 10)).foregroundStyle(.orange).lineLimit(2)
-            } else if let reading, Date().timeIntervalSince(reading.fetchedAt) > MenuBarWeather.maxAge {
-                Text("Last saved reading · refresh for current weather")
-                    .font(.system(size: 10)).foregroundStyle(.secondary)
+            footer
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 12)
+        .padding(.bottom, 8)
+        .frame(width: Self.width, alignment: .topLeading)
+        .accessibilityElement(children: .contain)
+    }
+
+    private var header: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(city?.name ?? "Weather").font(.system(size: 14, weight: .semibold)).lineLimit(1)
+            if let admin = city?.country, !admin.isEmpty {
+                Text(admin).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer(minLength: 4)
+            if let reading {
+                Text(reading.fetchedAt.formatted(date: .omitted, time: .shortened))
+                    .font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
+                    .help("Updated")
+            }
+        }
+    }
+
+    private func hero(_ reading: WeatherReading) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: MenuBarWeather.colorSymbol(code: reading.code, isDay: reading.isDay))
+                .symbolRenderingMode(.multicolor)
+                .font(.system(size: 34))
+                .frame(width: 44)
+            Text("\(Int(reading.temperature.rounded()))°")
+                .font(.system(size: 42, weight: .semibold, design: .rounded).monospacedDigit())
+                .lineLimit(1)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(MenuBarWeather.describe(code: reading.code)).font(.system(size: 13, weight: .semibold))
+                HStack(spacing: 8) {
+                    if let high = reading.high { Text("↑ \(Int(high.rounded()))°") }
+                    if let low = reading.low { Text("↓ \(Int(low.rounded()))°") }
+                    if let feels = reading.feelsLike { Text("Feels \(Int(feels.rounded()))°").foregroundStyle(.secondary) }
+                }
+                .font(.system(size: 11.5, weight: .medium).monospacedDigit())
             }
             Spacer(minLength: 0)
         }
-        .padding(14)
-        .frame(width: 336, height: 225, alignment: .topLeading)
-        .accessibilityElement(children: .contain)
+    }
+
+    private func details(_ reading: WeatherReading) -> some View {
+        var chips: [(String, String, String)] = []
+        if let humidity = reading.humidity { chips.append(("humidity.fill", "\(humidity)%", "Humidity")) }
+        if let wind = reading.windSpeed {
+            let unit = reading.unit == .fahrenheit ? "mph" : "km/h"
+            let direction = reading.windDirection.map { " " + MenuBarWeather.compass($0) } ?? ""
+            chips.append(("wind", "\(Int(wind.rounded())) \(unit)\(direction)", "Wind"))
+        }
+        if let uv = reading.uvIndex { chips.append(("sun.max.fill", "\(Int(uv.rounded())) · \(MenuBarWeather.uvBand(uv))", "UV")) }
+        if let rain = reading.rainChance { chips.append(("umbrella.fill", "\(rain)%", "Rain today")) }
+        if let sunrise = reading.sunrise.flatMap(clock) { chips.append(("sunrise.fill", sunrise, "Sunrise")) }
+        if let sunset = reading.sunset.flatMap(clock) { chips.append(("sunset.fill", sunset, "Sunset")) }
+        return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
+            ForEach(Array(chips.enumerated()), id: \.offset) { _, chip in
+                HStack(spacing: 6) {
+                    Image(systemName: chip.0).symbolRenderingMode(.multicolor).font(.system(size: 12)).frame(width: 16)
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(chip.1).font(.system(size: 11.5, weight: .semibold).monospacedDigit()).lineLimit(1).minimumScaleFactor(0.8)
+                        Text(chip.2).font(.system(size: 9.5)).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 7).padding(.vertical, 5)
+                .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .accessibilityElement(children: .combine)
+            }
+        }
+    }
+
+    private func hourly(_ hours: [WeatherHour]) -> some View {
+        HStack(spacing: 0) {
+            ForEach(Array(hours.prefix(8).enumerated()), id: \.offset) { index, hour in
+                VStack(spacing: 3) {
+                    Text(index == 0 ? "Now" : hourLabel(hour.time)).font(.system(size: 10, weight: index == 0 ? .semibold : .regular))
+                        .foregroundStyle(index == 0 ? .primary : .secondary).lineLimit(1).minimumScaleFactor(0.8)
+                    Image(systemName: MenuBarWeather.colorSymbol(code: hour.code, isDay: hour.isDay))
+                        .symbolRenderingMode(.multicolor).font(.system(size: 13)).frame(height: 16)
+                    Text("\(Int(hour.temperature.rounded()))°").font(.system(size: 11.5, weight: .semibold).monospacedDigit())
+                    Text(hour.rain.map { $0 >= 20 ? "\($0)%" : " " } ?? " ")
+                        .font(.system(size: 9, weight: .medium).monospacedDigit()).foregroundStyle(Color.blue)
+                }
+                .frame(maxWidth: .infinity)
+                .accessibilityElement(children: .combine)
+            }
+        }
+        .padding(.vertical, 6)
+        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private func weekly(_ days: [WeatherDay], now: WeatherReading) -> some View {
+        let lowest = days.map(\.low).min() ?? 0, highest = days.map(\.high).max() ?? 1
+        return VStack(spacing: 3) {
+            ForEach(Array(days.prefix(7).enumerated()), id: \.offset) { index, day in
+                HStack(spacing: 6) {
+                    Text(index == 0 ? "Today" : dayLabel(day.date)).font(.system(size: 11.5, weight: index == 0 ? .semibold : .regular))
+                        .frame(width: 46, alignment: .leading).lineLimit(1)
+                    Image(systemName: MenuBarWeather.colorSymbol(code: day.code, isDay: true))
+                        .symbolRenderingMode(.multicolor).font(.system(size: 12)).frame(width: 20)
+                    Text(day.rain.map { $0 >= 20 ? "\($0)%" : "" } ?? "")
+                        .font(.system(size: 9.5, weight: .medium).monospacedDigit()).foregroundStyle(Color.blue)
+                        .frame(width: 28, alignment: .leading)
+                    Text("\(Int(day.low.rounded()))°").font(.system(size: 11.5).monospacedDigit()).foregroundStyle(.secondary)
+                        .frame(width: 30, alignment: .trailing)
+                    WeatherRangeBar(low: day.low, high: day.high, lowest: lowest, highest: highest,
+                                    current: index == 0 ? now.temperature : nil, fahrenheit: now.unit == .fahrenheit)
+                        .frame(height: 5)
+                    Text("\(Int(day.high.rounded()))°").font(.system(size: 11.5, weight: .medium).monospacedDigit())
+                        .frame(width: 30, alignment: .trailing)
+                }
+                .frame(height: 19)
+                .accessibilityElement(children: .combine)
+            }
+        }
+    }
+
+    private var footer: some View {
+        HStack(spacing: 6) {
+            if let problem {
+                Label(problem.message, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange).lineLimit(1)
+            } else if let reading, Date().timeIntervalSince(reading.fetchedAt) > MenuBarWeather.maxAge {
+                Text("Last saved reading").foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 4)
+            Text("Open-Meteo · CC BY 4.0").foregroundStyle(.tertiary)
+        }
+        .font(.system(size: 9.5))
+    }
+
+    // MARK: Times in the city's own zone
+
+    private func parse(_ text: String, format: String) -> Date? {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = timeZone
+        formatter.dateFormat = format
+        return formatter.date(from: text)
+    }
+
+    private func clock(_ text: String) -> String? {
+        guard let date = parse(text, format: "yyyy-MM-dd'T'HH:mm") else { return nil }
+        let formatter = DateFormatter()
+        formatter.timeZone = timeZone
+        formatter.setLocalizedDateFormatFromTemplate("jmm")
+        return formatter.string(from: date)
+    }
+
+    private func hourLabel(_ text: String) -> String {
+        guard let date = parse(text, format: "yyyy-MM-dd'T'HH:mm") else { return String(text.suffix(5).prefix(2)) }
+        let formatter = DateFormatter()
+        formatter.timeZone = timeZone
+        formatter.setLocalizedDateFormatFromTemplate("j")
+        return formatter.string(from: date)
+    }
+
+    private func dayLabel(_ text: String) -> String {
+        guard let date = parse(text, format: "yyyy-MM-dd") else { return text }
+        let formatter = DateFormatter()
+        formatter.timeZone = timeZone
+        formatter.setLocalizedDateFormatFromTemplate("EEE")
+        return formatter.string(from: date)
+    }
+}
+
+/// A day's range on the week's scale, cool to warm, with now as a dot.
+struct WeatherRangeBar: View {
+    let low: Double
+    let high: Double
+    let lowest: Double
+    let highest: Double
+    var current: Double?
+    var fahrenheit = false
+
+    var body: some View {
+        GeometryReader { geometry in
+            let span = max(1, highest - lowest)
+            let start = CGFloat((low - lowest) / span) * geometry.size.width
+            let end = CGFloat((high - lowest) / span) * geometry.size.width
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.primary.opacity(0.09))
+                Capsule()
+                    .fill(LinearGradient(colors: [Self.color(celsius(low)), Self.color(celsius(high))], startPoint: .leading, endPoint: .trailing))
+                    .frame(width: max(5, end - start))
+                    .offset(x: start)
+                if let current {
+                    Circle().fill(Color.white).overlay(Circle().strokeBorder(Color.black.opacity(0.25), lineWidth: 0.5))
+                        .frame(width: 6, height: 6)
+                        .offset(x: min(max(0, CGFloat((current - lowest) / span) * geometry.size.width - 3), geometry.size.width - 6))
+                }
+            }
+        }
+        .accessibilityHidden(true)
+    }
+
+    private func celsius(_ value: Double) -> Double { fahrenheit ? (value - 32) * 5 / 9 : value }
+
+    /// Blue below freezing through green and yellow to orange-red in heat (°C scale).
+    static func color(_ celsius: Double) -> Color {
+        switch celsius {
+        case ..<0: return Color(red: 0.36, green: 0.62, blue: 0.98)
+        case ..<10: return Color(red: 0.33, green: 0.80, blue: 0.85)
+        case ..<18: return Color(red: 0.45, green: 0.82, blue: 0.45)
+        case ..<25: return Color(red: 0.98, green: 0.80, blue: 0.25)
+        default: return Color(red: 0.98, green: 0.47, blue: 0.22)
+        }
     }
 }

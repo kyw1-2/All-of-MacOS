@@ -28,7 +28,7 @@ enum AOMPreviewSnapshot {
 
     private static func write(to folder: URL) {
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        let windows = NSApp.windows.filter { $0.isVisible && $0.frame.width > 200 && $0.frame.height > 100 }
+        let windows = NSApp.windows.filter { $0.isVisible && $0.frame.width > 200 && $0.frame.height > 32 }
         for (number, window) in windows.enumerated() {
             // The frame view includes the toolbar and title bar.
             guard let view = window.contentView?.superview ?? window.contentView,

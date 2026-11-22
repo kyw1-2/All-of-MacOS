@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 /// 7.6 (Codex M08; Ice Bar, Bartender Bar): every menu bar icon AOM can
@@ -70,47 +71,80 @@ private final class MenuBarStripPanel: NSPanel {
     }
 }
 
+/// 7.9: the Bartender Bar. A strip of the menu bar's own colour just under
+/// it, right-aligned below the Hider's chevron (or under the pointer), with
+/// each hidden item's picture and nothing else — hover names it, a click opens
+/// its menu. Hidden items come back into the menu bar for that click and hide
+/// again on the Hider's timer, which waits while their menu is open. ← → and
+/// ↩ or 1–9 open one; esc or a click elsewhere closes. Without the Hider it
+/// shows every item.
 @MainActor
 final class MenuBarStripController: NSObject, ObservableObject, NSWindowDelegate {
     static let shared = MenuBarStripController()
 
-    @Published private(set) var placed: [MenuBarStripPolicy.Placed] = []
-    @Published private(set) var loading = false
-    @Published private(set) var message: String?
     @Published var selection = 0
-    /// Each app's icon, read once per scan instead of on every redraw.
-    private(set) var icons: [pid_t: NSImage] = [:]
+    @Published private(set) var hovered: String?
     private var panel: MenuBarStripPanel?
-    private var generation = 0
-    private let worker = DispatchQueue(label: "com.kyw.aom.menubar-strip-ax", qos: .userInitiated)
+    private var observer: AnyCancellable?
 
     var isVisible: Bool { panel?.isVisible ?? false }
+
+    /// What the bar lists: hidden then always-hidden (Bartender Bar), or
+    /// everything when nothing is hidden; locked system items stay off it.
+    var entries: [MenuBarLayoutItem] {
+        let model = MenuBarLayoutModel.shared
+        let lanes = model.lanes
+        let hidden = (lanes[.hidden] ?? []) + (lanes[.alwaysHidden] ?? [])
+        let list = MenuBarHider.shared.isRunning || model.isSample ? hidden : (lanes[.shown] ?? [])
+        return list.filter { $0.lockedReason == nil || $0.section != .shown }
+    }
 
     func toggle() { if isVisible { dismiss() } else { show() } }
 
     func show() {
         guard !ScreenLock.isLocked else { return }
-        guard AXIsProcessTrusted() else {
-            GestureHUD.shared.show(title: "Menu Bar Strip", detail: "Needs Accessibility to read other apps' menu bar items: System Settings › Privacy & Security › Accessibility.")
+        let model = MenuBarLayoutModel.shared
+        guard AXIsProcessTrusted() || model.isSample else {
+            GestureHUD.shared.show(title: "Menu Bar", detail: "Needs Accessibility to read other apps' menu bar items: System Settings › Privacy & Security › Accessibility.")
             return
         }
-        let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main
-        guard let screen else { return }
         let panel = self.panel ?? makePanel()
         self.panel = panel
-        let width = min(screen.visibleFrame.width - 40, 1100)
-        let height: CGFloat = 92
-        let menuBar = screen.frame.maxY - screen.visibleFrame.maxY
-        panel.setFrame(NSRect(x: screen.frame.midX - width / 2, y: screen.frame.maxY - max(24, menuBar) - height - 6, width: width, height: height),
-                       display: true)
         selection = 0
+        place(panel)
+        panel.alphaValue = 0
         panel.makeKeyAndOrderFront(nil)
-        scan()
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.12
+            panel.animator().alphaValue = 1
+        }
+        // The pictures come from the last full read (the Layout page); a
+        // quick read here keeps the list current without revealing anything.
+        if !model.isSample, !model.busy, Date().timeIntervalSince(model.lastRefresh ?? .distantPast) > 20 {
+            model.refresh(reveal: false)
+        }
+        observer = model.objectWillChange.sink { [weak self] _ in
+            DispatchQueue.main.async { if let panel = self?.panel, panel.isVisible { self?.place(panel) } }
+        }
     }
 
     func dismiss() {
-        generation += 1
+        observer = nil
         panel?.orderOut(nil)
+    }
+
+    /// Right-aligned under the chevron on its display, else under the pointer.
+    private func place(_ panel: MenuBarStripPanel) {
+        let count = max(1, entries.count)
+        let width = min(CGFloat(count) * 34 + 20, 1000)
+        let height: CGFloat = 34
+        let chevron = MenuBarHider.shared.isRunning ? MenuBarHider.shared.toggleWindowFrame : nil
+        let anchorPoint = chevron.map { CGPoint(x: $0.maxX, y: $0.midY) } ?? NSEvent.mouseLocation
+        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(anchorPoint) }) ?? NSScreen.main else { return }
+        let menuBar = max(24, screen.frame.maxY - screen.visibleFrame.maxY)
+        var x = (chevron?.maxX ?? anchorPoint.x + width / 2) - width
+        x = min(max(screen.frame.minX + 8, x), screen.frame.maxX - width - 8)
+        panel.setFrame(NSRect(x: x, y: screen.frame.maxY - menuBar - height - 4, width: width, height: height), display: true)
     }
 
     private func makePanel() -> MenuBarStripPanel {
@@ -131,7 +165,7 @@ final class MenuBarStripController: NSObject, ObservableObject, NSWindowDelegate
             case 124: self.move(1)
             case 36, 76: self.open()
             case 53: self.dismiss()
-            // 1–9 open the first nine (the hidden ones come first).
+            // 1–9 open the first nine.
             case 18, 19, 20, 21, 23, 22, 26, 28, 25:
                 let order: [UInt16] = [18, 19, 20, 21, 23, 22, 26, 28, 25]
                 self.open(order.firstIndex(of: code))
@@ -142,114 +176,90 @@ final class MenuBarStripController: NSObject, ObservableObject, NSWindowDelegate
         return panel
     }
 
-    func windowDidResignKey(_ notification: Notification) { dismiss() }
-
-    private func scan() {
-        generation += 1
-        let mine = generation
-        loading = true
-        message = nil
-        // The shelf's order: system extras first, apps that can't have a menu bar item last.
-        let apps = AOMMenuShelfPolicy.orderedApps(NSWorkspace.shared.runningApplications)
-        let displays = MenuBarStripPolicy.displays()
-        let own = ProcessInfo.processInfo.processIdentifier
-        worker.async { [weak self] in
-            let snapshot = AOMMenuShelfProbe.snapshot(apps: apps)
-            let placed = MenuBarStripPolicy.arrange(snapshot.items.filter { !MenuBarStripPolicy.isOwnDivider($0, ownPID: own) }, displays: displays)
-            DispatchQueue.main.async { [weak self] in
-                guard let self, mine == self.generation else { return }
-                guard AXIsProcessTrusted() else { self.dismiss(); return }
-                self.loading = false
-                self.icons = Dictionary(placed.map { ($0.item.pid, $0.item.pid) }, uniquingKeysWith: { a, _ in a })
-                    .compactMapValues { NSRunningApplication(processIdentifier: $0)?.icon }
-                self.placed = placed
-                self.selection = 0
-                if placed.isEmpty { self.message = "No menu bar items could be read." }
-                else if snapshot.appsLeft > 0 { self.message = "Some items: \(snapshot.appsLeft) app\(snapshot.appsLeft == 1 ? "" : "s") didn't answer in time." }
-            }
-        }
+    func windowDidResignKey(_ notification: Notification) {
+        guard !PresetManager.isUIPreview else { return }
+        dismiss()
     }
 
+    func setHovered(_ id: String?) { if hovered != id { hovered = id } }
+
     func move(_ delta: Int) {
-        guard !placed.isEmpty else { return }
-        selection = (selection + delta + placed.count) % placed.count
+        let count = entries.count
+        guard count > 0 else { return }
+        selection = (selection + delta + count) % count
     }
 
     func open(_ index: Int? = nil) {
+        let list = entries
         let index = index ?? selection
-        guard placed.indices.contains(index) else { return }
-        let item = placed[index].item
+        guard list.indices.contains(index) else { return }
         dismiss()
-        // The panel is gone before the press, so it can't take the menu's click.
-        AOMMenuShelfController.shared.activate(item, retry: "Open the Menu Bar Strip and pick it again.")
+        openItem(list[index].item, section: list[index].section)
+    }
+
+    /// Opens an item's own menu; a hidden one first comes back into the
+    /// menu bar (Bartender's "show and click"), and hides again later on the
+    /// Hider's timer, which waits while its menu is open.
+    func openItem(_ item: AOMMenuShelfItem, section: MenuBarSection) {
+        let hider = MenuBarHider.shared
+        let reveal = section != .shown && hider.isRunning && hider.isCollapsed
+        if reveal { hider.expand(all: section == .alwaysHidden) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + (reveal ? 0.35 : 0)) {
+            AOMMenuShelfController.shared.activate(item, retry: "Open the bar and pick it again.")
+        }
     }
 }
 
 private struct MenuBarStripView: View {
     @ObservedObject var controller: MenuBarStripController
+    @ObservedObject private var model = MenuBarLayoutModel.shared
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Text("Menu Bar").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-                if let message = controller.message { Text(message).font(.system(size: 11)).foregroundStyle(.orange).lineLimit(1) }
-                Spacer()
-                Text("← → move · ↩ or 1–9 open · esc close").font(.system(size: 10)).foregroundStyle(.tertiary)
+        let entries = controller.entries
+        let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
+        HStack(spacing: 2) {
+            if entries.isEmpty {
+                Text(model.busy ? "Reading the menu bar…" : "Nothing hidden")
+                    .font(.system(size: 12)).foregroundStyle(.secondary)
+                    .padding(.horizontal, 10)
             }
-            if controller.loading && controller.placed.isEmpty {
-                ProgressView().controlSize(.small).frame(maxWidth: .infinity)
-            } else {
-                ScrollViewReader { proxy in
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 6) {
-                            ForEach(Array(controller.placed.enumerated()), id: \.element.item.id) { index, placed in
-                                chip(placed, selected: index == controller.selection)
-                                    .id(index)
-                                    .onTapGesture { controller.open(index) }
-                            }
-                        }
-                    }
-                    .onChange(of: controller.selection) { _, value in withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(value, anchor: .center) } }
-                }
+            ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                icon(entry, selected: index == controller.selection, hovered: controller.hovered == entry.id)
+                    .onTapGesture { controller.open(index) }
+                    .onHover { inside in controller.setHovered(inside ? entry.id : nil) }
+                    .help(entry.item.displayName)
             }
         }
-        .padding(.horizontal, 12).padding(.vertical, 8)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        // 7.8 (Codex UI-01): one continuous shape for the fill, the clip of
-        // the scrolled chips and the rim, so nothing squares the corners.
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: AOMCraftRadius.floatingPanel - 6, style: .continuous))
-        .clipShape(RoundedRectangle(cornerRadius: AOMCraftRadius.floatingPanel - 6, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: AOMCraftRadius.floatingPanel - 6, style: .continuous)
-            .strokeBorder(AOMCraftColor.hairline, lineWidth: 0.5).allowsHitTesting(false))
+        .padding(.horizontal, 6)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+        .background {
+            ZStack {
+                VisualEffectBackground(material: .menu, blendingMode: .behindWindow, state: .active, cornerRadius: 10)
+                if let color = model.barColor { Color(nsColor: color).opacity(0.55) }
+            }
+        }
+        .clipShape(shape)
+        .overlay(shape.strokeBorder(AOMCraftColor.hairline, lineWidth: 0.5).allowsHitTesting(false))
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Menu bar items")
+        .accessibilityLabel("Hidden menu bar items")
     }
 
-    private func chip(_ placed: MenuBarStripPolicy.Placed, selected: Bool) -> some View {
-        HStack(spacing: 6) {
-            if let symbol = placed.item.displaySymbol {
-                Image(systemName: symbol).font(.system(size: 13, weight: .medium)).frame(width: 18, height: 18)
-            } else if let icon = controller.icons[placed.item.pid] {
-                Image(nsImage: icon).resizable().frame(width: 18, height: 18)
+    private func icon(_ entry: MenuBarLayoutItem, selected: Bool, hovered: Bool) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 6, style: .continuous)
+        return Group {
+            if let image = model.images[entry.imageKey] {
+                Image(nsImage: image).resizable().interpolation(.high).aspectRatio(contentMode: .fit)
+                    .frame(maxWidth: 44, maxHeight: 22)
             } else {
-                Image(systemName: "app").frame(width: 18, height: 18)
+                MenuBarItemGlyph(item: entry.item, size: 16)
             }
-            VStack(alignment: .leading, spacing: 0) {
-                Text(placed.item.displayName).font(.system(size: 12)).lineLimit(1)
-                Text(placed.hidden ? "\(placed.item.ownerName) · hidden" : placed.item.ownerName)
-                    .font(.system(size: 10)).foregroundStyle(placed.hidden ? Color.orange : .secondary).lineLimit(1)
-            }
-            .frame(maxWidth: 160, alignment: .leading)
         }
-        .padding(.horizontal, 8).padding(.vertical, 6)
-        .background(selected ? Color.accentColor.opacity(0.28) : Color.primary.opacity(0.06),
-                    in: RoundedRectangle(cornerRadius: AOMCraftRadius.control, style: .continuous))
-        // Inside the chip's edge (a centred stroke drew half outside it).
-        .overlay(RoundedRectangle(cornerRadius: AOMCraftRadius.control, style: .continuous)
-            .strokeBorder(selected ? Color.accentColor : .clear, lineWidth: 1.5))
-        .contentShape(RoundedRectangle(cornerRadius: AOMCraftRadius.control, style: .continuous))
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(placed.item.displayName), \(placed.item.ownerName)\(placed.hidden ? ", hidden" : "")")
-        .accessibilityAddTraits(selected ? .isSelected : [])
+        .frame(minWidth: 28, minHeight: 26)
+        .padding(.horizontal, 2)
+        .background(selected || hovered ? Color.primary.opacity(selected ? 0.16 : 0.09) : .clear, in: shape)
+        .contentShape(shape)
+        .accessibilityElement()
+        .accessibilityLabel(entry.item.displayName)
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
     }
 }

@@ -175,20 +175,19 @@ final class AOM78Tests: XCTestCase {
 
     // MARK: WIN-01 — the desktop shows through
 
-    func testWIN01BalancedPassesTheProposedThresholds() {
+    func testWIN01MoreColourThanSevenSevenWithoutGhostText() {
         // Codex's measured 7.7 numbers (8/255 margin, 2/255 card in light mode)
-        // fit a blur passing ~10 %; the sidebar blur passes more. Taking a
-        // conservative 0.25 for it and a 199-level colour swing behind:
-        let swing: CGFloat = 199
-        let old = AOMTranslucency.Level.subtle
-        XCTAssertLessThan(AOMTranslucency.passThrough(blur: 0.106, page: old.page.light, card: old.card.light) * swing, 3)
-        let level = AOMTranslucency.Level.balanced
-        XCTAssertGreaterThanOrEqual(AOMTranslucency.passThrough(blur: 0.25, page: level.page.light) * swing, 20)
-        XCTAssertGreaterThanOrEqual(AOMTranslucency.passThrough(blur: 0.25, page: level.page.light, card: level.card.light) * swing, 8)
+        // fit a blur passing ~10 %. 7.9 keeps that heavy blur at every level
+        // (a lighter one let the text of windows behind show through) and
+        // lets more of its colour through with lighter tints.
+        let swing: CGFloat = 199, blur: CGFloat = 0.106
+        let old = AOMTranslucency.Level.subtle, level = AOMTranslucency.Level.balanced, clear = AOMTranslucency.Level.clear
+        let oldMargin = AOMTranslucency.passThrough(blur: blur, page: old.page.light) * swing
+        XCTAssertGreaterThan(AOMTranslucency.passThrough(blur: blur, page: level.page.light) * swing, oldMargin * 1.35)
+        XCTAssertGreaterThan(AOMTranslucency.passThrough(blur: blur, page: clear.page.light) * swing, 14)
+        for each in AOMTranslucency.Level.allCases { XCTAssertEqual(each.material, .underWindowBackground) }
         XCTAssertEqual(AOMTranslucency.pageAlpha(enabled: true, reduceTransparency: true, increaseContrast: false, dark: false, level: .clear), 1,
                        "Reduce Transparency stays solid at every level")
-        XCTAssertEqual(AOMTranslucency.Level.subtle.material, .underWindowBackground)
-        XCTAssertEqual(AOMTranslucency.Level.balanced.material, .sidebar)
     }
 
     // MARK: UI-01 — rows follow the card's corners

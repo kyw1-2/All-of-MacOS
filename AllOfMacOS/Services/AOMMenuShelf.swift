@@ -538,7 +538,9 @@ final class AOMMenuShelfController: ObservableObject {
             let point = NSEvent.mouseLocation
             guard let screen = NSScreen.screens.first(where: { $0.frame.contains(point) }),
                   AOMMenuShelfPolicy.safeHoverZone(point, screen: screen.frame) else { return }
-            self.show()
+            // 7.9: the top centre opens the Bar (Bartender's show on hover);
+            // the searchable Shelf stays one click away in it and the launcher.
+            if !MenuBarStripController.shared.isVisible { MenuBarStripController.shared.show() }
         }
         hoverPending = pending
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.45, execute: pending)
