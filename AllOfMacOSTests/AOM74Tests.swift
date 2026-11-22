@@ -161,16 +161,17 @@ final class AOM74Tests: XCTestCase {
 
     func testBrowserTabsParseAndScripts() {
         let chrome = PaletteBrowserTabs.browsers[1]
-        let json = #"{"titles":[["GitHub",""],["Docs"]],"urls":[["https://github.com/","https://example.com/a"],["https://developer.apple.com/"]]}"#
-        let tabs = PaletteBrowserTabs.parse(json, browser: chrome)
+        let json = #"{"windows":[{"index":1,"id":"7","titles":["GitHub",""],"urls":["https://github.com/","https://example.com/a"],"ids":["11","12"]},{"index":2,"id":"8","titles":["Docs"],"urls":["https://developer.apple.com/"],"ids":["21"]}]}"#
+        let tabs = PaletteBrowserTabs.parse(json, browser: chrome).tabs
         XCTAssertEqual(tabs.map(\.title), ["GitHub", "https://example.com/a", "Docs"])
         XCTAssertEqual(tabs.map(\.window), [1, 1, 2])
         XCTAssertEqual(tabs[2].index, 1)
         XCTAssertEqual(tabs[0].host, "github.com")
-        XCTAssertTrue(PaletteBrowserTabs.parse("not json", browser: chrome).isEmpty)
-        XCTAssertTrue(PaletteBrowserTabs.activateScript(tabs[1]).contains("set active tab index of window 1 to 2"))
+        XCTAssertEqual(tabs.map(\.tabID), ["11", "12", "21"])
+        XCTAssertTrue(PaletteBrowserTabs.parse("not json", browser: chrome).tabs.isEmpty)
+        XCTAssertTrue(PaletteBrowserTabs.activateScript(tabs[1]).contains("w.activeTabIndex = k + 1"))
         let safari = PaletteBrowserTabs.Tab(browser: PaletteBrowserTabs.browsers[0], window: 2, index: 3, title: "t", url: "u")
-        XCTAssertTrue(PaletteBrowserTabs.activateScript(safari).contains("set current tab of window 2 to tab 3 of window 2"))
+        XCTAssertTrue(PaletteBrowserTabs.activateScript(safari).contains("w.currentTab = w.tabs[k]"))
         XCTAssertTrue(PaletteBrowserTabs.readScript(PaletteBrowserTabs.browsers[0]).contains("w.tabs.name()"))
         XCTAssertEqual(PaletteBrowserTabs.jsString("a\"b"), #""a\"b""#)
     }

@@ -993,10 +993,13 @@ enum ParityActions {
             case "off": on = false
             default: on = !AOMRadios.airplaneOn
             }
-            let problem = AOMRadios.setAirplaneMode(on)
-            if let problem { log("Airplane Mode: \(problem)") }
-            GestureHUD.shared.show(title: on ? "Airplane Mode On" : "Airplane Mode Off", icon: on ? "airplane" : "wifi")
-            completion(problem == nil)
+            // 7.5 (Codex D02): the HUD, the log and the result say the same thing.
+            AOMRadios.setAirplaneModeInBackground(on) { outcome in
+                if !outcome.succeeded { log("Airplane Mode: \(outcome.title). \(outcome.detail ?? "")") }
+                GestureHUD.shared.show(title: outcome.title, detail: outcome.detail,
+                                       icon: outcome.succeeded ? (on ? "airplane" : "wifi") : "exclamationmark.triangle")
+                completion(outcome.succeeded)
+            }
         case .dismissNotifications:
             NotificationDismisser.dismissAllInBackground { closed in
                 switch closed {

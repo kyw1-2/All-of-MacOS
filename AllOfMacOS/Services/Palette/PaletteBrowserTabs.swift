@@ -16,12 +16,17 @@ enum PaletteBrowserTabs {
 
     struct Tab: Identifiable, Equatable {
         let browser: Browser
+        /// Window and tab positions from 1, as read (they change when tabs move).
         let window: Int
         let index: Int
         let title: String
         let url: String
+        /// 7.5 (Codex D04): the browser's own ids where it has them —
+        /// Chromium and Arc tabs, every browser's windows. Safari tabs have none.
+        var windowID: String? = nil
+        var tabID: String? = nil
 
-        var id: String { "\(browser.bundleID)|\(window)|\(index)|\(url)" }
+        var id: String { "\(browser.bundleID)|\(tabID ?? "\(window)/\(index)")|\(url)" }
         var host: String { URL(string: url)?.host ?? url }
     }
 
@@ -34,53 +39,148 @@ enum PaletteBrowserTabs {
         .init(bundleID: "com.vivaldi.Vivaldi", name: "Vivaldi", isSafari: false, isArc: false),
     ]
 
-    /// The JXA that prints {"titles": [[…]], "urls": [[…]]}.
+    /// The JXA that prints {"windows": [{index, id, titles, urls, ids} | {index, id, error}]}.
+    /// 7.5 (Codex D03): a window's values are all read before its record
+    /// is added, so one window that fails can't shift the next one's tabs.
     static func readScript(_ browser: Browser) -> String {
         let title = browser.isSafari ? "name" : "title"
         return """
         const app = Application(\(jsString(browser.bundleID)));
-        const titles = [], urls = [];
-        for (const w of app.windows()) {
-          try { titles.push(w.tabs.\(title)()); urls.push(w.tabs.url()); } catch (e) { titles.push([]); urls.push([]); }
+        const windows = [];
+        const all = app.windows();
+        for (let i = 0; i < all.length; i++) {
+          const w = all[i];
+          let id = null;
+          try { id = String(w.id()); } catch (e) {}
+          try {
+            const titles = w.tabs.\(title)();
+            const urls = w.tabs.url();
+            let ids = null;
+            \(browser.isSafari ? "" : "try { ids = w.tabs.id().map(String); } catch (e) {}")
+            windows.push({index: i + 1, id, titles, urls, ids});
+          } catch (e) {
+            windows.push({index: i + 1, id, error: String(e)});
+          }
         }
-        JSON.stringify({titles, urls});
+        JSON.stringify({windows});
         """
     }
 
-    /// Pure: the script's JSON to tabs (window and tab numbers from 1).
-    static func parse(_ json: String, browser: Browser) -> [Tab] {
-        guard let data = json.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let titles = object["titles"] as? [[Any]], let urls = object["urls"] as? [[Any]] else { return [] }
+    struct Read: Equatable {
         var tabs: [Tab] = []
-        for (w, windowTitles) in titles.enumerated() where w < urls.count {
-            let windowURLs = urls[w]
-            for (t, rawTitle) in windowTitles.enumerated() where t < windowURLs.count {
-                let url = windowURLs[t] as? String ?? ""
-                let title = (rawTitle as? String).flatMap { $0.isEmpty ? nil : $0 } ?? url
-                guard !url.isEmpty else { continue }
-                tabs.append(Tab(browser: browser, window: w + 1, index: t + 1, title: title, url: url))
-            }
-        }
-        return tabs
+        /// Windows whose tabs couldn't be read.
+        var failedWindows = 0
     }
 
-    /// AppleScript that shows the tab and brings its window and browser forward.
+    /// Pure: the script's JSON to tabs (window and tab numbers from 1).
+    static func parse(_ json: String, browser: Browser) -> Read {
+        guard let data = json.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let windows = object["windows"] as? [[String: Any]] else { return Read() }
+        var read = Read()
+        for window in windows {
+            let position = (window["index"] as? Int) ?? 0
+            let windowID = window["id"].flatMap { $0 is NSNull ? nil : "\($0)" }
+            guard window["error"] == nil, let titles = window["titles"] as? [Any], let urls = window["urls"] as? [Any] else {
+                read.failedWindows += 1
+                continue
+            }
+            let ids = (window["ids"] as? [Any]).flatMap { $0.count == urls.count ? $0.map { "\($0)" } : nil }
+            for (t, rawURL) in urls.enumerated() {
+                guard let url = rawURL as? String, !url.isEmpty else { continue }
+                let rawTitle = t < titles.count ? titles[t] as? String : nil
+                let title = rawTitle.flatMap { $0.isEmpty ? nil : $0 } ?? url
+                read.tabs.append(Tab(browser: browser, window: position, index: t + 1, title: title, url: url,
+                                     windowID: windowID, tabID: ids?[t]))
+            }
+        }
+        return read
+    }
+
+    // MARK: Showing a tab (7.5, Codex D04)
+
+    enum Resolution: Equatable {
+        /// The tab where it is now; `moved` when an id-matched tab shows another address.
+        case found(Tab, moved: Bool)
+        case closed
+        /// Several open tabs fit what was listed (the same address twice).
+        case ambiguous(Int)
+    }
+
+    /// Pure: the tab the user picked among the tabs open now. An id finds
+    /// the tab wherever it went; without one (Safari) the address must
+    /// pick out one tab, narrowed by title, window and position.
+    static func resolve(_ picked: Tab, in current: [Tab]) -> Resolution {
+        let same = current.filter { $0.browser.bundleID == picked.browser.bundleID }
+        if let tabID = picked.tabID {
+            guard let tab = same.first(where: { $0.tabID == tabID }) else { return .closed }
+            return .found(tab, moved: tab.url != picked.url)
+        }
+        var candidates = same.filter { $0.url == picked.url }
+        for narrow in [{ (t: Tab) in t.title == picked.title },
+                       { (t: Tab) in picked.windowID != nil && t.windowID == picked.windowID },
+                       { (t: Tab) in t.window == picked.window && t.index == picked.index }] where candidates.count > 1 {
+            let narrower = candidates.filter(narrow)
+            if !narrower.isEmpty { candidates = narrower }
+        }
+        switch candidates.count {
+        case 0: return .closed
+        case 1: return .found(candidates[0], moved: false)
+        default: return .ambiguous(candidates.count)
+        }
+    }
+
+    /// JXA that shows the tab and brings its window and browser forward.
+    /// With an id the tab is looked up by it when the script runs; the
+    /// positions are the ones just read. Prints "ok" or "closed".
     static func activateScript(_ tab: Tab) -> String {
-        let app = "application id \"\(tab.browser.bundleID)\""
+        let find: String
+        if let tabID = tab.tabID {
+            find = """
+            let w = null, k = -1;
+            for (const candidate of app.windows()) {
+              let ids = [];
+              try { ids = candidate.tabs.id().map(String); } catch (e) { continue; }
+              const at = ids.indexOf(\(jsString(tabID)));
+              if (at >= 0) { w = candidate; k = at; break; }
+            }
+            """
+        } else {
+            find = """
+            const all = app.windows();
+            const w = all.length >= \(tab.window) ? all[\(tab.window - 1)] : null;
+            const k = \(tab.index - 1);
+            """
+        }
+        let show: String
         if tab.browser.isSafari {
-            return "tell \(app)\nset current tab of window \(tab.window) to tab \(tab.index) of window \(tab.window)\nset index of window \(tab.window) to 1\nactivate\nend tell"
+            show = "w.currentTab = w.tabs[k]; w.index = 1;"
+        } else if tab.browser.isArc {
+            show = "w.tabs[k].select();"
+        } else {
+            show = "w.activeTabIndex = k + 1; w.index = 1;"
         }
-        if tab.browser.isArc {
-            return "tell \(app)\ntell window \(tab.window) to tell tab \(tab.index) to select\nactivate\nend tell"
+        return """
+        const app = Application(\(jsString(tab.browser.bundleID)));
+        \(find)
+        if (w === null || k < 0 || k >= w.tabs.length) { "closed"; } else {
+          \(show)
+          app.activate();
+          "ok";
         }
-        return "tell \(app)\nset active tab index of window \(tab.window) to \(tab.index)\nset index of window \(tab.window) to 1\nactivate\nend tell"
+        """
     }
 
     struct Scan: Equatable {
         var tabs: [Tab]
-        /// "Safari: not allowed to control it" for browsers that refused.
+        /// "Safari: not allowed to control it" for browsers that refused,
+        /// "Chrome: 1 window couldn't be read" beside the tabs that were.
         var problems: [String]
+    }
+
+    /// One browser's tabs now.
+    static func read(_ browser: Browser) async -> Result<Read, AOMAIError> {
+        await run(["-l", "JavaScript", "-e", readScript(browser)]).map { parse($0, browser: browser) }
     }
 
     /// Every running browser's tabs, read in parallel.
@@ -89,14 +189,18 @@ enum PaletteBrowserTabs {
         let running = await MainActor.run {
             browsers.filter { !NSRunningApplication.runningApplications(withBundleIdentifier: $0.bundleID).isEmpty }
         }
-        return await withTaskGroup(of: (Browser, Result<String, AOMAIError>).self) { group in
+        return await withTaskGroup(of: (Browser, Result<Read, AOMAIError>).self) { group in
             for browser in running {
-                group.addTask { (browser, await run(["-l", "JavaScript", "-e", readScript(browser)])) }
+                group.addTask { (browser, await read(browser)) }
             }
             var scan = Scan(tabs: [], problems: [])
             for await (browser, result) in group {
                 switch result {
-                case .success(let json): scan.tabs += parse(json, browser: browser)
+                case .success(let read):
+                    scan.tabs += read.tabs
+                    if read.failedWindows > 0 {
+                        scan.problems.append("\(browser.name): \(read.failedWindows) window\(read.failedWindows == 1 ? "" : "s") couldn't be read")
+                    }
                 case .failure(let problem): scan.problems.append("\(browser.name): \(problem.message)")
                 }
             }
@@ -107,8 +211,43 @@ enum PaletteBrowserTabs {
         }
     }
 
-    static func activate(_ tab: Tab) {
-        Task.detached { _ = await run(["-e", activateScript(tab)]) }
+    enum ActivateResult: Equatable {
+        case shown(moved: String?)
+        case closed
+        case ambiguous(Int)
+        case failed(String)
+
+        /// Nil when the tab came forward as listed.
+        var message: String? {
+            switch self {
+            case .shown(nil): return nil
+            case .shown(let host?): return "That tab now shows \(host)"
+            case .closed: return "That tab was closed; the list is read again"
+            case .ambiguous(let count): return "\(count) open tabs show that address; pick one from the fresh list"
+            case .failed(let reason): return "Couldn't show the tab: \(reason)"
+            }
+        }
+    }
+
+    /// Reads the browser again, finds the tab picked (by id, or by an
+    /// address that picks out one tab) and shows it.
+    static func activate(_ tab: Tab) async -> ActivateResult {
+        if PresetManager.isUIPreview { return .shown(moved: nil) }
+        let current: Read
+        switch await read(tab.browser) {
+        case .success(let read): current = read
+        case .failure(let problem): return .failed(problem.message)
+        }
+        switch resolve(tab, in: current.tabs) {
+        case .closed: return .closed
+        case .ambiguous(let count): return .ambiguous(count)
+        case .found(let now, let moved):
+            switch await run(["-l", "JavaScript", "-e", activateScript(now)]) {
+            case .success(let answer) where answer == "ok": return .shown(moved: moved ? now.host : nil)
+            case .success: return .closed
+            case .failure(let problem): return .failed(problem.message)
+            }
+        }
     }
 
     /// osascript with a 10 s limit; the error names a missing permission.

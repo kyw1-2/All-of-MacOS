@@ -42,6 +42,10 @@ struct CleanupReview: Identifiable {
     /// when rows are grouped by it.
     var hints: [String: String] = [:]
     var uninstallTarget: (url: URL, bundleID: String)?
+    /// 7.5 (Codex D01): what the duplicate scan hashed, checked again
+    /// right before anything moves; and the scan to run again.
+    var duplicateSets: [FileTools.DuplicateSet]?
+    var duplicateScan: (folder: URL, minimum: Int64)?
 }
 
 /// Processes in a sheet, each with Quit.
@@ -1059,16 +1063,39 @@ final class SystemToolsModel: ObservableObject {
         cleanupReview = nil
         guard !chosen.isEmpty else { return }
         let id: SystemToolID = review.uninstallTarget == nil ? cleanupTool : .uninstall
-        runInBackground(id, {
+        runInBackground(id, { () -> (CleanupTools.TrashOutcome, FileTools.DuplicateTrashPlan?) in
             if let target = review.uninstallTarget {
                 _ = try CleanupTools.checkUninstallTarget(target.url, expectedID: target.bundleID) {
                     !NSRunningApplication.runningApplications(withBundleIdentifier: $0).isEmpty
                 }
             }
-            return CleanupTools.moveToTrash(chosen)
-        }) { outcome in
-            if outcome.failures.isEmpty { self.succeed(id, outcome.summary) }
-            else { self.fail(id, "Some Items Stayed", outcome.summary) }
+            // Duplicates: only copies that are still what the scan hashed,
+            // and only while a copy that stays is too (Codex D01).
+            if let sets = review.duplicateSets {
+                let plan = FileTools.planDuplicateTrash(sets, selected: review.selected) { try FileTools.sha256Hex(fileAt: $0) }
+                return (CleanupTools.moveToTrash(plan.trash), plan)
+            }
+            return (CleanupTools.moveToTrash(chosen), nil)
+        }) { outcome, plan in
+            guard let plan, !plan.held.isEmpty || !plan.keptLast.isEmpty else {
+                if outcome.failures.isEmpty { self.succeed(id, outcome.summary) }
+                else { self.fail(id, "Some Items Stayed", outcome.summary) }
+                return
+            }
+            var message = outcome.summary
+            if !plan.keptLast.isEmpty {
+                message += "; kept \(plan.keptLast.prefix(3).joined(separator: ", ")) (every copy in its set was checked)"
+            }
+            guard !plan.held.isEmpty else { self.succeed(id, message); return }
+            message += "; \(plan.held.count) set\(plan.held.count == 1 ? "" : "s") held back — " + plan.held.prefix(3).joined(separator: "; ")
+            self.lastResult = ToolResult(tool: id, message: message, succeeded: false, date: Date())
+            if let scan = review.duplicateScan {
+                self.toasts.show("Held Back: \(message)", tone: .danger, seconds: Self.failureSeconds(message), actionTitle: "Scan Again") {
+                    self.duplicates(minimum: scan.minimum, in: scan.folder)
+                }
+            } else {
+                self.fail(id, "Held Back", message)
+            }
         }
     }
 
@@ -1123,17 +1150,25 @@ final class SystemToolsModel: ObservableObject {
 
     private func duplicates(minimum: Int64) {
         guard let folder = pickFolder(message: "Choose a folder to search for identical files. ~/Library, hidden items and package contents are skipped.") else { return }
+        duplicates(minimum: minimum, in: folder)
+    }
+
+    private func duplicates(minimum: Int64, in folder: URL) {
         toast = "Looking for duplicates in \(folder.lastPathComponent)…"
-        runInBackground(.freeUpSpace, { () -> (items: [CleanupCandidate], preselected: Set<String>, groups: Int, wasted: Int64) in
-            let groups = FileTools.duplicateGroups(FileTools.sizedFiles(in: folder, minimumBytes: minimum)) { try FileTools.sha256Hex(fileAt: $0) }
-            let rows = FileTools.duplicateCandidates(groups)
-            return (rows.items, rows.preselected, groups.count, groups.reduce(0) { $0 + FileTools.wasted($1) })
+        runInBackground(.freeUpSpace, { () -> (sets: [FileTools.DuplicateSet], items: [CleanupCandidate], preselected: Set<String>, wasted: Int64) in
+            let sets = FileTools.duplicateSets(FileTools.sizedFiles(in: folder, minimumBytes: minimum)) { try FileTools.sha256Hex(fileAt: $0) }
+            let rows = FileTools.duplicateCandidates(sets)
+            let wasted = sets.reduce(Int64(0)) { $0 + ($1.members.first?.fingerprint.size ?? 0) * Int64($1.members.count - 1) }
+            return (sets, rows.items, rows.preselected, wasted)
         }) { result in
             guard !result.items.isEmpty else { self.succeed(.freeUpSpace, "No duplicates over \(SystemStatus.size(minimum)) in \(folder.lastPathComponent)"); return }
             self.cleanupTool = .freeUpSpace
-            self.cleanupReview = CleanupReview(title: "\(result.groups) Sets of Duplicates in \(folder.lastPathComponent)",
-                                               detail: "Same size and SHA-256. In each set the oldest copy is unchecked and stays; checked copies (\(SystemStatus.size(result.wasted))) move to the Trash.",
-                                               candidates: result.items, selected: result.preselected)
+            var review = CleanupReview(title: "\(result.sets.count) Sets of Duplicates in \(folder.lastPathComponent)",
+                                       detail: "Same size and SHA-256. In each set the oldest copy is unchecked and stays; checked copies (\(SystemStatus.size(result.wasted))) move to the Trash. Each copy is checked again before it moves, and a set that changed since the scan stays.",
+                                       candidates: result.items, selected: result.preselected)
+            review.duplicateSets = result.sets
+            review.duplicateScan = (folder, minimum)
+            self.cleanupReview = review
         }
     }
 

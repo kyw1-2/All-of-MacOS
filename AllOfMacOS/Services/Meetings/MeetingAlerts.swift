@@ -1,4 +1,5 @@
 import AppKit
+import EventKit
 import SwiftUI
 
 /// 7.4 (In Your Face, Meeter, Itsycal): the next meeting counts down in the
@@ -22,6 +23,14 @@ final class MeetingAlerts: NSObject {
     private var snoozed: [String: Date] = [:]
     private var panels: [NSPanel] = []
     private var shownEvent: PaletteSchedule.Event?
+    private var shownAt: Date?
+    /// 7.5 (Codex D06): the alerts' own read, around now — not My
+    /// Schedule's week, so neither replaces the other, and an event just
+    /// after midnight is read at 23:50.
+    private var feed: [PaletteSchedule.Event] = []
+    private var feedLoadedAt: Date?
+    private var feedLoading = false
+    private var storeObserver: NSObjectProtocol?
 
     func start() {
         guard timer == nil else { return }
@@ -37,12 +46,19 @@ final class MeetingAlerts: NSObject {
         timer.tolerance = 3
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
+        storeObserver = NotificationCenter.default.addObserver(forName: .EKEventStoreChanged, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.feedLoadedAt = nil; self?.tick() }
+        }
         tick()
     }
 
     func stop() {
         timer?.invalidate()
         timer = nil
+        if let storeObserver { NotificationCenter.default.removeObserver(storeObserver) }
+        storeObserver = nil
+        feed = []
+        feedLoadedAt = nil
         if let statusItem { NSStatusBar.system.removeStatusItem(statusItem) }
         statusItem = nil
         dismissAlert()
@@ -75,22 +91,70 @@ final class MeetingAlerts: NSObject {
         return !alerted.contains(key(event))
     }
 
+    /// 7.5 (Codex D05): the alert to show now, picked on its own — the
+    /// menu bar's next event may be one already shown. Timed events not
+    /// shown yet (or whose snooze ran out), earliest first, then by key;
+    /// one never shown that started over five minutes ago is let go.
+    nonisolated static func dueAlert(_ events: [PaletteSchedule.Event], now: Date, lead: TimeInterval,
+                                     alerted: Set<String>, snoozed: [String: Date]) -> PaletteSchedule.Event? {
+        events.filter { event in
+            guard !event.isAllDay else { return false }
+            let until = snoozed[key(event)]
+            if until == nil, event.start <= now.addingTimeInterval(-300) { return false }
+            return alertDue(event, now: now, lead: lead, alerted: alerted, snoozedUntil: until)
+        }
+        .min { ($0.start, key($0)) < ($1.start, key($1)) }
+    }
+
+    /// The range the alerts read: from 12 hours back (a snoozed event
+    /// still running) to two hours ahead, from now rather than midnight.
+    nonisolated static func feedRange(now: Date) -> (start: Date, end: Date) {
+        (now.addingTimeInterval(-12 * 3600), now.addingTimeInterval(2 * 3600))
+    }
+
     // MARK: Loop
+
+    private func refreshFeed(now: Date) {
+        guard !feedLoading else { return }
+        feedLoading = true
+        let range = Self.feedRange(now: now)
+        Task { [weak self] in
+            let events = await PaletteSchedule.shared.events(from: range.start, to: range.end)
+            guard let self else { return }
+            self.feedLoading = false
+            guard self.timer != nil else { return }
+            self.feed = events ?? []
+            self.feedLoadedAt = Date()
+            self.tick()
+        }
+    }
 
     private func tick() {
         let schedule = PaletteSchedule.shared
         guard schedule.access == .granted else { updateStatus(nil); return }
-        if schedule.loadedAt.map({ Date().timeIntervalSince($0) > 300 }) ?? true { schedule.load(days: 1) }
         let now = Date()
-        let next = Self.next(schedule.events ?? [], now: now, window: Double(Self.countdownMinutes) * 60)
+        if feedLoadedAt.map({ now.timeIntervalSince($0) > 300 }) ?? true { refreshFeed(now: now) }
+        let next = Self.next(feed, now: now, window: Double(Self.countdownMinutes) * 60)
         updateStatus(next.map { Self.countdown($0, now: now) })
-        guard let event = next, shownEvent == nil else { return }
-        let key = Self.key(event)
-        if Self.alertDue(event, now: now, lead: Self.leadSeconds, alerted: alerted, snoozedUntil: snoozed[key]) {
-            alerted.insert(key)
-            snoozed[key] = nil
-            showAlert(event)
+        // An open alert whose event ended, or that a fresh read no longer
+        // has (canceled, moved), closes so the next one can show.
+        if let shown = shownEvent {
+            let fresh = feedLoadedAt.map { loaded in shownAt.map { loaded > $0 } ?? false } ?? false
+            let gone = fresh && !feed.contains { Self.key($0) == Self.key(shown) }
+            guard shown.end <= now || gone else { return }
+            dismissAlert()
         }
+        guard let event = Self.dueAlert(feed, now: now, lead: Self.leadSeconds, alerted: alerted, snoozed: snoozed) else { return }
+        let key = Self.key(event)
+        alerted.insert(key)
+        snoozed[key] = nil
+        showAlert(event)
+    }
+
+    /// The user closed the alert: another one due at the same time shows next.
+    private func closeAndContinue() {
+        dismissAlert()
+        DispatchQueue.main.async { [weak self] in self?.tick() }
     }
 
     private func updateStatus(_ text: String?) {
@@ -109,7 +173,7 @@ final class MeetingAlerts: NSObject {
     }
 
     @objc private func statusClicked() {
-        guard let event = Self.next(PaletteSchedule.shared.events ?? [], now: Date(), window: Double(Self.countdownMinutes) * 60) else { return }
+        guard let event = Self.next(feed, now: Date(), window: Double(Self.countdownMinutes) * 60) else { return }
         if let link = event.meetingLink { NSWorkspace.shared.open(link) } else { PaletteSchedule.open(event) }
     }
 
@@ -118,6 +182,7 @@ final class MeetingAlerts: NSObject {
     private func showAlert(_ event: PaletteSchedule.Event) {
         dismissAlert()
         shownEvent = event
+        shownAt = Date()
         let main = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main
         for screen in NSScreen.screens {
             let panel = MeetingAlertPanel(contentRect: screen.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -129,11 +194,11 @@ final class MeetingAlerts: NSObject {
             panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
             let view = MeetingAlertView(event: event, join: event.meetingLink == nil ? nil : { [weak self] in
                 if let link = event.meetingLink { NSWorkspace.shared.open(link) }
-                self?.dismissAlert()
+                self?.closeAndContinue()
             }, snooze: { [weak self] in
                 self?.snoozed[Self.key(event)] = Date().addingTimeInterval(60)
-                self?.dismissAlert()
-            }, dismiss: { [weak self] in self?.dismissAlert() })
+                self?.closeAndContinue()
+            }, dismiss: { [weak self] in self?.closeAndContinue() })
             panel.contentView = NSHostingView(rootView: view)
             panel.setFrame(screen.frame, display: true)
             // The pointer's display takes the keys (↩ Join, esc Dismiss)
@@ -148,6 +213,7 @@ final class MeetingAlerts: NSObject {
         for panel in panels { panel.orderOut(nil) }
         panels = []
         shownEvent = nil
+        shownAt = nil
     }
 }
 

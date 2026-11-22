@@ -49,7 +49,12 @@ final class PaletteSchedule: ObservableObject {
         do { return try await store.requestFullAccessToEvents() } catch { lastError = error.localizedDescription; return false }
     }
 
-    /// The next `days` days, from the start of today.
+    /// The most events My Schedule and the root search list.
+    static let listLimit = 500
+
+    /// My Schedule and the root search: the next `days` days, from the
+    /// start of today. 7.5 (Codex D06): Meeting Alerts reads its own range
+    /// with `events(from:to:)`, so its reads never replace this week.
     func load(days: Int = 7, now: Date = Date()) {
         if PresetManager.isUIPreview { events = Self.samples(now: now); return }
         guard access == .granted else { events = nil; return }
@@ -60,26 +65,37 @@ final class PaletteSchedule: ObservableObject {
         let end = calendar.date(byAdding: .day, value: days, to: start) ?? now.addingTimeInterval(Double(days) * 86_400)
         let store = self.store
         Task.detached(priority: .userInitiated) {
-            let predicate = store.predicateForEvents(withStart: start, end: end, calendars: nil)
-            let all = store.events(matching: predicate)
-                .filter { $0.status != .canceled }
-                .sorted { $0.startDate < $1.startDate }
-            let total = all.count
-            let found = all
-                .prefix(500)
-                .map { event in
-                    Event(id: event.eventIdentifier ?? UUID().uuidString, title: event.title ?? "Untitled",
-                          start: event.startDate, end: event.endDate, isAllDay: event.isAllDay,
-                          calendar: event.calendar?.title ?? "", location: event.location.flatMap { $0.isEmpty ? nil : $0 },
-                          meetingLink: Self.meetingLink(in: [event.url?.absoluteString, event.location, event.notes]))
-                }
+            let all = Self.read(store, from: start, to: end)
             await MainActor.run { [weak self] in
                 guard let self, self.ticket == current else { return }
-                self.events = Array(found)
-                self.totalCount = total
+                self.events = Array(all.prefix(Self.listLimit))
+                self.totalCount = all.count
                 self.loadedAt = Date()
             }
         }
+    }
+
+    /// Every event overlapping the range, uncut (alerts, free-time search);
+    /// nil without calendar access. Leaves the listed week as it is.
+    func events(from start: Date, to end: Date) async -> [Event]? {
+        if PresetManager.isUIPreview { return Self.samples(now: Date()).filter { $0.end > start && $0.start < end } }
+        guard access == .granted else { return nil }
+        let store = self.store
+        return await Task.detached(priority: .userInitiated) { Self.read(store, from: start, to: end) }.value
+    }
+
+    /// Sorted by start, canceled events left out.
+    nonisolated private static func read(_ store: EKEventStore, from start: Date, to end: Date) -> [Event] {
+        let predicate = store.predicateForEvents(withStart: start, end: end, calendars: nil)
+        return store.events(matching: predicate)
+            .filter { $0.status != .canceled }
+            .sorted { $0.startDate < $1.startDate }
+            .map { event in
+                Event(id: event.eventIdentifier ?? UUID().uuidString, title: event.title ?? "Untitled",
+                      start: event.startDate, end: event.endDate, isAllDay: event.isAllDay,
+                      calendar: event.calendar?.title ?? "", location: event.location.flatMap { $0.isEmpty ? nil : $0 },
+                      meetingLink: meetingLink(in: [event.url?.absoluteString, event.location, event.notes]))
+            }
     }
 
     /// Pure: a Zoom, Meet, Teams, Webex or FaceTime link in the event's texts.

@@ -110,6 +110,120 @@ enum FileTools {
         return (items, selected)
     }
 
+    // MARK: Duplicates, checked again before the Trash (7.5, Codex D01)
+
+    /// What lstat says about a file: the same item (device and inode) with
+    /// the same size and modification time.
+    struct Fingerprint: Equatable, Hashable {
+        let identity: String
+        let size: Int64
+        let modified: TimeInterval
+    }
+
+    static func fingerprint(_ url: URL) -> Fingerprint? {
+        var status = stat()
+        guard lstat(url.path, &status) == 0, (status.st_mode & S_IFMT) == S_IFREG else { return nil }
+        let modified = TimeInterval(status.st_mtimespec.tv_sec) + TimeInterval(status.st_mtimespec.tv_nsec) / 1e9
+        return Fingerprint(identity: "\(status.st_dev):\(status.st_ino)", size: Int64(status.st_size), modified: modified)
+    }
+
+    /// One set of identical files as the scan saw it: the SHA-256 they
+    /// share and each copy's fingerprint, the copy to keep first.
+    struct DuplicateSet: Equatable {
+        struct Member: Equatable {
+            let url: URL
+            let fingerprint: Fingerprint
+        }
+        let hash: String
+        let members: [Member]
+    }
+
+    /// The scan: groups as `duplicateGroups`, with each copy's fingerprint
+    /// read before and after its hash, so a file that changed while it was
+    /// read is left out of its set.
+    static func duplicateSets(_ files: [SizedFile], fingerprint: (URL) -> Fingerprint? = FileTools.fingerprint,
+                              hash: (URL) throws -> String) -> [DuplicateSet] {
+        var seen: [URL: (Fingerprint, String)] = [:]
+        let groups = duplicateGroups(files) { url in
+            guard let before = fingerprint(url) else { throw CocoaError(.fileNoSuchFile) }
+            let digest = try hash(url)
+            guard fingerprint(url) == before else { throw CocoaError(.fileReadUnknown) }
+            seen[url] = (before, digest)
+            return digest
+        }
+        return groups.compactMap { group in
+            let members = group.compactMap { file in seen[file.url].map { DuplicateSet.Member(url: file.url, fingerprint: $0.0) } }
+            guard members.count == group.count, let digest = group.first.flatMap({ seen[$0.url]?.1 }) else { return nil }
+            return DuplicateSet(hash: digest, members: members)
+        }
+    }
+
+    /// Review rows of the sets (the same rows `duplicateCandidates` makes).
+    static func duplicateCandidates(_ sets: [DuplicateSet]) -> (items: [CleanupCandidate], preselected: Set<String>) {
+        duplicateCandidates(sets.map { set in
+            set.members.map { SizedFile(url: $0.url, size: $0.fingerprint.size, created: nil) }
+        })
+    }
+
+    struct DuplicateTrashPlan: Equatable {
+        /// Checked copies that are still what the scan saw, with a copy that stays.
+        var trash: [CleanupCandidate] = []
+        /// "Set 2 (report.pdf): changed since the scan" for each set held back.
+        var held: [String] = []
+        /// Sets where every copy was checked and the first one stays.
+        var keptLast: [String] = []
+    }
+
+    /// Pure apart from the two readers: which checked copies may go. A set
+    /// goes only when each checked copy and at least one copy that stays
+    /// are still the files the scan hashed (same device and inode, size,
+    /// modification time and SHA-256). A set whose copies were all checked
+    /// keeps its first one. A set with anything replaced, changed, gone or
+    /// unreadable is held back whole; the other sets still go.
+    static func planDuplicateTrash(_ sets: [DuplicateSet], selected: Set<String>,
+                                   fingerprint: (URL) -> Fingerprint? = FileTools.fingerprint,
+                                   hash: (URL) throws -> String) -> DuplicateTrashPlan {
+        var plan = DuplicateTrashPlan()
+        for (index, set) in sets.enumerated() {
+            var chosen = set.members.filter { selected.contains($0.url.path) }
+            guard !chosen.isEmpty else { continue }
+            var staying = set.members.filter { !selected.contains($0.url.path) }
+            if staying.isEmpty, let first = set.members.first {
+                staying = [first]
+                chosen.removeAll { $0.url == first.url }
+                plan.keptLast.append(first.url.lastPathComponent)
+                guard !chosen.isEmpty else { continue }
+            }
+            func problem(_ member: DuplicateSet.Member) -> String? {
+                guard let now = fingerprint(member.url) else { return "\(member.url.lastPathComponent) is gone or isn't a file any more" }
+                if now.identity != member.fingerprint.identity { return "\(member.url.lastPathComponent) was replaced by another file" }
+                if now.size != member.fingerprint.size || now.modified != member.fingerprint.modified {
+                    return "\(member.url.lastPathComponent) changed since the scan"
+                }
+                guard let digest = try? hash(member.url) else { return "\(member.url.lastPathComponent) couldn't be read" }
+                return digest == set.hash ? nil : "\(member.url.lastPathComponent)'s contents changed since the scan"
+            }
+            let label = "Set \(index + 1)"
+            var chosenProblem: String?
+            for member in chosen where chosenProblem == nil { chosenProblem = problem(member) }
+            if let chosenProblem {
+                plan.held.append("\(label): \(chosenProblem)")
+                continue
+            }
+            var stayingProblem: String?
+            var anyStays = false
+            for member in staying where !anyStays {
+                if let reason = problem(member) { stayingProblem = stayingProblem ?? reason } else { anyStays = true }
+            }
+            guard anyStays else {
+                plan.held.append("\(label): no copy that stays is the same any more (\(stayingProblem ?? "changed"))")
+                continue
+            }
+            plan.trash += chosen.map { CleanupCandidate(url: $0.url, size: $0.fingerprint.size, note: label) }
+        }
+        return plan
+    }
+
     // MARK: Folder sizes
 
     struct FolderSize: Equatable {

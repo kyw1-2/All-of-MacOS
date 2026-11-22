@@ -2065,7 +2065,14 @@ struct QuickCommandPalette: View {
         guard let scan = screens.browserTabs else { return [] }
         var rows = scan.tabs.map { tab in
             var row = screenRow("tab.\(tab.id)", tab.title, tab.host, icon: "globe", group: tab.browser.name,
-                                primary: PaletteAction(title: "Show Tab", symbol: "arrow.up.forward.app") { PaletteBrowserTabs.activate(tab) },
+                                primary: PaletteAction(title: "Show Tab", symbol: "arrow.up.forward.app") {
+                                    // 7.5 (Codex D04): found again by id (or one matching address) when it runs.
+                                    Task { @MainActor in
+                                        if let message = await PaletteBrowserTabs.activate(tab).message {
+                                            GestureHUD.shared.show(title: "Browser Tabs", detail: message, icon: "square.on.square")
+                                        }
+                                    }
+                                },
                                 secondaries: [PaletteAction(title: "Copy Address", symbol: "link") {
                                     NSPasteboard.general.clearContents()
                                     NSPasteboard.general.setString(tab.url, forType: .string)
