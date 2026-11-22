@@ -43,7 +43,7 @@ final class AOM67LauncherTests: XCTestCase {
         navigation.push(.confirm, query: "", selection: "kill.1")
         navigation.push(.confirm, query: "", selection: "kill.2")
         XCTAssertEqual(navigation.depth, 2)
-        XCTAssertEqual(navigation.breadcrumb, ["Kill Apps"])
+        XCTAssertEqual(navigation.breadcrumb, ["Quit App"], "7.11: Kill Apps is Quit App (일반 종료)")
         XCTAssertFalse(PaletteRoute.confirm.isSearchable)
         XCTAssertTrue(PaletteRoute.killApps.isSearchable)
     }
@@ -69,9 +69,13 @@ final class AOM67LauncherTests: XCTestCase {
             } + [item("app.safari", "Safari"), item("system.keepAwake", "Keep Awake")]
             return QuickCommandPalette.PaletteSearch.results(for: items, query: query).first?.id
         }
-        XCTAssertEqual(top("killapps"), "system.screen.killApps")
+        // 7.11 (spec §1): force quitting has its own screen; "killapps" finds it.
+        XCTAssertEqual(top("killapps"), "system.screen.killProcess")
         XCTAssertEqual(top("앱 종료"), "system.screen.killApps")
-        XCTAssertEqual(top("강제 종료"), "system.screen.killApps")
+        XCTAssertEqual(top("강제 종료"), "system.screen.killProcess")
+        XCTAssertEqual(top("강종"), "system.screen.killProcess")
+        XCTAssertEqual(top("kill process"), "system.screen.killProcess")
+        XCTAssertEqual(top("quit app"), "system.screen.killApps")
         XCTAssertEqual(top("unistall app"), "system.screen.uninstall")
         XCTAssertEqual(top("앱 삭제"), "system.screen.uninstall")
         XCTAssertEqual(top("uninstall"), "system.screen.uninstall")

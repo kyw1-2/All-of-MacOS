@@ -57,15 +57,17 @@ enum PaletteProcesses {
         var info = proc_bsdinfo()
         let size = Int32(MemoryLayout<proc_bsdinfo>.size)
         guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return nil }
-        let name = withUnsafeBytes(of: info.pbi_name) { raw -> String in
-            let bytes = raw.bindMemory(to: CChar.self)
-            return String(cString: bytes.baseAddress!)
-        }
-        let comm = withUnsafeBytes(of: info.pbi_comm) { raw -> String in
-            String(cString: raw.bindMemory(to: CChar.self).baseAddress!)
-        }
+        // Fixed-size fields that need not end in NUL (a 32-character name
+        // fills pbi_name): read within their own bytes only (swarm audit 7.11).
+        let name = withUnsafeBytes(of: info.pbi_name) { Self.cString($0) }
+        let comm = withUnsafeBytes(of: info.pbi_comm) { Self.cString($0) }
         return BSD(ppid: pid_t(info.pbi_ppid), uid: info.pbi_uid, name: name.isEmpty ? comm : name,
                    started: info.pbi_start_tvsec * 1_000_000 + info.pbi_start_tvusec, zombie: info.pbi_status == 5 /* SZOMB */)
+    }
+
+    /// Pure: text up to the first NUL or the end of the buffer, never past it.
+    static func cString(_ bytes: UnsafeRawBufferPointer) -> String {
+        String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self)
     }
 
     static func path(_ pid: pid_t) -> String? {
@@ -87,6 +89,8 @@ enum PaletteProcesses {
     static let protectedNames: Set<String> = [
         "loginwindow", "WindowServer", "Dock", "Finder", "SystemUIServer", "ControlCenter", "WindowManager",
         "NotificationCenter", "MenuBarAgent", "launchd", "TextInputMenuAgent", "universalaccessd",
+        // The session's own services (swarm audit 7.11): preferences, privacy, keychain, notifications.
+        "cfprefsd", "distnoted", "tccd", "secd", "trustd", "securityd", "lsd", "usernoted",
     ]
 
     /// Pure: the outermost app bundle a path lives in ("Google Chrome" for a

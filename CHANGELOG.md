@@ -1,3 +1,23 @@
+## [7.11.0] - 2026-11-22
+
+Kill Process, weather that shows what you pick in °C or °F, menus on the AOM panel's features, and the AOM icon that closes on the second click. The battery limit below 80 % could not be done without SMC on this Mac (macOS offers 80–100 % only). Details: `docs/design-7.11.md`.
+
+### Kill Process
+- Launcher › **Kill Process** ("kill process", "프로세스 강제 종료", "강종", "killapps"): every app, menu bar app, helper and command-line process you can end, one row per instance with its PID, its app or path, and memory. **↩ force quits the selected one at once** — no question, no menu — and the list and your search stay for the next one.
+- The process is checked again right before it is ended (PID and start time), so a reused PID is never hit; a Return that finishes Korean input or a held Return does nothing; AOM, Finder, Dock, WindowServer and the session's own processes are protected. "Ended", "already ended", "not allowed" and "still running" are told apart.
+- The old screen is **Quit App · 일반 종료** (asks the app to quit, so it can save).
+
+### Weather
+- The menu bar reads **☀ 20°C** or **☀ 68°F**. Choose and order what sits beside the icon — temperature, feels like, today's high/low, chance of rain, humidity, wind — in Menu Bar › Weather, with a live one-line preview; the weather icon's menu has **Menu Bar Display…** and per-item toggles. Icon-only setups stay icon only.
+- Switching °C/°F converts the reading you have at once (also offline) — 20 °C becomes 68 °F, never "20°F". Wind shows km/h or mph; long lines drop their last items, the tooltip shows all of it and when it was measured.
+
+### AOM panel
+- **Capture**, **Clipboard** and **Keep Awake** open their own commands when you click their name: Capture Area / Window / Full Screen (the panel closes first, nothing is captured by opening the menu), Open History / Pause or Resume Collecting, 30 Minutes / 1 Hour / Turn Off with the minutes left. The round switches still switch on their own. Workspace's Capture, Clipboard and System Tools cards have the same commands behind a visible menu button.
+- **A second click on the AOM icon closes the panel** (it used to close and reopen); open menus close with it.
+
+### Battery
+- Checked on this Mac (MacBook Air M1, macOS 27.3): macOS's own charge limit accepts only 80, 85, 90, 95 and 100 % and refuses 60–75 %. A lower limit needs SMC, which this release does not touch. Settings keep offering only what macOS accepts.
+
 ## [7.10.0] - 2026-11-22
 
 The menu bar works the way Bartender 7 does, on macOS 27: hiding actually hides, the settings follow Bartender's own panes (decoded from its app bundle for DeepSeek's report 07 on Oracle), and a Setup guide explains how to use it. Details and what is still open: `docs/design-7.10.md`.

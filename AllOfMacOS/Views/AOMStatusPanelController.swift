@@ -103,7 +103,11 @@ final class AOMStatusPanelController: NSObject, NSWindowDelegate {
     }
 
     func close() {
-        if Self.isIconPress(pointer: NSEvent.mouseLocation, anchor: anchor, buttonsDown: NSEvent.pressedMouseButtons) {
+        // Left button only: a right-click opens the command menu, never the panel
+        // (review 7.11). A trackpad tap may already be up when the panel resigns,
+        // so the left mouse-down being handled counts too (swarm audit 7.11).
+        let leftDown = NSEvent.pressedMouseButtons & 1 != 0 || NSApp.currentEvent?.type == .leftMouseDown
+        if Self.isIconPress(pointer: NSEvent.mouseLocation, anchor: anchor, buttonsDown: leftDown ? 1 : 0) {
             reopenBlockedUntil = ProcessInfo.processInfo.systemUptime + 0.8
         }
         anchor = .null

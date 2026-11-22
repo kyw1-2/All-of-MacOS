@@ -66,8 +66,11 @@ final class NativeChargeLimit {
         if let error { throw error }
         let on = enabled(client, NSSelectorFromString("isMCLCurrentlyEnabled:"), &error)
         if let error { throw error }
+        // With the limit off macOS may report 0 or 255; that is "no limit", not
+        // an error (swarm audit 7.11). An enabled limit must be one macOS offers.
+        guard on != 0 else { return State(percent: 100, enabled: false) }
         guard (80...100).contains(percent) else { throw HardwareControlError.unavailable("macOS returned an unknown charging limit") }
-        return State(percent: Int(percent), enabled: on != 0)
+        return State(percent: Int(percent), enabled: true)
     }
 
     func limit80(_ on: Bool) throws -> State {

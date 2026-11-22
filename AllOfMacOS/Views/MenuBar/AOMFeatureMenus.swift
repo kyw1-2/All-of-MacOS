@@ -57,7 +57,8 @@ enum AOMFeatureMenus {
                 _ = service.start(minutes: 60, keepDisplay: false)
             },
         ]
-        if service.isActive {
+        // `hasAssertion`, as KeepAwakeService asks of a Turn Off (review 7.11).
+        if service.hasAssertion {
             commands.append(AOMFeatureCommand(id: "awake.off", title: "Turn Off", symbol: "xmark.circle") { service.stop() })
         }
         return commands

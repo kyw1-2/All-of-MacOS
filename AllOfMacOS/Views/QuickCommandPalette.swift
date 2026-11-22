@@ -365,7 +365,7 @@ struct QuickCommandPalette: View {
               keywords: "process pid activity monitor helper cli terminal sigkill 프로세스 작업 관리자"),
         .init(id: "system.screen.killApps", route: .killApps,
               subtitle: "Quit an app the normal way, so it can save · 일반 종료",
-              aliases: ["quit app", "quit apps", "killapps", "kill apps", "kill app", "앱 종료", "일반 종료", "종료", "앱 끄기"],
+              aliases: ["quit app", "quit apps", "앱 종료", "일반 종료", "종료", "앱 끄기"],
               keywords: "process activity monitor memory 메모리 작업 관리자"),
         .init(id: "system.screen.uninstall", route: .uninstallApps,
               subtitle: "Review an app and its leftovers, then move them to the Trash · 앱 삭제",
@@ -1715,7 +1715,15 @@ struct QuickCommandPalette: View {
             var item = screenRow(entry.id, entry.name, subtitle,
                                  icon: entry.kind == .process ? "terminal" : "app", group: "Processes · \(quittable)",
                                  primary: PaletteAction(title: "강제 종료", symbol: "xmark.octagon.fill", effect: .stay,
-                                                        isDestructive: true) { screens.forceQuit(entry) },
+                                                        isDestructive: true) {
+                                     // The neighbour is selected at once, so a refresh can't
+                                     // drop the selection onto the first (largest) row (review 7.11).
+                                     let ids = results.map(\.id)
+                                     if let index = ids.firstIndex(of: entry.id) {
+                                         selectedID = ids.indices.contains(index + 1) ? ids[index + 1] : (index > 0 ? ids[index - 1] : nil)
+                                     }
+                                     screens.forceQuit(entry)
+                                 },
                                  accessory: PaletteKillApps.memoryDescription(entry.memory), image: image)
             item.keywords = PaletteProcesses.keywords(entry)
             return item
@@ -2553,7 +2561,8 @@ struct QuickCommandPalette: View {
     }
 
     private func toggleActions(_ item: PaletteItem?) {
-        guard item != nil else { return }
+        // Kill Process has no action menu: ↩ is the only thing a row does (spec §1).
+        guard item != nil, navigation.current != .killProcess else { return }
         actionIndex = 0
         showsActions.toggle()
     }

@@ -142,7 +142,8 @@ struct AOMMenuBarPanel: View {
                 // A capture or a window starts after the panel is gone.
                 if command.closesPanel {
                     actions.close()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { command.run() }
+                    // The panel is ordered out at once; one frame later it is off screen.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { command.run() }
                 } else {
                     command.run()
                     model.refresh()
@@ -221,7 +222,8 @@ struct AOMMenuBarPanel: View {
             }
             Spacer(minLength: 0)
             Menu {
-                Button("Hold Here") { battery.holdHere() }
+                // Below 80 % macOS can only charge to 80 %: say so (review 7.11).
+                Button("Hold Here") { battery.holdHere { GestureHUD.shared.show(title: "Battery", detail: $0) } }
                 Button("Top Up to 100%") { battery.topUp() }.disabled(!battery.canTopUp)
                 Divider()
                 ForEach(HardwareCareModel.limits, id: \.self) { limit in

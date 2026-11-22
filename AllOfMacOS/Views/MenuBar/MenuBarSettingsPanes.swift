@@ -513,6 +513,10 @@ struct MenuBarWeatherPane: View {
                     .padding(.horizontal, 10).padding(.vertical, 4)
                     .background(AOMColor.sunken, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                     .help(MenuBarWeather.line(previewReading, fields: weather.fields).full)
+                    // No reading yet: the line shows sample values, and says so (review 7.11).
+                    if weather.current == nil {
+                        Text("Sample values").font(AOMFont.caption).foregroundStyle(AOMColor.textTertiary)
+                    }
                 }
                 ForEach(orderedFields, id: \.self) { field in
                     let index = weather.fields.firstIndex(of: field)

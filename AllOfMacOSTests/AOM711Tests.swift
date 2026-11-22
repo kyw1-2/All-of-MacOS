@@ -104,3 +104,14 @@ final class AOM711Tests: XCTestCase {
         XCTAssertFalse(AOMStatusPanelController.isIconPress(pointer: CGPoint(x: 1410, y: 1060), anchor: .null, buttonsDown: 1))
     }
 }
+
+/// 7.11 review and swarm audit: bounded process names.
+final class AOM711ReviewTests: XCTestCase {
+    func testProcessNamesNeverReadPastTheirField() {
+        var full = [UInt8](repeating: 0x61, count: 32) // 32 × "a", no NUL
+        full.withUnsafeBytes { XCTAssertEqual(PaletteProcesses.cString($0), String(repeating: "a", count: 32)) }
+        var short: [UInt8] = Array("node".utf8) + [0, 0x62, 0x62]
+        short.withUnsafeBytes { XCTAssertEqual(PaletteProcesses.cString($0), "node") }
+        _ = (full, short)
+    }
+}
