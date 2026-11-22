@@ -24,7 +24,7 @@ final class FeatureDiscoveryTests: XCTestCase {
     }
 
     func testWhitespaceScopeAndNoMatches() {
-        XCTAssertEqual(AOMFeatureSearch.results(query: " \n\t", group: nil).count, 11)
+        XCTAssertEqual(AOMFeatureSearch.results(query: " \n\t", group: nil).count, AOMMainTab.allCases.count - 1)
         XCTAssertEqual(AOMFeatureSearch.results(query: "", group: .create), [.capture, .clipboard, .textActions])
         XCTAssertTrue(AOMFeatureSearch.results(query: "no-such-tool", group: nil).isEmpty)
         XCTAssertTrue(AOMFeatureSearch.results(query: "volume", group: .create).isEmpty)

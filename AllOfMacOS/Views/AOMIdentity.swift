@@ -75,7 +75,9 @@ extension AOMMainTab {
         case .textActions: return AOMIdentity(symbol: "character.cursor.ibeam", color: AOMModule.textActions.hue)
         case .files: return AOMIdentity(symbol: "doc.on.doc.fill", color: AOMModule.files.hue)
         case .focus: return AOMIdentity(symbol: "timer", color: AOMModule.focus.hue)
-        case .menuBar: return AOMIdentity(symbol: "menubar.rectangle", color: AOMBrand.slate)
+        case .menuBar: return AOMIdentity(symbol: "menubar.rectangle", color: Color.aomDynamic(
+            light: NSColor(srgbRed: 0.396, green: 0.329, blue: 0.486, alpha: 1),
+            dark: NSColor(srgbRed: 0.686, green: 0.580, blue: 0.765, alpha: 1)))
         }
     }
 
