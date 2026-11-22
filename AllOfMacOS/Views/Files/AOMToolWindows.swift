@@ -97,6 +97,27 @@ enum AOMFileToolsLauncher {
         }
     }
 
+    /// UI preview only: opens one tool on the files named.
+    static func preview(_ value: String) {
+        let parts = value.split(separator: ":", maxSplits: 1).map(String.init)
+        guard parts.count == 2 else { return }
+        let urls = parts[1].split(separator: "|").map { URL(fileURLWithPath: String($0)) }
+        switch parts[0] {
+        case "zip": openZip(urls.first)
+        case "pdfs": comparePDFs(urls)
+        case "folders": compareFolders(urls)
+        case "storageMap":
+            guard let root = urls.first else { return }
+            let model = StorageMapModel(root: root)
+            AOMToolWindows.shared.show("map", title: "Storage Map", size: NSSize(width: 1000, height: 640),
+                                       minSize: NSSize(width: 700, height: 420), autosave: "AOMStorageMapPreview") {
+                StorageMapView(model: model, onClose: {}).padding(AOMSpace.x4)
+            }
+            model.start()
+        default: break
+        }
+    }
+
     /// Compare Folders: what one folder has that the other doesn't.
     static func compareFolders(_ urls: [URL] = []) {
         let model = FolderCompareModel()

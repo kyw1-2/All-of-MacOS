@@ -281,7 +281,7 @@ struct FolderCompareView: View {
         switch status {
         case .leftOnly: return "arrow.left.circle"
         case .rightOnly: return "arrow.right.circle"
-        case .differs: return "not.equal.circle"
+        case .differs: return "notequal.circle"
         case .same: return "equal.circle"
         case .problem: return "exclamationmark.triangle"
         }

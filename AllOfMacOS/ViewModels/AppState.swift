@@ -134,6 +134,12 @@ class AppState: ObservableObject {
         if PresetManager.isUIPreview, ProcessInfo.processInfo.arguments.contains("--aom-preview-launcher") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { AOMLauncherController.shared.show() }
         }
+        // 7.5: `--aom-preview-file-tool zip:<path> | pdfs:<a>|<b> | folders:<a>|<b> | storageMap:<path>`.
+        if PresetManager.isUIPreview, let index = ProcessInfo.processInfo.arguments.firstIndex(of: "--aom-preview-file-tool"),
+           ProcessInfo.processInfo.arguments.indices.contains(index + 1) {
+            let value = ProcessInfo.processInfo.arguments[index + 1]
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { AOMFileToolsLauncher.preview(value) }
+        }
         // The delegate learns this AppState even if the main window never shows.
         DispatchQueue.main.async { [weak self] in
             if let self, let delegate = AppDelegate.current, delegate.appState == nil { delegate.appState = self }

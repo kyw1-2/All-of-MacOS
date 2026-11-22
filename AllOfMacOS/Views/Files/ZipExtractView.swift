@@ -47,7 +47,12 @@ final class ZipExtractModel: ObservableObject {
             await MainActor.run {
                 self.loading = false
                 switch read {
-                case .success(let entries): self.entries = entries
+                case .success(let entries):
+                    // Folder by folder, names in Finder's order (IMG_2 before IMG_10).
+                    self.entries = entries.sorted {
+                        $0.folder != $1.folder ? $0.folder.localizedStandardCompare($1.folder) == .orderedAscending
+                            : $0.name.localizedStandardCompare($1.name) == .orderedAscending
+                    }
                 case .failure(let error): self.problem = error.localizedDescription
                 }
             }
