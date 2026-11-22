@@ -116,10 +116,11 @@ enum PaletteBrowserTabs {
             guard let tab = same.first(where: { $0.tabID == tabID }) else { return .closed }
             return .found(tab, moved: tab.url != picked.url)
         }
+        // 7.6 (Codex BT01): the address, then title and window, must leave one
+        // tab; an old position never decides between two identical tabs.
         var candidates = same.filter { $0.url == picked.url }
         for narrow in [{ (t: Tab) in t.title == picked.title },
-                       { (t: Tab) in picked.windowID != nil && t.windowID == picked.windowID },
-                       { (t: Tab) in t.window == picked.window && t.index == picked.index }] where candidates.count > 1 {
+                       { (t: Tab) in picked.windowID != nil && t.windowID == picked.windowID }] where candidates.count > 1 {
             let narrower = candidates.filter(narrow)
             if !narrower.isEmpty { candidates = narrower }
         }
@@ -157,7 +158,9 @@ enum PaletteBrowserTabs {
             if (w !== null) {
               let urls = [];
               try { urls = w.tabs.url(); } catch (e) {}
-              k = urls[\(tab.index - 1)] === \(jsString(tab.url)) ? \(tab.index - 1) : urls.indexOf(\(jsString(tab.url)));
+              // The address must name one tab in the window when the script runs.
+              const hits = urls.reduce((a, u, i) => (u === \(jsString(tab.url)) ? a.concat([i]) : a), []);
+              k = hits.length === 1 ? hits[0] : -1;
             }
             """
         }

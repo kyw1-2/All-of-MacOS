@@ -85,6 +85,7 @@ enum AOMFileToolsLauncher {
     static func openZip(_ url: URL? = nil) {
         guard let archive = url ?? pick("Choose a ZIP archive; pick the files you need from it.", types: ["zip"])?.first else { return }
         guard !AOMToolWindows.shared.focus("zip:" + archive.path) else { return }
+        ZipExtractModel.sweepOldPreviews()
         let model = ZipExtractModel(archive: archive)
         AOMToolWindows.shared.show("zip:" + archive.path, title: archive.lastPathComponent, size: NSSize(width: 760, height: 560),
                                    minSize: NSSize(width: 560, height: 380), autosave: "AOMZipWindow") {

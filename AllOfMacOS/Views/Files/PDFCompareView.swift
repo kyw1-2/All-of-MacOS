@@ -127,11 +127,20 @@ final class PDFCompareModel: ObservableObject {
         sync.move(side, to: (sync.pages[side] ?? 0) + delta)
     }
 
-    /// Whether the two pages shown hold the same text (spacing ignored).
-    var pagesMatch: Bool? {
-        guard let left = pane(.left).document, let right = pane(.right).document, !pane(.left).locked, !pane(.right).locked,
-              let l = left.page(at: sync.pages[.left] ?? 0), let r = right.page(at: sync.pages[.right] ?? 0) else { return nil }
-        return PDFCompareSync.sameText(l.string, r.string)
+    /// 7.6 (Codex F07a): what the badge says. Linked, it judges the page that
+    /// goes with the other side's (or says there is none); unlinked, it says
+    /// it compares the two pages on screen.
+    enum TextVerdict: Equatable { case same, differs, noMatchingPage, noText }
+
+    var textVerdict: (verdict: TextVerdict, linked: Bool)? {
+        guard let left = pane(.left).document, let right = pane(.right).document, !pane(.left).locked, !pane(.right).locked else { return nil }
+        if sync.linked, sync.missingPage(on: .left) != nil || sync.missingPage(on: .right) != nil { return (.noMatchingPage, true) }
+        guard let l = left.page(at: sync.pages[.left] ?? 0), let r = right.page(at: sync.pages[.right] ?? 0) else { return nil }
+        switch PDFCompareSync.sameText(l.string, r.string) {
+        case true?: return (.same, sync.linked)
+        case false?: return (.differs, sync.linked)
+        case nil: return (.noText, sync.linked)
+        }
     }
 }
 
@@ -151,11 +160,12 @@ struct PDFCompareView: View {
                     Text(offset).font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
                         .help("Linking keeps the distance the pages had when you turned it on; turn Link Pages off and on to set it again")
                 }
-                if let same = model.pagesMatch {
-                    Label(same ? "Same text on these pages" : "The text differs on these pages",
-                          systemImage: same ? "equal.circle" : "notequal.circle")
+                if let (verdict, linked) = model.textVerdict, verdict != .noText {
+                    let pages = linked ? "the linked pages" : "the two pages on screen"
+                    Label(verdict == .same ? "Same text on \(pages)" : verdict == .differs ? "The text differs on \(pages)" : "No matching page on one side",
+                          systemImage: verdict == .same ? "equal.circle" : verdict == .differs ? "notequal.circle" : "doc.badge.ellipsis")
                         .font(AOMFont.callout)
-                        .foregroundStyle(same ? AOMColor.successText : AOMColor.warningText)
+                        .foregroundStyle(verdict == .same ? AOMColor.successText : verdict == .differs ? AOMColor.warningText : AOMColor.textSecondary)
                 }
                 Spacer()
                 Text("Read only: neither PDF is changed").font(AOMFont.caption).foregroundStyle(AOMColor.textTertiary)

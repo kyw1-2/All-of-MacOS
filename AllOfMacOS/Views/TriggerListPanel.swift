@@ -785,6 +785,7 @@ struct AddTriggerSheet: View {
                 .font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
             TextField("Enter trigger name", text: $namedTriggerName)
                 .textFieldStyle(.roundedBorder)
+            AOMEditorNote("aom://trigger?name=… links ask before they run it (Run Once, Always Allow, Don't Run); Forget Link Permissions in the launcher resets the answers.")
         }
     }
 

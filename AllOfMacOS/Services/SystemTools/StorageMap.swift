@@ -26,6 +26,9 @@ final class StorageNode: Identifiable, @unchecked Sendable {
     private(set) var unreadable = false
     /// Folders below that couldn't be listed.
     private(set) var unreadableBelow = 0
+    /// 7.6 (Codex SM01): items here and below whose size couldn't be read
+    /// (listed, not counted), so a total that misses them says so.
+    private(set) var unreadableItems = 0
     weak private(set) var parent: StorageNode?
 
     init(name: String, url: URL, kind: Kind, size: Int64 = 0, fileCount: Int = 0) {
@@ -47,20 +50,72 @@ final class StorageNode: Identifiable, @unchecked Sendable {
     }
 
     fileprivate func finish(children found: [StorageNode], keep: Int, unreadable: Bool) {
-        let sorted = found.sorted { $0.size != $1.size ? $0.size > $1.size : $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-        var kept = Array(sorted.prefix(keep))
-        let rest = sorted.dropFirst(keep)
-        if !rest.isEmpty {
-            let count = rest.count
+        var top = TopItems(keep: keep)
+        for child in found { top.add(child) }
+        finish(top, unreadable: unreadable, unreadableHere: 0)
+    }
+
+    /// The largest items kept as they came in, the rest only summed.
+    fileprivate func finish(_ top: TopItems, unreadable: Bool, unreadableHere: Int) {
+        var kept = top.sortedKept
+        if top.restCount > 0 {
+            let count = top.restCount
             kept.append(StorageNode(name: "\(count) smaller item\(count == 1 ? "" : "s")", url: url, kind: .smallerItems(count),
-                                    size: rest.reduce(0) { $0 + $1.size }, fileCount: rest.reduce(0) { $0 + $1.fileCount }))
+                                    size: top.restSize, fileCount: top.restFiles))
         }
         for child in kept { child.parent = self }
         children = kept
-        size = found.reduce(0) { $0 + $1.size }
-        fileCount = found.reduce(0) { $0 + $1.fileCount }
+        size = top.totalSize
+        fileCount = top.totalFiles
         self.unreadable = unreadable
-        unreadableBelow = found.reduce(0) { $0 + $1.unreadableBelow + ($1.unreadable ? 1 : 0) }
+        unreadableBelow = top.unreadableBelow
+        unreadableItems = top.unreadableItems + unreadableHere
+    }
+}
+
+/// 7.6 (Codex SM01): a folder's largest items, kept while it is read: the
+/// list is cut back to `keep` whenever it doubles, so a folder of 100,000
+/// files never holds 100,000 nodes. Totals cover every item.
+struct TopItems {
+    let keep: Int
+    private(set) var kept: [StorageNode] = []
+    private(set) var restCount = 0
+    private(set) var restSize: Int64 = 0
+    private(set) var restFiles = 0
+    private(set) var totalSize: Int64 = 0
+    private(set) var totalFiles = 0
+    private(set) var unreadableBelow = 0
+    private(set) var unreadableItems = 0
+
+    init(keep: Int) { self.keep = max(1, keep) }
+
+    static func ordered(_ a: StorageNode, _ b: StorageNode) -> Bool {
+        a.size != b.size ? a.size > b.size : a.name.localizedStandardCompare(b.name) == .orderedAscending
+    }
+
+    mutating func add(_ node: StorageNode) {
+        totalSize += node.size
+        totalFiles += node.fileCount
+        unreadableBelow += node.unreadableBelow + (node.unreadable ? 1 : 0)
+        unreadableItems += node.unreadableItems
+        kept.append(node)
+        if kept.count >= keep * 2 { trim() }
+    }
+
+    private mutating func trim() {
+        kept.sort(by: Self.ordered)
+        for node in kept.dropFirst(keep) {
+            restCount += 1
+            restSize += node.size
+            restFiles += node.fileCount
+        }
+        kept.removeLast(kept.count - keep)
+    }
+
+    var sortedKept: [StorageNode] {
+        var copy = self
+        if copy.kept.count > keep { copy.trim() }
+        return copy.kept.sorted(by: Self.ordered)
     }
 }
 
@@ -113,21 +168,21 @@ enum StorageMap {
                 node.finish(children: [], keep: 0, unreadable: true)
                 return node
             }
-            var found: [StorageNode] = []
-            found.reserveCapacity(contents.count)
+            var found = TopItems(keep: keepPerFolder)
+            var unreadableHere = 0
             // In name order, so which path of a hard link counts is the same every time.
             for (number, item) in contents.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }).enumerated() {
                 if cancelled || (number % 512 == 511 && isCancelled()) { cancelled = true; break }
-                guard let values = try? item.resourceValues(forKeys: Set(keys)) else { continue }
+                guard let values = try? item.resourceValues(forKeys: Set(keys)) else { unreadableHere += 1; continue }
                 counter.items += 1
                 let allocated = Int64(values.totalFileAllocatedSize ?? values.fileAllocatedSize ?? 0)
                 if values.isSymbolicLink == true {
-                    found.append(StorageNode(name: item.lastPathComponent, url: item, kind: .link, size: allocated, fileCount: 1))
+                    found.add(StorageNode(name: item.lastPathComponent, url: item, kind: .link, size: allocated, fileCount: 1))
                 } else if values.isDirectory == true {
                     if let volume = values.volumeIdentifier as? NSObject, let rootVolume, !volume.isEqual(rootVolume) {
-                        found.append(StorageNode(name: item.lastPathComponent, url: item, kind: .otherVolume))
+                        found.add(StorageNode(name: item.lastPathComponent, url: item, kind: .otherVolume))
                     } else {
-                        found.append(read(item, name: item.lastPathComponent))
+                        found.add(read(item, name: item.lastPathComponent))
                     }
                 } else {
                     var size = allocated
@@ -139,10 +194,10 @@ enum StorageMap {
                         }
                     }
                     counter.bytes += size
-                    found.append(StorageNode(name: item.lastPathComponent, url: item, kind: .file, size: size, fileCount: 1))
+                    found.add(StorageNode(name: item.lastPathComponent, url: item, kind: .file, size: size, fileCount: 1))
                 }
             }
-            node.finish(children: found, keep: keepPerFolder, unreadable: false)
+            node.finish(found, unreadable: false, unreadableHere: unreadableHere)
             return node
         }
 

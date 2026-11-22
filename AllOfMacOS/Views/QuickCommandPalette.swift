@@ -581,6 +581,9 @@ struct QuickCommandPalette: View {
         }
         // Keycaps mirror the user's real bindings; unbound commands show none.
         // Capture Text resolves to the OCR binding, as in CaptureMenu.
+        // 7.6 (Codex SEC04): aom://trigger links ask again.
+        command("links.forget", "Forget Link Permissions", "aom:// links ask again before running an automation · 링크 권한 초기화", "link.badge.plus",
+                keywords: "aom link url scheme trigger permission allow reset 링크 권한") { AOMLinkConsent.forgetAll() }
         // 7.5 (Codex F03, F07, F08): the Files module's comparison and archive windows.
         command("files.tool.comparePDFs", "Compare PDFs", "Two PDFs side by side, pages linked · PDF 비교", "rectangle.split.2x1",
                 keywords: "compare pdf diff side by side contract draft 비교 대조 계약서") { AOMFileToolsLauncher.comparePDFs() }

@@ -109,20 +109,22 @@ private struct ClipboardMCPConnectSheet: View {
             Text("Connect \(request.client.rawValue)").font(AOMFont.pageStatus).foregroundStyle(AOMColor.text)
             if let token = request.token {
                 let instructions = ClipboardMCPSettings.instructions(for: request.client, token: token)
+                // 7.6 (Codex SEC01): the token isn't on screen as selectable text; Copy carries it.
+                let shown = ClipboardMCPSettings.instructions(for: request.client, token: ClipboardMCPSettings.hiddenToken)
                 Text(instructions.summary).font(AOMFont.callout).foregroundStyle(AOMColor.text)
                 ScrollView(showsIndicators: false) {
-                    Text(instructions.snippet).font(AOMFont.mono).textSelection(.enabled)
+                    Text(shown.snippet).font(AOMFont.mono).textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading).padding(AOMSpace.x3)
                 }
                 .frame(height: request.client == .claudeCode || request.client == .codex
                        ? AOMFeatureSize.snippetShort : AOMFeatureSize.snippetTall)
                 .background(AOMColor.sunken, in: RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous))
-                Text("The token is shown only now and is stored only as a hash. Treat it like a password.")
+                Text("Copy puts the setup with its token on the clipboard once: marked private, so clipboard history (AOM's too) leaves it out, and cleared after 90 seconds unless you copy something else. The token is stored only as a hash.")
                     .font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 HStack {
-                    Button(copied ? "Copied" : "Copy") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(instructions.snippet, forType: .string)
+                    Button(copied ? "Copied" : "Copy with Token") {
+                        ClipboardMCPSettings.copyPrivately(instructions.snippet)
                         copied = true
                     }
                     Spacer()

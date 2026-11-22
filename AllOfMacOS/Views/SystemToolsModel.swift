@@ -664,6 +664,42 @@ final class SystemToolsModel: ObservableObject {
             default: return .compact
             }
         }
+        /// 7.6 (Codex MB05): the two keys as a store — read, write (nil
+        /// removes), synchronize — so they change together or not at all.
+        struct Store {
+            var read: (String) -> Int?
+            var write: (String, Int?) -> Void
+            var synchronize: () -> Bool
+
+            static let keys = ["NSStatusItemSpacing", "NSStatusItemSelectionPadding"]
+
+            /// The current host's global domain, as `defaults -currentHost … -globalDomain`.
+            static let live = Store(
+                read: { key in
+                    (CFPreferencesCopyValue(key as CFString, kCFPreferencesAnyApplication, kCFPreferencesCurrentUser,
+                                            kCFPreferencesCurrentHost) as? NSNumber)?.intValue
+                },
+                write: { key, value in
+                    CFPreferencesSetValue(key as CFString, value.map { NSNumber(value: $0) }, kCFPreferencesAnyApplication,
+                                          kCFPreferencesCurrentUser, kCFPreferencesCurrentHost)
+                },
+                synchronize: { CFPreferencesSynchronize(kCFPreferencesAnyApplication, kCFPreferencesCurrentUser, kCFPreferencesCurrentHost) })
+        }
+
+        /// Pure apart from `store`: writes both keys, reads them back, and
+        /// puts both previous values back (present or absent) when either
+        /// didn't take. True when both now hold this choice's values.
+        func apply(to store: Store) -> Bool {
+            let previous = Store.keys.map { store.read($0) }
+            let wanted: [Int?] = values.map { [$0.0, $0.1] } ?? [nil, nil]
+            for (key, value) in zip(Store.keys, wanted) { store.write(key, value) }
+            let synced = store.synchronize()
+            if synced, Store.keys.map({ store.read($0) }) == wanted { return true }
+            for (key, value) in zip(Store.keys, previous) { store.write(key, value) }
+            _ = store.synchronize()
+            return false
+        }
+
         /// Pure: the `defaults` invocations for this choice.
         var commands: [[String]] {
             let base = ["-currentHost"]
@@ -677,17 +713,7 @@ final class SystemToolsModel: ObservableObject {
     }
 
     private func menuBarSpacingMenu() {
-        let read = Process()
-        read.executableURL = URL(fileURLWithPath: "/usr/bin/defaults")
-        read.arguments = ["-currentHost", "read", "-globalDomain", "NSStatusItemSpacing"]
-        let pipe = Pipe()
-        read.standardOutput = pipe
-        read.standardError = FileHandle.nullDevice
-        try? read.run()
-        read.waitUntilExit()
-        let value = Int(String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-            .trimmingCharacters(in: .whitespacesAndNewlines))
-        let current = MenuBarSpacing.current(spacing: read.terminationStatus == 0 ? value : nil)
+        let current = MenuBarSpacing.current(spacing: MenuBarSpacing.Store.live.read("NSStatusItemSpacing"))
         let menu = NSMenu()
         for choice in MenuBarSpacing.allCases {
             let item = SystemToolMenuItem(title: choice.title) { self.setMenuBarSpacing(choice) }
@@ -698,16 +724,10 @@ final class SystemToolsModel: ObservableObject {
     }
 
     private func setMenuBarSpacing(_ choice: MenuBarSpacing) {
-        runInBackground(.menuBarSpacing, { () -> Bool in
-            for arguments in choice.commands {
-                let process = Process()
-                process.executableURL = URL(fileURLWithPath: "/usr/bin/defaults")
-                process.arguments = arguments
-                process.standardError = FileHandle.nullDevice
-                try process.run()
-                process.waitUntilExit()
-                if process.terminationStatus != 0, arguments.contains("write") { return false }
-            }
+        runInBackground(.menuBarSpacing, { () -> (written: Bool, restarted: [String]) in
+            // Both keys or neither (Codex MB05); the restarts are reported apart.
+            guard choice.apply(to: .live) else { return (false, []) }
+            var restarted: [String] = []
             for host in ["ControlCenter", "SystemUIServer"] {
                 let kill = Process()
                 kill.executableURL = URL(fileURLWithPath: "/usr/bin/killall")
@@ -715,11 +735,20 @@ final class SystemToolsModel: ObservableObject {
                 kill.standardError = FileHandle.nullDevice
                 try? kill.run()
                 kill.waitUntilExit()
+                if kill.terminationStatus == 0 { restarted.append(host) }
             }
-            return true
-        }) { ok in
-            if ok { self.succeed(.menuBarSpacing, "Menu bar spacing: \(choice.title.components(separatedBy: " —").first ?? choice.title). Other apps' icons follow when they relaunch or after you log out.") }
-            else { self.fail(.menuBarSpacing, "Spacing Not Changed", "defaults could not write the menu bar spacing.") }
+            return (true, restarted)
+        }) { outcome in
+            let name = choice.title.components(separatedBy: " —").first ?? choice.title
+            guard outcome.written else {
+                self.fail(.menuBarSpacing, "Spacing Not Changed", "macOS didn't keep the two spacing settings, so both were put back as they were.")
+                return
+            }
+            if outcome.restarted.count == 2 {
+                self.succeed(.menuBarSpacing, "Menu bar spacing: \(name). Other apps' icons follow when they relaunch or after you log out.")
+            } else {
+                self.succeed(.menuBarSpacing, "Menu bar spacing saved as \(name); the menu bar didn't restart, so it shows after you log out.")
+            }
         }
     }
 
@@ -1067,39 +1096,34 @@ final class SystemToolsModel: ObservableObject {
         cleanupReview = nil
         guard !chosen.isEmpty else { return }
         let id: SystemToolID = review.uninstallTarget == nil ? cleanupTool : .uninstall
-        runInBackground(id, { () -> (CleanupTools.TrashOutcome, FileTools.DuplicateTrashPlan?) in
+        if let sets = review.duplicateSets {
+            // 7.6 (Codex DT01/DT02): set by set, checked right before each move;
+            // done only when nothing failed or was held back.
+            runInBackground(id, {
+                FileTools.trashDuplicates(sets, selected: review.selected, hash: { try FileTools.sha256Hex(fileAt: $0) },
+                                          trash: { try FileManager.default.trashItem(at: $0, resultingItemURL: nil) })
+            }) { result in
+                if result.succeeded { self.succeed(id, result.summary); return }
+                self.lastResult = ToolResult(tool: id, message: result.summary, succeeded: false, date: Date())
+                if let scan = review.duplicateScan {
+                    self.toasts.show("Not All Moved: \(result.summary)", tone: .danger, seconds: Self.failureSeconds(result.summary),
+                                     actionTitle: "Scan Again") { self.duplicates(minimum: scan.minimum, in: scan.folder) }
+                } else {
+                    self.fail(id, "Not All Moved", result.summary)
+                }
+            }
+            return
+        }
+        runInBackground(id, { () -> CleanupTools.TrashOutcome in
             if let target = review.uninstallTarget {
                 _ = try CleanupTools.checkUninstallTarget(target.url, expectedID: target.bundleID) {
                     !NSRunningApplication.runningApplications(withBundleIdentifier: $0).isEmpty
                 }
             }
-            // Duplicates: only copies that are still what the scan hashed,
-            // and only while a copy that stays is too (Codex D01).
-            if let sets = review.duplicateSets {
-                let plan = FileTools.planDuplicateTrash(sets, selected: review.selected) { try FileTools.sha256Hex(fileAt: $0) }
-                return (CleanupTools.moveToTrash(plan.trash), plan)
-            }
-            return (CleanupTools.moveToTrash(chosen), nil)
-        }) { outcome, plan in
-            guard let plan, !plan.held.isEmpty || !plan.keptLast.isEmpty else {
-                if outcome.failures.isEmpty { self.succeed(id, outcome.summary) }
-                else { self.fail(id, "Some Items Stayed", outcome.summary) }
-                return
-            }
-            var message = outcome.summary
-            if !plan.keptLast.isEmpty {
-                message += "; kept \(plan.keptLast.prefix(3).joined(separator: ", ")) (every copy in its set was checked)"
-            }
-            guard !plan.held.isEmpty else { self.succeed(id, message); return }
-            message += "; \(plan.held.count) set\(plan.held.count == 1 ? "" : "s") held back — " + plan.held.prefix(3).joined(separator: "; ")
-            self.lastResult = ToolResult(tool: id, message: message, succeeded: false, date: Date())
-            if let scan = review.duplicateScan {
-                self.toasts.show("Held Back: \(message)", tone: .danger, seconds: Self.failureSeconds(message), actionTitle: "Scan Again") {
-                    self.duplicates(minimum: scan.minimum, in: scan.folder)
-                }
-            } else {
-                self.fail(id, "Held Back", message)
-            }
+            return CleanupTools.moveToTrash(chosen)
+        }) { outcome in
+            if outcome.failures.isEmpty { self.succeed(id, outcome.summary) }
+            else { self.fail(id, "Some Items Stayed", outcome.summary) }
         }
     }
 

@@ -350,7 +350,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if let command = AOMAutomationLink.parse(link) {
                 Task { @MainActor in
                     switch command {
-                    case .trigger(let name): ActionExecutor.executeNamedTrigger(name)
+                    case .trigger(let name): AOMLinkConsent.run(name)
                     case .showMenu(let name):
                         if !FloatingMenuController.shared.show(name) {
                             let shared = FloatingMenuStore.shared.isAmbiguous(name)

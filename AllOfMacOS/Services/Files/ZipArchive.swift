@@ -87,6 +87,8 @@ enum ZipArchive {
             directorySize = try int64(le64(record, 40))
             directoryOffset = try int64(le64(record, 48))
         }
+        // 7.6 (Codex Z02): the directory is read in one piece, so it has a ceiling.
+        guard directorySize <= maxDirectoryBytes else { throw Failure.unsupported("The archive's list of files is over 256 MB; AOM doesn't open it") }
         guard directoryOffset >= 0, directorySize >= 0, directorySize <= length, directoryOffset <= length - directorySize,
               count >= 0, count < 2_000_000 else {
             throw Failure.damaged("the directory points past the end of the file")
@@ -192,9 +194,24 @@ enum ZipArchive {
     /// folders inside the archive, else all at the top (a taken name gets a
     /// number). Unsupported entries are reported, never written.
     static func extract(_ picked: [Entry], from archive: URL, into folder: URL, keepFolders: Bool = true,
+                        budget: Int64? = nil, freeSpace: ((URL) -> Int64?)? = nil,
                         isCancelled: () -> Bool = { false }, progress: (Int64) -> Void = { _ in }) -> Outcome {
         var outcome = Outcome()
         let root = folder.standardizedFileURL
+        // 7.6 (Codex Z01/Z02): the picked total, counted without overflow, has
+        // to fit the job's budget and the free space before anything is written.
+        guard let total = totalSize(picked.filter { !$0.isDirectory && $0.unsupported == nil }) else {
+            outcome.failures = ["The picked files' sizes add up past what AOM can count; nothing was extracted"]
+            return outcome
+        }
+        if let budget, total > budget {
+            outcome.failures = ["The picked files unpack to \(SystemStatus.size(total)), over the \(SystemStatus.size(budget)) this can hold; nothing was extracted"]
+            return outcome
+        }
+        if let free = (freeSpace ?? availableSpace)(root), total > free - min(free / 20, 1_000_000_000) {
+            outcome.failures = ["The picked files need \(SystemStatus.size(total)); \(SystemStatus.size(max(0, free))) is free there. Nothing was extracted"]
+            return outcome
+        }
         guard let handle = try? FileHandle(forReadingFrom: archive) else {
             outcome.failures = picked.map { "\($0.name): the archive can't be opened" }
             return outcome
@@ -210,8 +227,9 @@ enum ZipArchive {
             let parts = keepFolders ? components : [components[components.count - 1]]
             do {
                 let parent = try makeFolders(parts.dropLast(), in: root)
+                let parentIdentity = FileTools.anyIdentity(parent).map { $0.split(separator: ":").prefix(3).joined(separator: ":") }
                 let written = try write(entry, from: handle, toFolder: parent, name: parts[parts.count - 1], root: root,
-                                        isCancelled: isCancelled) { done += $0; progress(done) }
+                                        parentIdentity: parentIdentity, isCancelled: isCancelled) { done += $0; progress(done) }
                 outcome.written.append(written)
             } catch is CancellationError {
                 outcome.cancelled = true
@@ -251,12 +269,13 @@ enum ZipArchive {
     }
 
     private static func write(_ entry: Entry, from handle: FileHandle, toFolder folder: URL, name: String, root: URL,
-                              isCancelled: () -> Bool, wrote: (Int64) -> Void) throws -> URL {
+                              parentIdentity: String?, isCancelled: () -> Bool, wrote: (Int64) -> Void) throws -> URL {
         // The local header's name and extra lengths can differ from the directory's.
         try handle.seek(toOffset: UInt64(entry.localHeaderOffset))
         let header = [UInt8](try handle.read(upToCount: 30) ?? Data())
         guard header.count == 30, le32(header, 0) == 0x0403_4b50 else { throw Failure.damaged("\(entry.name)'s header is missing") }
-        let dataStart = entry.localHeaderOffset + 30 + Int64(le16(header, 26)) + Int64(le16(header, 28))
+        let (dataStart, overflow) = entry.localHeaderOffset.addingReportingOverflow(30 + Int64(le16(header, 26)) + Int64(le16(header, 28)))
+        guard !overflow else { throw Failure.damaged("\(entry.name)'s position is out of range") }
         try handle.seek(toOffset: UInt64(dataStart))
 
         let temporary = folder.appendingPathComponent(".aom-unzip-\(UUID().uuidString)")
@@ -310,10 +329,33 @@ enum ZipArchive {
         if let modified = entry.modified {
             try? FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: temporary.path)
         }
-        guard resolvesInside(folder, root) else { throw Failure.outside(name) }
+        // 7.6 (Codex Z03): the folder is still the one made or checked before writing (not swapped for a link).
+        let identity = FileTools.anyIdentity(folder).map { $0.split(separator: ":").prefix(3).joined(separator: ":") }
+        guard resolvesInside(folder, root), identity == parentIdentity else { throw Failure.outside(name) }
         let final = try commitExclusive(temporary, in: folder, name: name)
         committed = true
         return final
+    }
+
+    /// The longest central directory read in one piece.
+    static let maxDirectoryBytes: Int64 = 256 << 20
+    /// The most one Quick Look preview unpacks.
+    static let previewBudget: Int64 = 512 << 20
+
+    /// Pure: the sizes added up, or nil past Int64.
+    static func totalSize(_ entries: [Entry]) -> Int64? {
+        var total: Int64 = 0
+        for entry in entries {
+            let (sum, overflow) = total.addingReportingOverflow(max(0, entry.size))
+            if overflow { return nil }
+            total = sum
+        }
+        return total
+    }
+
+    static func availableSpace(_ folder: URL) -> Int64? {
+        let values = try? folder.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey, .volumeAvailableCapacityKey])
+        return values?.volumeAvailableCapacityForImportantUsage ?? values?.volumeAvailableCapacity.map(Int64.init)
     }
 
     /// Pure: "report.pdf", then "report 2.pdf"; "README" then "README 2".

@@ -14,10 +14,26 @@ struct AOMMenuShelfItem: Identifiable, Equatable {
     let title: String
     let axIdentifier: String
     let ordinal: Int
+    /// 7.6: how many items the app had in this scan, and whether this item's
+    /// identifier was the only one of its kind in the app.
+    var siblings = 1
+    var identifierIsUnique = true
+    /// Where the item sits (screen points, top-left origin), when AX says.
+    var frame: CGRect? = nil
 
-    var id: String {
-        let key = axIdentifier.isEmpty ? "\(ordinal)|\(title)" : axIdentifier
-        return "\(ownerBundleID)|\(key)"
+    /// One scan's row: the app and the item's place in it (7.6, Codex MB01:
+    /// two items sharing an identifier are two rows).
+    var id: String { "\(ownerBundleID)|#\(ordinal)" }
+
+    /// What a pin remembers across scans: the identifier when it names one
+    /// item, else the place — never the title, which changes (18°C → 19°C).
+    var pinKey: String {
+        !axIdentifier.isEmpty && identifierIsUnique ? "\(ownerBundleID)|ax:\(axIdentifier)" : "\(ownerBundleID)|pos:\(ordinal)"
+    }
+
+    /// The pre-7.6 id, to carry old pins over when it picks out one item.
+    var legacyID: String {
+        "\(ownerBundleID)|" + (axIdentifier.isEmpty ? "\(ordinal)|\(title)" : axIdentifier)
     }
 }
 
@@ -29,12 +45,44 @@ enum AOMMenuShelfPolicy {
             .filter { q.isEmpty || $0.title.lowercased().contains(q)
                 || $0.ownerName.lowercased().contains(q) || $0.ownerBundleID.lowercased().contains(q) }
             .sorted {
-                let a = pinned.contains($0.id), b = pinned.contains($1.id)
+                let a = pinned.contains($0.pinKey), b = pinned.contains($1.pinKey)
                 if a != b { return a }
                 let lhs = $0.ownerName.localizedStandardCompare($1.ownerName)
                 if lhs != .orderedSame { return lhs == .orderedAscending }
                 return $0.title.localizedStandardCompare($1.title) == .orderedAscending
             }
+    }
+
+    /// Pure (Codex MB01): old pin keys that name exactly one scanned item
+    /// become that item's pin key; the rest stay as they were.
+    static func migratePins(_ pinned: Set<String>, items: [AOMMenuShelfItem]) -> Set<String> {
+        let current = Set(items.map(\.pinKey))
+        var out = Set<String>()
+        for key in pinned {
+            if current.contains(key) || key.contains("|ax:") || key.contains("|pos:") { out.insert(key); continue }
+            let matches = items.filter { $0.legacyID == key }
+            if matches.count == 1 { out.insert(matches[0].pinKey) } else { out.insert(key) }
+        }
+        return out
+    }
+
+    /// One item read back just before it is pressed.
+    struct Live: Equatable {
+        let identifier: String
+        let title: String
+    }
+
+    /// Pure (Codex MB01): which of the app's items to press now, or nil when
+    /// it isn't one item for sure — never "the first with that identifier".
+    static func resolve(_ item: AOMMenuShelfItem, in live: [Live]) -> Int? {
+        if !item.axIdentifier.isEmpty {
+            let matches = live.indices.filter { live[$0].identifier == item.axIdentifier }
+            if matches.count == 1 { return matches[0] }
+            return matches.contains(item.ordinal) && live.count == item.siblings ? item.ordinal : nil
+        }
+        // No identifier: the same place in a list of the same length (a title may change).
+        guard live.count == item.siblings, live.indices.contains(item.ordinal), live[item.ordinal].identifier.isEmpty else { return nil }
+        return item.ordinal
     }
 
     static func safeHoverZone(_ point: CGPoint, screen: CGRect, menuBarHeight: CGFloat = 24) -> Bool {
@@ -47,7 +95,7 @@ enum AOMMenuShelfPolicy {
     }
 }
 
-private struct AOMMenuShelfApp: Sendable {
+struct AOMMenuShelfApp: Sendable {
     let pid: pid_t
     let bundleID: String
     let name: String
@@ -56,7 +104,7 @@ private struct AOMMenuShelfApp: Sendable {
 /// Accessibility requests must never block AppKit's main thread.
 /// A response uses immutable identifiers, not retained foreign AXUIElements:
 /// the target is resolved again immediately before it is pressed.
-private enum AOMMenuShelfProbe {
+enum AOMMenuShelfProbe {
     private static func attribute(_ el: AXUIElement, _ key: CFString) -> CFTypeRef? {
         var value: CFTypeRef?
         return AXUIElementCopyAttributeValue(el, key, &value) == .success ? value : nil
@@ -90,46 +138,64 @@ private enum AOMMenuShelfProbe {
         return []
     }
 
-    static func snapshot(apps: [AOMMenuShelfApp], deadline: TimeInterval = 2.0) -> [AOMMenuShelfItem] {
+    private static func frame(_ element: AXUIElement) -> CGRect? {
+        guard let position = attribute(element, kAXPositionAttribute as CFString), CFGetTypeID(position) == AXValueGetTypeID(),
+              let size = attribute(element, kAXSizeAttribute as CFString), CFGetTypeID(size) == AXValueGetTypeID() else { return nil }
+        var point = CGPoint.zero, extent = CGSize.zero
+        guard AXValueGetValue(position as! AXValue, .cgPoint, &point), AXValueGetValue(size as! AXValue, .cgSize, &extent) else { return nil }
+        return CGRect(origin: point, size: extent)
+    }
+
+    private static func title(_ element: AXUIElement, index: Int) -> String {
+        [string(element, kAXTitleAttribute as CFString), string(element, kAXDescriptionAttribute as CFString),
+         string(element, kAXHelpAttribute as CFString)].first { !$0.isEmpty } ?? "Item \(index + 1)"
+    }
+
+    struct Snapshot {
+        var items: [AOMMenuShelfItem] = []
+        /// Apps not read before the deadline (Codex MB02); 0: every app was read.
+        var appsLeft = 0
+    }
+
+    /// The deadline is checked before every item, not only between apps.
+    static func snapshot(apps: [AOMMenuShelfApp], deadline: TimeInterval = 2.0) -> Snapshot {
         let started = ProcessInfo.processInfo.systemUptime
-        var result: [AOMMenuShelfItem] = []
-        for app in apps.prefix(90) {
-            if ProcessInfo.processInfo.systemUptime - started >= deadline { break }
-            for (index, element) in items(pid: app.pid).prefix(30).enumerated() {
+        var result = Snapshot()
+        let list = Array(apps.prefix(90))
+        result.appsLeft = max(0, apps.count - list.count)
+        for (number, app) in list.enumerated() {
+            if ProcessInfo.processInfo.systemUptime - started >= deadline { result.appsLeft += list.count - number; break }
+            let elements = Array(items(pid: app.pid).prefix(30))
+            var found: [AOMMenuShelfItem] = []
+            for (index, element) in elements.enumerated() {
+                if ProcessInfo.processInfo.systemUptime - started >= deadline { break }
                 AXUIElementSetMessagingTimeout(element, 0.1)
-                let identifier = string(element, kAXIdentifierAttribute as CFString)
-                let title = [
-                    string(element, kAXTitleAttribute as CFString),
-                    string(element, kAXDescriptionAttribute as CFString),
-                    string(element, kAXHelpAttribute as CFString)
-                ].first { !$0.isEmpty } ?? "Item \(index + 1)"
-                result.append(AOMMenuShelfItem(pid: app.pid, ownerBundleID: app.bundleID,
-                                               ownerName: app.name, title: title,
-                                               axIdentifier: identifier, ordinal: index))
+                found.append(AOMMenuShelfItem(pid: app.pid, ownerBundleID: app.bundleID, ownerName: app.name,
+                                              title: title(element, index: index),
+                                              axIdentifier: string(element, kAXIdentifierAttribute as CFString), ordinal: index,
+                                              siblings: elements.count, frame: frame(element)))
+            }
+            if found.count < elements.count { result.appsLeft += 1 }
+            var counts: [String: Int] = [:]
+            for item in found where !item.axIdentifier.isEmpty { counts[item.axIdentifier, default: 0] += 1 }
+            result.items += found.map { item in
+                var copy = item
+                copy.identifierIsUnique = (counts[item.axIdentifier] ?? 0) <= 1
+                return copy
             }
         }
         return result
     }
 
+    /// Reads the app's items again and presses the one item that matches.
     static func activate(_ item: AOMMenuShelfItem) -> Bool {
-        guard item.pid > 0 else { return false }
+        guard item.pid > 0, AXIsProcessTrusted(),
+              NSRunningApplication(processIdentifier: item.pid)?.bundleIdentifier.map({ $0 == item.ownerBundleID }) ?? item.ownerBundleID.hasPrefix("pid:") else { return false }
         let list = items(pid: item.pid)
-        for (index, element) in list.enumerated() {
-            let identifier = string(element, kAXIdentifierAttribute as CFString)
-            let title = [
-                string(element, kAXTitleAttribute as CFString),
-                string(element, kAXDescriptionAttribute as CFString),
-                string(element, kAXHelpAttribute as CFString)
-            ].first { !$0.isEmpty } ?? "Item \(index + 1)"
-            // Never click another icon just because an app reordered its menu.
-            let same = !item.axIdentifier.isEmpty
-                ? identifier == item.axIdentifier
-                : index == item.ordinal && title == item.title
-            guard same else { continue }
-            AXUIElementSetMessagingTimeout(element, 0.2)
-            return AXUIElementPerformAction(element, kAXPressAction as CFString) == .success
-        }
-        return false
+        let live = list.enumerated().map { AOMMenuShelfPolicy.Live(identifier: string($1, kAXIdentifierAttribute as CFString), title: title($1, index: $0)) }
+        guard let index = AOMMenuShelfPolicy.resolve(item, in: live) else { return false }
+        AXUIElementSetMessagingTimeout(list[index], 0.2)
+        return AXUIElementPerformAction(list[index], kAXPressAction as CFString) == .success
     }
 }
 
@@ -217,14 +283,18 @@ final class AOMMenuShelfController: ObservableObject {
 
     func dismiss() { panel?.orderOut(nil) }
 
+    /// Apps not read in the last scan (0: all were).
+    @Published private(set) var appsLeft = 0
+
     func refresh() {
+        // 7.6 (Codex MB03): a scan already running can't publish after this.
+        scanGeneration &+= 1
+        let generation = scanGeneration
         guard AXIsProcessTrusted() else {
-            items = []; loading = false
+            items = []; loading = false; appsLeft = 0
             message = "Accessibility permission is required to list other apps' menu-bar controls."
             return
         }
-        scanGeneration &+= 1
-        let generation = scanGeneration
         loading = true
         message = nil
         let apps = NSWorkspace.shared.runningApplications.compactMap { app -> AOMMenuShelfApp? in
@@ -243,10 +313,22 @@ final class AOMMenuShelfController: ObservableObject {
             let result = AOMMenuShelfProbe.snapshot(apps: ordered)
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.scanGeneration == generation else { return }
-                self.items = result
+                guard AXIsProcessTrusted() else {
+                    self.items = []; self.loading = false
+                    self.message = "Accessibility permission is required to list other apps' menu-bar controls."
+                    return
+                }
+                self.items = result.items
+                self.appsLeft = result.appsLeft
                 self.loading = false
-                if result.isEmpty {
-                    self.message = "No accessible menu-bar items. macOS may not expose every third-party icon."
+                let migrated = AOMMenuShelfPolicy.migratePins(self.pinned, items: result.items)
+                if migrated != self.pinned { self.pinned = migrated }
+                if result.items.isEmpty {
+                    self.message = result.appsLeft > 0 ? "Apps took too long to answer; try Refresh."
+                        : "No accessible menu-bar items. macOS may not expose every third-party icon."
+                } else if result.appsLeft > 0 {
+                    // Codex MB02: a partial list says it is partial; pins stay.
+                    self.message = "Some items: \(result.appsLeft) app\(result.appsLeft == 1 ? "" : "s") didn't answer in time. Refresh to try again."
                 }
             }
         }
@@ -259,14 +341,16 @@ final class AOMMenuShelfController: ObservableObject {
             if !success {
                 DispatchQueue.main.async {
                     self?.message = "Could not activate \(item.title); its menu-bar item may have moved or closed."
+                    GestureHUD.shared.show(title: "Menu Bar Item Not Opened",
+                                           detail: "\(item.title) moved, closed, or two items now match it. Open the shelf and pick it again.")
                 }
             }
         }
     }
 
     func togglePinned(_ item: AOMMenuShelfItem) {
-        if pinned.contains(item.id) { pinned.remove(item.id) }
-        else { pinned.insert(item.id) }
+        if pinned.contains(item.pinKey) { pinned.remove(item.pinKey) }
+        else { pinned.insert(item.pinKey) }
     }
 
     func requestPermission() {
@@ -341,7 +425,7 @@ private struct AOMMenuShelfView: View {
                     Button("Request Accessibility Permission") { controller.requestPermission() }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if controller.visibleItems.isEmpty {
+            } else if controller.visibleItems.isEmpty && controller.appsLeft == 0 {
                 Text(controller.message ?? "No items match your search.")
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -368,16 +452,19 @@ private struct AOMMenuShelfView: View {
                                     }
                                 }.buttonStyle(.plain)
                                 Button { controller.togglePinned(item) } label: {
-                                    Image(systemName: controller.pinned.contains(item.id) ? "star.fill" : "star")
+                                    Image(systemName: controller.pinned.contains(item.pinKey) ? "star.fill" : "star")
                                 }
                                 .buttonStyle(.borderless)
-                                .help(controller.pinned.contains(item.id) ? "Unpin item" : "Pin in shelf")
+                                .help(controller.pinned.contains(item.pinKey) ? "Unpin item" : "Pin in shelf")
                             }
                             .padding(.horizontal, 8).padding(.vertical, 5)
                             .background(.quaternary.opacity(0.28), in: RoundedRectangle(cornerRadius: 8))
                         }
                     }
                 }
+            }
+            if controller.appsLeft > 0, let message = controller.message, !controller.loading {
+                Text(message).font(.caption).foregroundStyle(.orange)
             }
             Divider()
             Text("Third-party icons stay in their original macOS positions. AOM does not forcibly move them.")

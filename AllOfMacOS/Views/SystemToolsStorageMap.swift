@@ -173,6 +173,7 @@ struct StorageMapView: View {
                      "allocated space, packages included",
                      scan.hardLinksSkipped > 0 ? "\(scan.hardLinksSkipped) hard link\(scan.hardLinksSkipped == 1 ? "" : "s") counted once" : "hard links count once"]
         if current.unreadableBelow > 0 { parts.append("\(current.unreadableBelow) folder\(current.unreadableBelow == 1 ? "" : "s") couldn't be read") }
+        if current.unreadableItems > 0 { parts.append("\(current.unreadableItems) item\(current.unreadableItems == 1 ? "" : "s") without a readable size (not counted)") }
         parts.append("links and other volumes aren't entered")
         return Text(parts.joined(separator: " · ")).font(AOMFont.caption).foregroundStyle(AOMColor.textTertiary).lineLimit(2)
     }

@@ -121,6 +121,27 @@ final class ClipboardMCPSettings: ObservableObject {
         var id: String { rawValue }
     }
 
+    /// What the on-screen snippet shows in place of the token.
+    static let hiddenToken = "‹token: use Copy with Token›"
+
+    /// 7.6 (Codex SEC01): the setup text with its token goes on the clipboard
+    /// marked concealed and transient (nspasteboard.org), so clipboard
+    /// histories that honour the markers — AOM's own included — skip it, and
+    /// it is cleared after `seconds` only if nothing else was copied since.
+    @MainActor
+    static func copyPrivately(_ text: String, seconds: Double = 90, pasteboard: NSPasteboard = .general) {
+        pasteboard.clearContents()
+        let item = NSPasteboardItem()
+        item.setString(text, forType: .string)
+        item.setData(Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType"))
+        item.setData(Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.TransientType"))
+        pasteboard.writeObjects([item])
+        let written = pasteboard.changeCount
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
+            if pasteboard.changeCount == written { pasteboard.clearContents() }
+        }
+    }
+
     /// Setup instructions for `client` with a freshly created `token`.
     static func instructions(for client: Client, token: String) -> (summary: String, snippet: String) {
         let exe = executablePath

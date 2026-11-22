@@ -36,7 +36,8 @@ final class ZipExtractModel: ObservableObject {
     }
 
     var pickedEntries: [ZipArchive.Entry] { files.filter { picked.contains($0.id) && $0.unsupported == nil } }
-    var pickedSize: Int64 { pickedEntries.reduce(0) { $0 + $1.size } }
+    /// Nil when the sizes add up past Int64 (Codex Z01).
+    var pickedSize: Int64? { ZipArchive.totalSize(pickedEntries) }
 
     func load() {
         guard !loading else { return }
@@ -120,17 +121,28 @@ final class ZipExtractModel: ObservableObject {
     @Published var previewURL: URL?
     @Published private(set) var previewURLs: [URL] = []
     private var previewFolder: URL?
+    /// 7.6 (Codex Z04): the newest Quick Look request; older ones are dropped.
+    private var previewGeneration = 0
+    private var closed = false
 
     func quickLook(_ entry: ZipArchive.Entry) {
-        guard entry.unsupported == nil else { return }
+        guard entry.unsupported == nil, !closed else { return }
         if previewURL != nil { previewURL = nil; return }
+        previewGeneration += 1
+        let generation = previewGeneration
         let folder = previewFolder ?? FileManager.default.temporaryDirectory.appendingPathComponent("AOMZipPreview-\(UUID().uuidString)", isDirectory: true)
         previewFolder = folder
         let archive = archive
         Task.detached(priority: .userInitiated) {
-            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            let outcome = ZipArchive.extract([entry], from: archive, into: folder, keepFolders: false)
+            // Each request unpacks into its own folder inside the preview folder.
+            let own = folder.appendingPathComponent("\(generation)", isDirectory: true)
+            try? FileManager.default.createDirectory(at: own, withIntermediateDirectories: true)
+            let outcome = ZipArchive.extract([entry], from: archive, into: own, keepFolders: false, budget: ZipArchive.previewBudget)
             await MainActor.run {
+                guard !self.closed, generation == self.previewGeneration else {
+                    try? FileManager.default.removeItem(at: own)
+                    return
+                }
                 guard let file = outcome.written.first else {
                     self.result = ("Couldn't preview \(entry.name): \(outcome.failures.first ?? "")", [], true)
                     return
@@ -143,9 +155,22 @@ final class ZipExtractModel: ObservableObject {
 
     /// The window closed: stop work and remove preview copies.
     func close() {
+        closed = true
         cancel()
+        previewGeneration += 1
+        previewURL = nil
         if let previewFolder { try? FileManager.default.removeItem(at: previewFolder) }
         previewFolder = nil
+    }
+
+    /// Preview folders left by a crash, older than a day, go when a ZIP window opens.
+    static func sweepOldPreviews(now: Date = Date()) {
+        let temp = FileManager.default.temporaryDirectory
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: temp.path)) ?? [] where name.hasPrefix("AOMZipPreview-") {
+            let url = temp.appendingPathComponent(name)
+            let date = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? now
+            if now.timeIntervalSince(date) > 86_400 { try? FileManager.default.removeItem(at: url) }
+        }
     }
 }
 
@@ -230,7 +255,8 @@ struct ZipExtractView: View {
     private var summary: String {
         let files = model.files
         let unsupported = files.filter { $0.unsupported != nil }.count
-        var text = "\(files.count) file\(files.count == 1 ? "" : "s") · \(SystemStatus.size(files.reduce(0) { $0 + $1.size })) unpacked"
+        let total = ZipArchive.totalSize(files).map(SystemStatus.size) ?? "too large to add up"
+        var text = "\(files.count) file\(files.count == 1 ? "" : "s") · \(total) unpacked"
         if unsupported > 0 { text += " · \(unsupported) can't be extracted" }
         return text
     }
@@ -253,11 +279,11 @@ struct ZipExtractView: View {
                     .help("On: report.pdf in Contracts/2026 comes out in Contracts/2026. Off: every file goes straight into the folder you choose.")
                 Spacer()
                 if model.extracting {
-                    ProgressView(value: Double(model.written), total: Double(max(1, model.pickedSize)))
+                    ProgressView(value: Double(model.written), total: Double(max(1, model.pickedSize ?? 1)))
                         .frame(width: 140)
                     Button("Stop") { model.cancel() }
                 } else {
-                    Text(model.picked.isEmpty ? "Pick files to extract" : "\(model.pickedEntries.count) picked · \(SystemStatus.size(model.pickedSize))")
+                    Text(model.picked.isEmpty ? "Pick files to extract" : "\(model.pickedEntries.count) picked · \(model.pickedSize.map(SystemStatus.size) ?? "too large to add up")")
                         .font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
                     Button("Extract To…") { model.chooseFolderAndExtract() }
                         .buttonStyle(AOMPrimaryButtonStyle())

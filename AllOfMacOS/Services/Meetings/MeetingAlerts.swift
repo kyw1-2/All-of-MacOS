@@ -32,6 +32,9 @@ final class MeetingAlerts: NSObject {
     private var feedLoading = false
     /// The calendar changed while a read was running: read again when it ends.
     private var feedStale = false
+    /// 7.6 (Codex CA01): bumped on stop and when access goes, so a read
+    /// started before can't bring old events back.
+    private var feedGeneration = 0
     private var storeObserver: NSObjectProtocol?
 
     func start() {
@@ -61,6 +64,7 @@ final class MeetingAlerts: NSObject {
         storeObserver = nil
         feed = []
         feedLoadedAt = nil
+        feedGeneration += 1
         if let statusItem { NSStatusBar.system.removeStatusItem(statusItem) }
         statusItem = nil
         dismissAlert()
@@ -121,11 +125,12 @@ final class MeetingAlerts: NSObject {
         feedLoading = true
         feedStale = false
         let range = Self.feedRange(now: now)
+        let generation = feedGeneration
         Task { [weak self] in
             let events = await PaletteSchedule.shared.events(from: range.start, to: range.end)
             guard let self else { return }
             self.feedLoading = false
-            guard self.timer != nil else { return }
+            guard self.timer != nil, generation == self.feedGeneration, PaletteSchedule.shared.access == .granted else { return }
             self.feed = events ?? []
             // A change that came in during this read is read now, not in five minutes.
             self.feedLoadedAt = self.feedStale ? nil : Date()
@@ -135,7 +140,15 @@ final class MeetingAlerts: NSObject {
 
     private func tick() {
         let schedule = PaletteSchedule.shared
-        guard schedule.access == .granted else { updateStatus(nil); return }
+        guard schedule.access == .granted else {
+            // Access withdrawn: the countdown, an open alert and the events read go.
+            updateStatus(nil)
+            if shownEvent != nil { dismissAlert() }
+            feed = []
+            feedLoadedAt = nil
+            feedGeneration += 1
+            return
+        }
         let now = Date()
         if feedLoadedAt.map({ now.timeIntervalSince($0) > 300 }) ?? true { refreshFeed(now: now) }
         let next = Self.next(feed, now: now, window: Double(Self.countdownMinutes) * 60)

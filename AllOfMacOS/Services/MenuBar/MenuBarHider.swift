@@ -21,6 +21,8 @@ final class MenuBarHider: NSObject {
     private var divider: NSStatusItem?
     private(set) var isCollapsed = false
     private var rehide: DispatchWorkItem?
+    /// 7.6 (Codex MB04): the delayed collapse after a start, cancelled by stop.
+    private var startCollapse: DispatchWorkItem?
 
     /// Seconds before shown items hide again; 0 keeps them shown.
     static var rehideSeconds: Double {
@@ -46,15 +48,28 @@ final class MenuBarHider: NSObject {
         divider.button?.toolTip = "Items left of this line hide"
         self.toggle = toggle
         self.divider = divider
+        isCollapsed = false
+        updateAppearance()
         if UserDefaults.standard.bool(forKey: Self.usedKey) {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.collapse() }
+            let work = DispatchWorkItem { [weak self] in self?.collapse(quiet: true) }
+            startCollapse = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: work)
         } else {
-            toggle.button?.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: "Hide menu bar items")
             GestureHUD.shared.show(title: "Menu Bar Hider", detail: "⌘-drag the items to hide left of the new divider, then click the chevron.")
         }
     }
 
+    /// The chevron's picture and VoiceOver text always follow the real state.
+    private func updateAppearance() {
+        toggle?.button?.image = isCollapsed
+            ? NSImage(systemSymbolName: "chevron.left", accessibilityDescription: "Show hidden menu bar items")
+            : NSImage(systemSymbolName: "chevron.right", accessibilityDescription: "Hide menu bar items")
+        toggle?.button?.setAccessibilityLabel(isCollapsed ? "Show hidden menu bar items" : "Hide menu bar items")
+    }
+
     func stop() {
+        startCollapse?.cancel()
+        startCollapse = nil
         rehide?.cancel()
         for item in [toggle, divider].compactMap({ $0 }) { NSStatusBar.system.removeStatusItem(item) }
         toggle = nil
@@ -73,28 +88,32 @@ final class MenuBarHider: NSObject {
         return dividerMinX < toggleMinX
     }
 
-    func collapse() {
+    func collapse(quiet: Bool = false) {
+        startCollapse = nil
         guard let toggle, let divider, !isCollapsed else { return }
         let dividerX = divider.button?.window?.frame.minX
         let toggleX = toggle.button?.window?.frame.minX
         guard Self.canCollapse(dividerMinX: dividerX, toggleMinX: toggleX) else {
-            GestureHUD.shared.show(title: "Menu Bar Hider", detail: "⌘-drag the divider back to the left of the chevron, then click the chevron.")
+            if !quiet || dividerX != nil {
+                GestureHUD.shared.show(title: "Menu Bar Hider", detail: "⌘-drag the divider back to the left of the chevron, then click the chevron.")
+            }
+            updateAppearance()
             return
         }
         rehide?.cancel()
         divider.length = Self.collapsedLength
         divider.button?.image = nil
         UserDefaults.standard.set(true, forKey: Self.usedKey)
-        toggle.button?.image = NSImage(systemSymbolName: "chevron.left", accessibilityDescription: "Show hidden menu bar items")
         isCollapsed = true
+        updateAppearance()
     }
 
     func expand() {
-        guard let toggle, let divider else { return }
+        guard toggle != nil, let divider else { return }
         divider.length = Self.dividerLength
         divider.button?.image = NSImage(systemSymbolName: "line.diagonal", accessibilityDescription: "Menu Bar Hider divider")
-        toggle.button?.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: "Hide menu bar items")
         isCollapsed = false
+        updateAppearance()
         rehide?.cancel()
         let seconds = Self.rehideSeconds
         guard seconds > 0 else { return }

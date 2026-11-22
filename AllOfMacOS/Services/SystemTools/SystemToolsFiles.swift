@@ -127,6 +127,13 @@ enum FileTools {
         return Fingerprint(identity: "\(status.st_dev):\(status.st_ino)", size: Int64(status.st_size), modified: modified)
     }
 
+    /// Device and inode, type and modification time of any item (folders too).
+    static func anyIdentity(_ url: URL) -> String? {
+        var status = stat()
+        guard lstat(url.path, &status) == 0 else { return nil }
+        return "\(status.st_dev):\(status.st_ino):\(status.st_mode & S_IFMT):\(status.st_mtimespec.tv_sec).\(status.st_mtimespec.tv_nsec)"
+    }
+
     /// One set of identical files as the scan saw it: the SHA-256 they
     /// share and each copy's fingerprint, the copy to keep first.
     struct DuplicateSet: Equatable {
@@ -174,54 +181,124 @@ enum FileTools {
         var keptLast: [String] = []
     }
 
-    /// Pure apart from the two readers: which checked copies may go. A set
-    /// goes only when each checked copy and at least one copy that stays
-    /// are still the files the scan hashed (same device and inode, size,
-    /// modification time and SHA-256). A set whose copies were all checked
-    /// keeps its first one. A set with anything replaced, changed, gone or
-    /// unreadable is held back whole; the other sets still go.
+    /// One set's decision: the copies that may go, or why the set stays.
+    enum SetDecision: Equatable {
+        case skip
+        case trash([DuplicateSet.Member], keptFirst: String?)
+        case hold(String)
+    }
+
+    /// Pure apart from the two readers: whether a set's checked copies may
+    /// go. They go only when each checked copy and at least one copy that
+    /// stays are still the files the scan hashed (same device and inode,
+    /// size, modification time and SHA-256). A set whose copies were all
+    /// checked keeps its first one. Anything replaced, changed, gone or
+    /// unreadable holds the set back whole.
+    static func decide(_ set: DuplicateSet, label: String, selected: Set<String>,
+                       fingerprint: (URL) -> Fingerprint?, hash: (URL) throws -> String) -> SetDecision {
+        var chosen = set.members.filter { selected.contains($0.url.path) }
+        guard !chosen.isEmpty else { return .skip }
+        var staying = set.members.filter { !selected.contains($0.url.path) }
+        var keptFirst: String?
+        if staying.isEmpty, let first = set.members.first {
+            staying = [first]
+            chosen.removeAll { $0.url == first.url }
+            keptFirst = first.url.lastPathComponent
+            guard !chosen.isEmpty else { return .skip }
+        }
+        func problem(_ member: DuplicateSet.Member) -> String? {
+            guard let now = fingerprint(member.url) else { return "\(member.url.lastPathComponent) is gone or isn't a file any more" }
+            if now.identity != member.fingerprint.identity { return "\(member.url.lastPathComponent) was replaced by another file" }
+            if now.size != member.fingerprint.size || now.modified != member.fingerprint.modified {
+                return "\(member.url.lastPathComponent) changed since the scan"
+            }
+            guard let digest = try? hash(member.url) else { return "\(member.url.lastPathComponent) couldn't be read" }
+            return digest == set.hash ? nil : "\(member.url.lastPathComponent)'s contents changed since the scan"
+        }
+        for member in chosen { if let reason = problem(member) { return .hold("\(label): \(reason)") } }
+        var stayingProblem: String?
+        for member in staying {
+            guard let reason = problem(member) else { return .trash(chosen, keptFirst: keptFirst) }
+            stayingProblem = stayingProblem ?? reason
+        }
+        return .hold("\(label): no copy that stays is the same any more (\(stayingProblem ?? "changed"))")
+    }
+
+    /// Every set's decision at once (tests and previews; Move to Trash uses `trashDuplicates`).
     static func planDuplicateTrash(_ sets: [DuplicateSet], selected: Set<String>,
                                    fingerprint: (URL) -> Fingerprint? = FileTools.fingerprint,
                                    hash: (URL) throws -> String) -> DuplicateTrashPlan {
         var plan = DuplicateTrashPlan()
         for (index, set) in sets.enumerated() {
-            var chosen = set.members.filter { selected.contains($0.url.path) }
-            guard !chosen.isEmpty else { continue }
-            var staying = set.members.filter { !selected.contains($0.url.path) }
-            if staying.isEmpty, let first = set.members.first {
-                staying = [first]
-                chosen.removeAll { $0.url == first.url }
-                plan.keptLast.append(first.url.lastPathComponent)
-                guard !chosen.isEmpty else { continue }
-            }
-            func problem(_ member: DuplicateSet.Member) -> String? {
-                guard let now = fingerprint(member.url) else { return "\(member.url.lastPathComponent) is gone or isn't a file any more" }
-                if now.identity != member.fingerprint.identity { return "\(member.url.lastPathComponent) was replaced by another file" }
-                if now.size != member.fingerprint.size || now.modified != member.fingerprint.modified {
-                    return "\(member.url.lastPathComponent) changed since the scan"
-                }
-                guard let digest = try? hash(member.url) else { return "\(member.url.lastPathComponent) couldn't be read" }
-                return digest == set.hash ? nil : "\(member.url.lastPathComponent)'s contents changed since the scan"
-            }
             let label = "Set \(index + 1)"
-            var chosenProblem: String?
-            for member in chosen where chosenProblem == nil { chosenProblem = problem(member) }
-            if let chosenProblem {
-                plan.held.append("\(label): \(chosenProblem)")
-                continue
+            switch decide(set, label: label, selected: selected, fingerprint: fingerprint, hash: hash) {
+            case .skip: break
+            case .hold(let reason): plan.held.append(reason)
+            case .trash(let members, let keptFirst):
+                if let keptFirst { plan.keptLast.append(keptFirst) }
+                plan.trash += members.map { CleanupCandidate(url: $0.url, size: $0.fingerprint.size, note: label) }
             }
-            var stayingProblem: String?
-            var anyStays = false
-            for member in staying where !anyStays {
-                if let reason = problem(member) { stayingProblem = stayingProblem ?? reason } else { anyStays = true }
-            }
-            guard anyStays else {
-                plan.held.append("\(label): no copy that stays is the same any more (\(stayingProblem ?? "changed"))")
-                continue
-            }
-            plan.trash += chosen.map { CleanupCandidate(url: $0.url, size: $0.fingerprint.size, note: label) }
         }
         return plan
+    }
+
+    struct DuplicateTrashResult: Equatable {
+        var moved: [URL] = []
+        var freed: Int64 = 0
+        var held: [String] = []
+        var keptLast: [String] = []
+        /// "name: reason" for copies the Trash refused.
+        var failures: [String] = []
+
+        /// 7.6 (Codex DT02): done only when nothing failed or was held.
+        var succeeded: Bool { held.isEmpty && failures.isEmpty }
+        var summary: String {
+            var text = "Moved \(moved.count) cop\(moved.count == 1 ? "y" : "ies") (\(SystemStatus.size(freed))) to the Trash"
+            if !keptLast.isEmpty { text += "; kept \(keptLast.prefix(3).joined(separator: ", ")) (every copy in its set was checked)" }
+            if !failures.isEmpty { text += "; \(failures.count) couldn't be moved: " + failures.prefix(3).joined(separator: "; ") }
+            if !held.isEmpty { text += "; \(held.count) set\(held.count == 1 ? "" : "s") held back — " + held.prefix(3).joined(separator: "; ") }
+            return text
+        }
+    }
+
+    /// 7.6 (Codex DT01): set by set, each checked and then moved straight
+    /// away, every copy's fingerprint read again (with the copy that stays)
+    /// just before it goes, so a long batch never acts on an old check.
+    static func trashDuplicates(_ sets: [DuplicateSet], selected: Set<String>,
+                                fingerprint: (URL) -> Fingerprint? = FileTools.fingerprint,
+                                hash: (URL) throws -> String,
+                                trash: (URL) throws -> Void) -> DuplicateTrashResult {
+        var result = DuplicateTrashResult()
+        for (index, set) in sets.enumerated() {
+            let label = "Set \(index + 1)"
+            switch decide(set, label: label, selected: selected, fingerprint: fingerprint, hash: hash) {
+            case .skip: continue
+            case .hold(let reason): result.held.append(reason)
+            case .trash(let members, let keptFirst):
+                if let keptFirst { result.keptLast.append(keptFirst) }
+                let staying = set.members.filter { member in !members.contains { $0.url == member.url } }
+                for member in members {
+                    // The copy that stays must still be there and unchanged right now.
+                    guard staying.contains(where: { fingerprint($0.url) == $0.fingerprint }) else {
+                        result.held.append("\(label): the copy that stays changed while the Trash was working")
+                        break
+                    }
+                    guard fingerprint(member.url) == member.fingerprint else {
+                        result.held.append("\(label): \(member.url.lastPathComponent) changed while the Trash was working")
+                        continue
+                    }
+                    do {
+                        try trash(member.url)
+                        result.moved.append(member.url)
+                        result.freed += member.fingerprint.size
+                    } catch {
+                        let reason = ((error as NSError).userInfo[NSUnderlyingErrorKey] as? NSError)?.localizedDescription ?? error.localizedDescription
+                        result.failures.append("\(member.url.lastPathComponent): \(reason)")
+                    }
+                }
+            }
+        }
+        return result
     }
 
     // MARK: Folder sizes

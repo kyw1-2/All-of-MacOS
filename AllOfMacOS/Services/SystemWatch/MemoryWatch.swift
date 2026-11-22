@@ -34,7 +34,11 @@ final class MemoryWatch {
     func stop() {
         timer?.invalidate()
         timer = nil
+        generation += 1
     }
+
+    /// 7.6 (Codex MW01): a check that finishes after Stop posts nothing.
+    private var generation = 0
 
     /// Pure: what to alert about. Pressure 2 is Warning, 4 Critical.
     nonisolated static func alerts(pressureLevel: Int?, swapUsed: UInt64?, swapLimit: UInt64) -> [Alert] {
@@ -54,14 +58,22 @@ final class MemoryWatch {
         guard !checking else { return }
         checking = true
         let limit = UInt64(Self.swapLimitGB * 1_073_741_824)
+        let generation = generation
+        // Which kinds may post now is decided first, so a quiet period reads no app list.
+        let now = Date()
+        let mayPost = (pressure: Self.shouldPost("pressure", now: now, last: lastPosted), swap: Self.shouldPost("swap", now: now, last: lastPosted))
         Task.detached(priority: .utility) {
             let memory = SystemStatus.memory()
             let swap = Self.swapUsed()
-            let alerts = Self.alerts(pressureLevel: memory?.pressureLevel, swapUsed: swap, swapLimit: limit)
+            let alerts = Self.alerts(pressureLevel: memory?.pressureLevel, swapUsed: swap, swapLimit: limit).filter {
+                switch $0 { case .pressure: return mayPost.pressure; case .swap: return mayPost.swap }
+            }
             let top = alerts.isEmpty ? [] : Self.topApps(3)
             await MainActor.run { [weak self] in
-                self?.checking = false
-                self?.post(alerts, top: top, pressure: memory?.pressure)
+                guard let self else { return }
+                self.checking = false
+                guard generation == self.generation, self.timer != nil else { return }
+                self.post(alerts, top: top, pressure: memory?.pressure)
             }
         }
     }

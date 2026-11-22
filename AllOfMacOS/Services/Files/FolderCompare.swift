@@ -39,6 +39,8 @@ enum FolderCompare {
         /// A folder's files and their total.
         var files = 1
         let fingerprint: FileTools.Fingerprint?
+        /// A missing folder's tree as compared.
+        var signature: TreeSignature? = nil
     }
 
     struct Item: Identifiable, Equatable {
@@ -106,16 +108,18 @@ enum FolderCompare {
         var cancelled = false
         let volumes = (volume(left), volume(right))
 
-        func walk(_ l: URL?, _ r: URL?, relative: String) {
+        // 7.6 (Codex FC04): `relative` is the matching key; `display` keeps
+        // the folders' own spelling for the rows.
+        func walk(_ l: URL?, _ r: URL?, relative: String, display: String) {
             if cancelled || isCancelled() { cancelled = true; return }
-            progress(relative.isEmpty ? "/" : relative)
+            progress(display.isEmpty ? "/" : display)
             let leftList = l.map(list), rightList = r.map(list)
             if case .failure? = leftList, let l {
-                items.append(Item(id: relative, path: relative, left: side(l), right: r.flatMap(side), status: .problem, note: "The left folder couldn't be read"))
+                items.append(Item(id: relative, path: display, left: side(l), right: r.flatMap(side), status: .problem, note: "The left folder couldn't be read"))
                 return
             }
             if case .failure? = rightList, let r {
-                items.append(Item(id: relative, path: relative, left: l.flatMap(side), right: side(r), status: .problem, note: "The right folder couldn't be read"))
+                items.append(Item(id: relative, path: display, left: l.flatMap(side), right: side(r), status: .problem, note: "The right folder couldn't be read"))
                 return
             }
             let leftNames = (try? leftList?.get()) ?? [], rightNames = (try? rightList?.get()) ?? []
@@ -127,7 +131,7 @@ enum FolderCompare {
                 if cancelled { return }
                 let ls = leftByKey[name] ?? [], rs = rightByKey[name] ?? []
                 let id = relative.isEmpty ? name : relative + "/" + name
-                let shown = (ls.first ?? rs.first).map { (relative.isEmpty ? "" : relative + "/") + $0.lastPathComponent } ?? id
+                let shown = (ls.first ?? rs.first).map { (display.isEmpty ? "" : display + "/") + $0.lastPathComponent } ?? id
                 // Two names that differ only in case on a case-sensitive side.
                 if ls.count > 1 || rs.count > 1 {
                     items.append(Item(id: id, path: shown, left: ls.first.flatMap(side), right: rs.first.flatMap(side), status: .problem,
@@ -136,18 +140,29 @@ enum FolderCompare {
                 }
                 let lu = ls.first, ru = rs.first
                 let lv = lu.flatMap(side), rv = ru.flatMap(side)
+                // 7.6 (Codex FC03): listed but its details couldn't be read is not "missing".
+                if (lu != nil && lv == nil) || (ru != nil && rv == nil) {
+                    items.append(Item(id: id, path: shown, left: lv, right: rv, status: .problem,
+                                      note: "\(lu != nil && lv == nil ? "The left" : "The right") item's details couldn't be read"))
+                    continue
+                }
                 switch (lv, rv) {
                 case let (lv?, rv?):
                     let renamed = lu!.lastPathComponent != ru!.lastPathComponent ? "Named “\(ru!.lastPathComponent)” on the right" : nil
                     if lv.isLink || rv.isLink {
-                        let same = lv.isLink && rv.isLink && linkTarget(lu!) == linkTarget(ru!)
-                        items.append(Item(id: id, path: shown, left: lv, right: rv, status: same ? .same : .differs,
-                                          note: same ? renamed : "Links are compared by where they point"))
+                        let targets = (lv.isLink ? linkTarget(lu!) : nil, rv.isLink ? linkTarget(ru!) : nil)
+                        if lv.isLink, rv.isLink, targets.0 == nil || targets.1 == nil {
+                            items.append(Item(id: id, path: shown, left: lv, right: rv, status: .problem, note: "Where a link points couldn't be read"))
+                        } else {
+                            let same = lv.isLink && rv.isLink && targets.0 == targets.1
+                            items.append(Item(id: id, path: shown, left: lv, right: rv, status: same ? .same : .differs,
+                                              note: same ? renamed : "Links are compared by where they point"))
+                        }
                     } else if lv.isFolder && rv.isFolder {
                         if volume(lu!) != volumes.0 || volume(ru!) != volumes.1 {
                             items.append(Item(id: id, path: shown, left: lv, right: rv, status: .problem, note: "On another volume; not compared"))
                         } else {
-                            walk(lu, ru, relative: id)
+                            walk(lu, ru, relative: id, display: shown)
                         }
                     } else if lv.isFolder != rv.isFolder {
                         items.append(Item(id: id, path: shown, left: lv, right: rv, status: .problem,
@@ -177,7 +192,7 @@ enum FolderCompare {
             }
         }
 
-        walk(left, right, relative: "")
+        walk(left, right, relative: "", display: "")
         // Same-size files: the contents decide.
         for index in items.indices where items[index].status == .same {
             if cancelled || isCancelled() { cancelled = true; break }
@@ -211,18 +226,35 @@ enum FolderCompare {
                     isFolder: !isLink && values.isDirectory == true, isLink: isLink, fingerprint: FileTools.fingerprint(url))
     }
 
+    /// A folder's files and their total, plus a signature of the tree
+    /// (count, bytes, newest change, the folder's own identity) that copying
+    /// checks again (7.6, Codex FC01).
     private static func folderTotals(_ side: Side) -> Side {
-        var copy = side
+        let tree = treeSignature(side.url)
+        var copy = Side(url: side.url, size: tree.bytes, modified: side.modified, isFolder: true, isLink: false,
+                        files: tree.files, fingerprint: side.fingerprint)
+        copy.signature = tree
+        return copy
+    }
+
+    struct TreeSignature: Equatable {
+        var identity: String?
         var files = 0
         var bytes: Int64 = 0
-        let enumerator = FileManager.default.enumerator(at: side.url, includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey], options: [])
+        var newest: TimeInterval = 0
+    }
+
+    static func treeSignature(_ folder: URL) -> TreeSignature {
+        var signature = TreeSignature(identity: FileTools.anyIdentity(folder))
+        let keys: [URLResourceKey] = [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey]
+        let enumerator = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: keys, options: [])
         while let url = enumerator?.nextObject() as? URL {
-            guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]), values.isRegularFile == true else { continue }
-            files += 1
-            bytes += Int64(values.fileSize ?? 0)
+            guard let values = try? url.resourceValues(forKeys: Set(keys)), values.isRegularFile == true else { continue }
+            signature.files += 1
+            signature.bytes += Int64(values.fileSize ?? 0)
+            signature.newest = max(signature.newest, values.contentModificationDate?.timeIntervalSince1970 ?? 0)
         }
-        copy.files = files
-        return Side(url: copy.url, size: bytes, modified: copy.modified, isFolder: true, isLink: false, files: files, fingerprint: copy.fingerprint)
+        return signature
     }
 
     private static func volume(_ url: URL) -> String {
@@ -282,12 +314,18 @@ enum FolderCompare {
                 result.skipped[item.id] = "Not missing on the other side"
                 continue
             }
-            if !source.isFolder, FileTools.fingerprint(source.url) != source.fingerprint {
-                result.skipped[item.id] = "Changed since the comparison; compare again"
+            // A file must still be the one compared (no fingerprint, no copy);
+            // a folder its own identity with the same files (Codex FC01).
+            if !source.isFolder {
+                guard let then = source.fingerprint, FileTools.fingerprint(source.url) == then else {
+                    result.skipped[item.id] = "Changed since the comparison; compare again"
+                    continue
+                }
+            } else if let then = source.signature, treeSignature(source.url) != then {
+                result.skipped[item.id] = "The folder changed since the comparison; compare again"
                 continue
-            }
-            if source.isFolder, !FileManager.default.fileExists(atPath: source.url.path) {
-                result.skipped[item.id] = "Gone since the comparison"
+            } else if source.signature == nil {
+                result.skipped[item.id] = "Compare again before copying this folder"
                 continue
             }
             let destination = parent.appendingPathComponent(source.url.lastPathComponent)
@@ -297,7 +335,13 @@ enum FolderCompare {
             }
             let temporary = parent.appendingPathComponent(".aom-copy-\(UUID().uuidString)")
             do {
-                try FileManager.default.copyItem(at: source.url, to: temporary)
+                if source.isFolder {
+                    // File by file, so Stop works inside a big folder (Codex FC02).
+                    try copyTree(source.url, to: temporary, isCancelled: isCancelled)
+                } else {
+                    try FileManager.default.copyItem(at: source.url, to: temporary)
+                }
+                if isCancelled() { throw CancellationError() }
                 if renamex_np(temporary.path, destination.path, UInt32(RENAME_EXCL)) != 0 {
                     let code = errno
                     if (code == ENOTSUP || code == EXDEV), !FolderRulesSafety.exists(destination.path) {
@@ -311,11 +355,41 @@ enum FolderCompare {
                 }
                 result.copied.append(item.id)
                 result.written.append(destination)
+            } catch is CancellationError {
+                try? FileManager.default.removeItem(at: temporary)
+                result.cancelled = true
+                break
             } catch {
                 try? FileManager.default.removeItem(at: temporary)
                 result.skipped[item.id] = (error as NSError).localizedDescription
             }
         }
         return result
+    }
+
+    /// Copies a folder tree into `destination` (which must not exist): folders
+    /// made, files copied, links copied as links, another volume not entered;
+    /// Stop is checked before each item.
+    static func copyTree(_ source: URL, to destination: URL, isCancelled: () -> Bool) throws {
+        try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: false)
+        let device = volume(source)
+        let base = source.standardizedFileURL.path
+        guard let enumerator = FileManager.default.enumerator(at: source, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+                                                              options: []) else { return }
+        while let url = enumerator.nextObject() as? URL {
+            if isCancelled() { throw CancellationError() }
+            let path = url.standardizedFileURL.path
+            guard path.hasPrefix(base + "/") else { continue }
+            let target = destination.appendingPathComponent(String(path.dropFirst(base.count + 1)))
+            let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+            if values?.isSymbolicLink == true {
+                try FileManager.default.createSymbolicLink(atPath: target.path, withDestinationPath: try FileManager.default.destinationOfSymbolicLink(atPath: url.path))
+            } else if values?.isDirectory == true {
+                if volume(url) != device { enumerator.skipDescendants(); continue }
+                try FileManager.default.createDirectory(at: target, withIntermediateDirectories: false)
+            } else {
+                try FileManager.default.copyItem(at: url, to: target)
+            }
+        }
     }
 }
