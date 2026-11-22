@@ -1,6 +1,6 @@
 ## [7.6.0] - 2026-11-22
 
-Codex's audit of 7.5 is fixed where it found data, privacy or wrong-target risks, and four of its menu bar ideas are added: weather in the menu bar, a strip of every menu bar icon, an always-hidden section, and a way to mark an audio glitch so the next crackle can be explained. Details: `docs/design-7.6.md`.
+Codex's audit of 7.5 is fixed where it found data, privacy or wrong-target risks, and four of its menu bar ideas are added: weather in the menu bar, a strip of every menu bar icon, an always-hidden section, and a way to mark an audio glitch so the next crackle can be explained. A Gemini review of the whole change was checked against the code: its confirmed points are fixed and three claims were disproved. Details: `docs/design-7.6.md`.
 
 ### Safer file tools
 - **Duplicates** move set by set, each copy checked again just before it goes together with the copy that stays; a batch that hits a refused move or a changed set is never reported as done.
@@ -18,10 +18,10 @@ Codex's audit of 7.5 is fixed where it found data, privacy or wrong-target risks
 - **aom:// links** ask before running an automation: Run Once, Always Allow or Don't Run. "Forget Link Permissions" in the launcher resets the answers.
 
 ### New
-- **Menu Bar Weather** (Settings › General › Modules): the temperature of a city you choose, with feels-like, today's low and high, rain chance and the time of the reading a click away. Celsius or Fahrenheit, temperature, feels-like or icon only. No location or other permission; data by Open-Meteo.
-- **Menu Bar Strip**: every menu bar icon AOM can reach in one row under the menu bar of the display you're on — the ones hidden behind the notch or by the Hider first. ← → and ↩ open one; esc closes. In the launcher, the menu's More, and as an action you can give a shortcut.
-- **Always-Hidden Section**: right-click the Hider's chevron to add a second, fainter divider. Items left of it stay hidden when the chevron shows the others; ⌥-click shows everything.
-- **I Just Heard a Glitch** (the menu while App Audio runs, the launcher, an action): marks the moment and saves what AOM saw ten seconds before and after — output gaps with their measured cause (a late callback, the app's audio coming short, or the output clock jumping), overloads, the routes playing and the system load — to Diagnostics/audio-marks. Playback isn't touched.
+- **Menu Bar Weather** (Settings › General › Modules): the temperature of a city you choose, with feels-like, today's low and high, rain chance and the time of the reading a click away. Celsius or Fahrenheit, temperature, feels-like or icon only. The menu also shows the next six hours ("Next 6 h: 3° → -1° · rain up to 40%") and switches between your last three cities. No location or other permission; data by Open-Meteo.
+- **Menu Bar Strip**: every menu bar icon AOM can reach in one row under the menu bar of the display you're on — the ones hidden behind the notch or by the Hider first. ← → and ↩ open one, 1–9 open the first nine, esc or a click elsewhere closes. In the launcher, the menu's More, and as an action you can give a shortcut.
+- **Always-Hidden Section**: right-click the Hider's chevron to add a second, fainter divider. Items left of it stay hidden when the chevron shows the others; ⌥-click shows everything. Turning it on shows both dividers until you click the chevron, so the new one can be dragged into place; "Keep Open Until I Click" holds the items open while you sort them.
+- **I Just Heard a Glitch** (the menu while App Audio runs, the launcher, an action): marks the moment and saves what AOM saw ten seconds before and after — output gaps with their measured cause (a late callback, the app's audio coming short, or the output clock jumping), overloads, the routes playing and the system load — to Diagnostics/audio-marks, read again ten seconds later so the file shows what changed. "Reveal Last Glitch Mark" opens the newest. Playback isn't touched.
 
 ### Removed
 - Three unused functions the audit found (an old force-quit path, an activation-group overload, the manual trigger reordering chain).
