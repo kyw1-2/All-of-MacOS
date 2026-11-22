@@ -13,6 +13,7 @@ Codex's spec for the menu bar and the window (기능명세서, 2026-11-22) is im
 ### AOM's menu, your way (ME-01…03)
 - **Edit Menu…** (in the icon's menu, the panel's pencil, or Menu Bar › AOM menu) arranges the **right-click menu** — commands, separators, groups, renamed items, named menu bar items, Scenes — and the **click panel's** quick commands, 1–4 a row with the rest under More. The first draft starts from Workspace's quick actions; nothing runs while editing; Apply saves it all at once, Cancel and Restore Default put things back, and two editors can't overwrite each other.
 - All Commands (the full menu), Edit Menu… and Quit always follow your items, and a running recording's Stop comes first.
+- In the launcher: **Edit AOM Menu** and **Show All Hidden Menu Bar Icons** (both Hider sections, from any screen).
 
 ### Menu Bar Hider (HB-01)
 - Shown items no longer hide while you're using the menu bar: the pointer on it, any app's menu open or a mouse button held (a ⌘-drag) starts the countdown again from the full time.

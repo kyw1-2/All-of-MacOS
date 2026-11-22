@@ -598,6 +598,11 @@ struct QuickCommandPalette: View {
                 keywords: "crackle glitch noise airplay homepod audio mark 지지직 잡음 끊김 표시") { AudioGlitchMarker.mark() }
         command("audio.mark.reveal", "Reveal Last Glitch Mark", "The newest audio-marks file in Finder · 잡음 기록 보기", "doc.text.magnifyingglass",
                 keywords: "glitch mark file audio diagnostics finder 잡음 기록") { AudioGlitchMarker.revealLast() }
+        // 7.8 (Codex HB-03, ME-01): reveal everything from anywhere, and the menu editor.
+        command("menubar.revealAll", "Show All Hidden Menu Bar Icons", "Both Hider sections, until you hide them again · 숨긴 아이콘 모두 보기", "chevron.left.2",
+                keywords: "hider hidden bar reveal show all icons 숨김 해제 전체 펼치기 메뉴바") { MenuBarHider.shared.expand(all: true) }
+        command("menubar.editMenu", "Edit AOM Menu", "AOM's right-click menu and click panel, in your order · 메뉴 편집", "slider.horizontal.below.rectangle",
+                keywords: "status menu panel customize reorder quick actions 메뉴 편집 순서 상태 메뉴") { AOMMenuEditorNavigation.open() }
         // 7.6 (Codex SEC04): aom://trigger links ask again.
         command("links.forget", "Forget Link Permissions", "aom:// links ask again before running an automation · 링크 권한 초기화", "link.badge.plus",
                 keywords: "aom link url scheme trigger permission allow reset 링크 권한") { AOMLinkConsent.forgetAll() }
