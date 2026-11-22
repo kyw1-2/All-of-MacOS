@@ -12,32 +12,61 @@ struct PDFCompareSync: Equatable {
     var counts: [Side: Int] = [:]
     /// 0-based page each side shows.
     var pages: [Side: Int] = [.left: 0, .right: 0]
-    var linked = true
+    /// Pages are linked with the distance they had when linking went on
+    /// (Gemini 7.5 idea: a revised contract with one more cover page links
+    /// its page 3 to the draft's page 2). 0 = the same page numbers.
+    private(set) var offset = 0
+    var linked = true {
+        didSet { if linked, !oldValue { offset = (pages[.right] ?? 0) - (pages[.left] ?? 0) } }
+    }
 
     static func other(_ side: Side) -> Side { side == .left ? .right : .left }
 
+    /// The page on `side` that goes with `page` on the other side.
+    private func counterpart(of page: Int, from side: Side) -> Int { side == .left ? page + offset : page - offset }
+
     /// Pure: one side went to `page`; with the pages linked the other side
-    /// follows to the same page number when it has it, and stays put when
-    /// it doesn't (it then says it has no such page).
+    /// follows to the linked page when it has it, and stays put when it
+    /// doesn't (it then says it has no such page).
     mutating func move(_ side: Side, to page: Int) {
         guard let count = counts[side], count > 0 else { return }
         pages[side] = min(max(0, page), count - 1)
         guard linked else { return }
         let other = Self.other(side)
-        if let otherCount = counts[other], let target = pages[side], target < otherCount { pages[other] = target }
+        let target = counterpart(of: pages[side] ?? 0, from: side)
+        if let otherCount = counts[other], target >= 0, target < otherCount { pages[other] = target }
     }
 
-    /// "No page 7 here · this PDF has 5" when linked and the other side is past this side's end.
+    /// "No page 7 here · this PDF has 5" when linked and the page that goes
+    /// with the other side's is past this side's end (or before its start).
     func missingPage(on side: Side) -> String? {
-        guard linked, let count = counts[side], let page = pages[Self.other(side)], counts[Self.other(side)] != nil, page >= count else { return nil }
-        return "No page \(page + 1) here · this PDF has \(count) page\(count == 1 ? "" : "s")"
+        let other = Self.other(side)
+        guard linked, let count = counts[side], let page = pages[other], counts[other] != nil else { return nil }
+        let wanted = counterpart(of: page, from: other)
+        guard wanted >= count || wanted < 0 else { return nil }
+        return "No page \(wanted + 1) here · this PDF has \(count) page\(count == 1 ? "" : "s")"
     }
+
+    /// "Linked +1": shown when the sides are linked a page apart.
+    var offsetLabel: String? { linked && offset != 0 ? "Right is \(offset > 0 ? "+" : "")\(offset) page\(abs(offset) == 1 ? "" : "s")" : nil }
 
     /// Pure: the documents trade places, each keeping its page.
     mutating func swap() {
         let left = (counts[.left], pages[.left]), right = (counts[.right], pages[.right])
         counts[.left] = right.0; pages[.left] = right.1
         counts[.right] = left.0; pages[.right] = left.1
+        offset = -offset
+    }
+
+    /// Pure: the two pages' text with spacing evened out, compared (nil when a side has no text layer).
+    static func sameText(_ a: String?, _ b: String?) -> Bool? {
+        func normalized(_ text: String?) -> String? {
+            guard let text else { return nil }
+            let words = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            return words.isEmpty ? nil : words.precomposedStringWithCanonicalMapping
+        }
+        guard let x = normalized(a), let y = normalized(b) else { return nil }
+        return x == y
     }
 }
 
@@ -97,6 +126,13 @@ final class PDFCompareModel: ObservableObject {
     func step(_ side: PDFCompareSync.Side, by delta: Int) {
         sync.move(side, to: (sync.pages[side] ?? 0) + delta)
     }
+
+    /// Whether the two pages shown hold the same text (spacing ignored).
+    var pagesMatch: Bool? {
+        guard let left = pane(.left).document, let right = pane(.right).document, !pane(.left).locked, !pane(.right).locked,
+              let l = left.page(at: sync.pages[.left] ?? 0), let r = right.page(at: sync.pages[.right] ?? 0) else { return nil }
+        return PDFCompareSync.sameText(l.string, r.string)
+    }
 }
 
 struct PDFCompareView: View {
@@ -111,6 +147,16 @@ struct PDFCompareView: View {
                     .help("Linked: turning a page on one side shows the same page number on the other (⌘L)")
                 Button { model.swap() } label: { Label("Swap Sides", systemImage: "arrow.left.arrow.right") }
                     .keyboardShortcut("s", modifiers: [.command, .shift])
+                if let offset = model.sync.offsetLabel {
+                    Text(offset).font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
+                        .help("Linking keeps the distance the pages had when you turned it on; turn Link Pages off and on to set it again")
+                }
+                if let same = model.pagesMatch {
+                    Label(same ? "Same text on these pages" : "The text differs on these pages",
+                          systemImage: same ? "equal.circle" : "notequal.circle")
+                        .font(AOMFont.callout)
+                        .foregroundStyle(same ? AOMColor.successText : AOMColor.warningText)
+                }
                 Spacer()
                 Text("Read only: neither PDF is changed").font(AOMFont.caption).foregroundStyle(AOMColor.textTertiary)
             }
@@ -172,6 +218,7 @@ private struct PDFComparePane: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if let document = pane.document {
                     PDFCompareKitView(document: document, page: model.sync.pages[side] ?? 0) { model.sync.move(side, to: $0) }
+                        .id(ObjectIdentifier(document))
                     if let missing = model.sync.missingPage(on: side) {
                         Label(missing, systemImage: "doc.badge.ellipsis")
                             .font(AOMFont.callout)
@@ -190,6 +237,8 @@ private struct PDFComparePane: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(maxWidth: .infinity)
+        // Another PDF on this side (Open…, Swap Sides) starts with an empty password field.
+        .onChange(of: pane.url) { _, _ in password = ""; wrongPassword = false }
     }
 
     private func unlock() {
@@ -212,32 +261,40 @@ private struct PDFCompareKitView: NSViewRepresentable {
         view.autoScales = true
         view.displaysPageBreaks = true
         view.backgroundColor = .underPageBackgroundColor
-        view.document = document
         context.coordinator.observe(view)
+        // Setting the document reports page 1; that report isn't the user's move.
+        context.coordinator.hold {
+            view.document = document
+            if page > 0, let target = document.page(at: page) { view.go(to: target) }
+        }
         return view
     }
 
     func updateNSView(_ view: PDFView, context: Context) {
         context.coordinator.changed = changed
-        if view.document !== document {
-            view.document = document
-        }
-        guard let target = document.page(at: page), let current = view.currentPage, document.index(for: current) != page else { return }
-        context.coordinator.moving = true
-        view.go(to: target)
-        context.coordinator.moving = false
+        guard let target = document.page(at: page) else { return }
+        if let current = view.currentPage, document.index(for: current) == page { return }
+        context.coordinator.hold { view.go(to: target) }
     }
 
     final class Coordinator: NSObject {
         var changed: (Int) -> Void
-        var moving = false
+        private var moving = 0
         private var token: NSObjectProtocol?
+
+        /// Runs a move the model asked for; page reports until the next run
+        /// loop turn (PDFKit may post them late) are not passed on.
+        func hold(_ move: () -> Void) {
+            moving += 1
+            move()
+            DispatchQueue.main.async { self.moving -= 1 }
+        }
 
         init(changed: @escaping (Int) -> Void) { self.changed = changed }
 
         func observe(_ view: PDFView) {
             token = NotificationCenter.default.addObserver(forName: .PDFViewPageChanged, object: view, queue: .main) { [weak self, weak view] _ in
-                guard let self, !self.moving, let view, let page = view.currentPage, let document = view.document else { return }
+                guard let self, self.moving == 0, let view, let page = view.currentPage, let document = view.document else { return }
                 let index = document.index(for: page)
                 DispatchQueue.main.async { self.changed(index) }
             }

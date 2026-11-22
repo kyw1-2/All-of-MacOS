@@ -120,11 +120,17 @@ enum AOMRadios {
             // A radio still waiting to come back from the last time counts as on.
             let record = Saved(wifi: wifi || (before?.wifi ?? false), bluetooth: bluetooth || (before?.bluetooth ?? false))
             if before == nil || wifi || bluetooth { radios.store(record) }
+            // Only radios that are on are switched (Gemini 7.5 review: a radio
+            // that was already off doesn't count as turned off, and isn't asked).
             var turnedOff = 0
-            if let problem = radios.setWiFi(false) { outcome.problems.append(problem) }
-            if settle(radios.wifiOn, false) { turnedOff += 1 } else { outcome.pending.append("Wi-Fi") }
-            if !radios.setBluetooth(false) { outcome.problems.append("Bluetooth power isn't available") }
-            if settle(radios.bluetoothOn, false) { turnedOff += 1 } else { outcome.pending.append("Bluetooth") }
+            if wifi {
+                if let problem = radios.setWiFi(false) { outcome.problems.append(problem) }
+                if settle(radios.wifiOn, false) { turnedOff += 1 } else { outcome.pending.append("Wi-Fi") }
+            }
+            if bluetooth {
+                if !radios.setBluetooth(false) { outcome.problems.append("Bluetooth power isn't available") }
+                if settle(radios.bluetoothOn, false) { turnedOff += 1 } else { outcome.pending.append("Bluetooth") }
+            }
             // Nothing turned off: Airplane Mode didn't start, so nothing to restore.
             if turnedOff == 0, wifi || bluetooth { radios.store(before) }
         } else {
@@ -144,10 +150,11 @@ enum AOMRadios {
 
     private static let airplaneQueue = DispatchQueue(label: "aom.radios.airplane", qos: .userInitiated)
 
-    /// One change at a time, off main; `done` on main.
-    static func setAirplaneModeInBackground(_ on: Bool, done: @escaping @MainActor (AirplaneOutcome) -> Void) {
+    /// One change at a time, off main; `done` on main. `on` nil toggles,
+    /// decided on the queue so two quick presses don't both turn it on.
+    static func setAirplaneModeInBackground(_ on: Bool?, done: @escaping @MainActor (AirplaneOutcome) -> Void) {
         airplaneQueue.async {
-            let outcome = setAirplaneMode(on)
+            let outcome = setAirplaneMode(on ?? !airplaneOn)
             DispatchQueue.main.async { MainActor.assumeIsolated { done(outcome) } }
         }
     }

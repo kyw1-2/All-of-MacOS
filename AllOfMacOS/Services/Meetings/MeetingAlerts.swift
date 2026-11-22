@@ -30,6 +30,8 @@ final class MeetingAlerts: NSObject {
     private var feed: [PaletteSchedule.Event] = []
     private var feedLoadedAt: Date?
     private var feedLoading = false
+    /// The calendar changed while a read was running: read again when it ends.
+    private var feedStale = false
     private var storeObserver: NSObjectProtocol?
 
     func start() {
@@ -47,7 +49,7 @@ final class MeetingAlerts: NSObject {
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
         storeObserver = NotificationCenter.default.addObserver(forName: .EKEventStoreChanged, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.feedLoadedAt = nil; self?.tick() }
+            MainActor.assumeIsolated { self?.feedLoadedAt = nil; self?.feedStale = true; self?.tick() }
         }
         tick()
     }
@@ -117,6 +119,7 @@ final class MeetingAlerts: NSObject {
     private func refreshFeed(now: Date) {
         guard !feedLoading else { return }
         feedLoading = true
+        feedStale = false
         let range = Self.feedRange(now: now)
         Task { [weak self] in
             let events = await PaletteSchedule.shared.events(from: range.start, to: range.end)
@@ -124,7 +127,8 @@ final class MeetingAlerts: NSObject {
             self.feedLoading = false
             guard self.timer != nil else { return }
             self.feed = events ?? []
-            self.feedLoadedAt = Date()
+            // A change that came in during this read is read now, not in five minutes.
+            self.feedLoadedAt = self.feedStale ? nil : Date()
             self.tick()
         }
     }

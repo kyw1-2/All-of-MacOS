@@ -146,10 +146,19 @@ enum PaletteBrowserTabs {
             }
             """
         } else {
+            // No tab ids (Safari): the window by its id when known, then the
+            // address checked at the position just read, else looked up in that window.
+            let windowID = tab.windowID.map(jsString) ?? "null"
             find = """
             const all = app.windows();
-            const w = all.length >= \(tab.window) ? all[\(tab.window - 1)] : null;
-            const k = \(tab.index - 1);
+            let w = null, k = -1;
+            if (\(windowID) !== null) { for (const c of all) { try { if (String(c.id()) === \(windowID)) { w = c; break; } } catch (e) {} } }
+            if (w === null && \(windowID) === null && all.length >= \(tab.window)) { w = all[\(tab.window - 1)]; }
+            if (w !== null) {
+              let urls = [];
+              try { urls = w.tabs.url(); } catch (e) {}
+              k = urls[\(tab.index - 1)] === \(jsString(tab.url)) ? \(tab.index - 1) : urls.indexOf(\(jsString(tab.url)));
+            }
             """
         }
         let show: String
@@ -222,8 +231,8 @@ enum PaletteBrowserTabs {
             switch self {
             case .shown(nil): return nil
             case .shown(let host?): return "That tab now shows \(host)"
-            case .closed: return "That tab was closed; the list is read again"
-            case .ambiguous(let count): return "\(count) open tabs show that address; pick one from the fresh list"
+            case .closed: return "That tab is closed now"
+            case .ambiguous(let count): return "\(count) open tabs show that address; open Browser Tabs again to pick one"
             case .failed(let reason): return "Couldn't show the tab: \(reason)"
             }
         }

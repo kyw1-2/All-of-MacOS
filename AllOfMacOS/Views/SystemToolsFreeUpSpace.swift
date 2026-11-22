@@ -59,6 +59,8 @@ struct FreeUpSpaceSheet: View {
         .background(AOMColor.canvas)
         .aomToast(model.toasts)
         .onExitCommand { dismiss() }
+        // Closing the sheet stops a measurement still running.
+        .onDisappear { model.storageMap?.cancel() }
     }
 }
 

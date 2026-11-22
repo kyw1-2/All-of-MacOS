@@ -644,4 +644,71 @@ final class AOM75Tests: XCTestCase {
         XCTAssertEqual(FolderCompare.key("한글", ignoresCase: false), "한글".precomposedStringWithCanonicalMapping)
         XCTAssertNotEqual(FolderCompare.key("A", ignoresCase: false), FolderCompare.key("a", ignoresCase: false))
     }
+
+    // MARK: Gemini 7.5 review, checked against the code
+
+    func testReviewAirplaneOnWithOneRadioOffRollsBackWhenNothingTurnedOff() {
+        let fake = FakeRadios()
+        fake.wifi = true; fake.bluetooth = false
+        fake.wifiFails = true
+        let outcome = AOMRadios.setAirplaneMode(true, radios: fake.radios)
+        XCTAssertEqual(outcome.pending, ["Wi-Fi"])
+        XCTAssertFalse(outcome.problems.contains { $0.contains("Bluetooth") }, "Bluetooth was off and isn't asked")
+        XCTAssertNil(fake.saved, "nothing turned off, so nothing to restore later")
+    }
+
+    func testReviewSnippetTrailingBreakSharedFieldsAndCRLF() throws {
+        let tail = try SnippetTemplate.parse("Body\n{optional:PS|off}\nP.S. {arg:x}\n{/optional}").get()
+        XCTAssertEqual(SnippetTemplate.render(tail).text, "Body", "no Return typed at the end")
+        XCTAssertEqual(SnippetTemplate.render(tail, context: .init(arguments: ["PS": "1", "x": "hi"])).text, "Body\nP.S. hi")
+        XCTAssertEqual(SnippetTemplate.render(try SnippetTemplate.parse("Line\n{optional:A}\nX\n{/optional}\n").get()).text, "Line\nX\n",
+                       "a template ending with a line break keeps it")
+        let shared = try SnippetTemplate.parse("{optional:A}a {arg:who}{/optional}{optional:B}b {arg:who}{/optional}").get()
+        let fields = SnippetTemplate.fields(shared)
+        XCTAssertEqual(fields.first { $0.name == "who" }?.sections, ["A", "B"])
+        var request = PaletteSnippetForm.Request(snippetID: UUID(), fields: fields)
+        request.answer(SnippetField.off)   // A
+        XCTAssertEqual(request.currentName, "who", "B may still be in")
+        var both = PaletteSnippetForm.Request(snippetID: UUID(), fields: [fields[0], fields[2], fields[1]])
+        both.answer(SnippetField.off); both.answer(SnippetField.off)
+        XCTAssertTrue(both.isComplete, "both sections left out: who isn't asked")
+        let crlf = try SnippetTemplate.parse("Hi\r\n{optional:S}\r\nKim\r\n{/optional}\r\nBye").get()
+        XCTAssertEqual(SnippetTemplate.render(crlf, context: .init(arguments: ["S": "0"])).text, "Hi\r\nBye")
+    }
+
+    func testReviewPDFOffsetLinkingAndSameText() {
+        var sync = PDFCompareSync(counts: [.left: 8, .right: 9], linked: false)
+        sync.move(.right, to: 1)                     // the revision has one more cover page
+        sync.linked = true
+        XCTAssertEqual(sync.offsetLabel, "Right is +1 page")
+        sync.move(.left, to: 4)
+        XCTAssertEqual(sync.pages[.right], 5)
+        sync.move(.left, to: 7)
+        XCTAssertEqual(sync.pages[.right], 8)
+        sync.swap()
+        XCTAssertEqual(sync.offsetLabel, "Right is -1 page")
+        XCTAssertEqual(PDFCompareSync.sameText("A  contract\nclause 1", "A contract clause 1"), true)
+        XCTAssertEqual(PDFCompareSync.sameText("clause 1", "clause 2"), false)
+        XCTAssertNil(PDFCompareSync.sameText("", "x"), "a scanned page has no text to compare")
+    }
+
+    func testReviewZipLinkInsideDestinationIsNotFollowed() throws {
+        let zip = scratch.appendingPathComponent("one.zip")
+        try storedZip([("ok/fine.txt", Data("fine".utf8), 0)], at: zip)
+        let out = scratch.appendingPathComponent("dest", isDirectory: true)
+        try FileManager.default.createDirectory(at: out.appendingPathComponent("other"), withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: out.appendingPathComponent("ok"), withDestinationURL: out.appendingPathComponent("other"))
+        let outcome = ZipArchive.extract(try ZipArchive.entries(of: zip), from: zip, into: out)
+        XCTAssertTrue(outcome.written.isEmpty)
+        XCTAssertTrue(outcome.failures.first?.contains("link") ?? false, "\(outcome.failures)")
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: out.appendingPathComponent("other").path), [])
+    }
+
+    func testReviewSquarifySliverAndRootNesting() throws {
+        let rects = StorageMap.squarify([1e12, 1, 1, 1], in: CGRect(x: 0, y: 0, width: 300, height: 200))
+        XCTAssertTrue(rects.allSatisfy { $0.width.isFinite && $0.height.isFinite && $0.width >= 0 && $0.height >= 0 })
+        XCTAssertThrowsError(try FolderCompare.compare(URL(fileURLWithPath: "/"), scratch)) {
+            XCTAssertEqual($0 as? FolderCompare.Failure, .nested, "/ holds every folder")
+        }
+    }
 }

@@ -99,7 +99,8 @@ enum FolderCompare {
         }
         let a = left.resolvingSymlinksInPath().standardizedFileURL.path, b = right.resolvingSymlinksInPath().standardizedFileURL.path
         guard a != b else { throw Failure.sameFolder }
-        guard !a.hasPrefix(b + "/"), !b.hasPrefix(a + "/") else { throw Failure.nested }
+        func inside(_ path: String, _ folder: String) -> Bool { path.hasPrefix(folder.hasSuffix("/") ? folder : folder + "/") }
+        guard !inside(a, b), !inside(b, a) else { throw Failure.nested }
         let ignoresCase = !(caseSensitive(left) && caseSensitive(right))
         var items: [Item] = []
         var cancelled = false
@@ -157,11 +158,19 @@ enum FolderCompare {
                                           note: renamed))
                     }
                 case let (lv?, nil):
-                    items.append(Item(id: id, path: shown, left: lv.isFolder ? folderTotals(lv) : lv, right: nil, status: .leftOnly,
-                                      note: lv.isLink ? "A link; links aren't copied" : nil, otherParent: r))
+                    if lv.isFolder, volume(lu!) != volumes.0 {
+                        items.append(Item(id: id, path: shown, left: lv, right: nil, status: .problem, note: "On another volume; not compared or copied"))
+                    } else {
+                        items.append(Item(id: id, path: shown, left: lv.isFolder ? folderTotals(lv) : lv, right: nil, status: .leftOnly,
+                                          note: lv.isLink ? "A link; links aren't copied" : nil, otherParent: r))
+                    }
                 case let (nil, rv?):
-                    items.append(Item(id: id, path: shown, left: nil, right: rv.isFolder ? folderTotals(rv) : rv, status: .rightOnly,
-                                      note: rv.isLink ? "A link; links aren't copied" : nil, otherParent: l))
+                    if rv.isFolder, volume(ru!) != volumes.1 {
+                        items.append(Item(id: id, path: shown, left: nil, right: rv, status: .problem, note: "On another volume; not compared or copied"))
+                    } else {
+                        items.append(Item(id: id, path: shown, left: nil, right: rv.isFolder ? folderTotals(rv) : rv, status: .rightOnly,
+                                          note: rv.isLink ? "A link; links aren't copied" : nil, otherParent: l))
+                    }
                 default:
                     break
                 }
@@ -195,7 +204,7 @@ enum FolderCompare {
         }
     }
 
-    private static func side(_ url: URL) -> Side? {
+    static func side(_ url: URL) -> Side? {
         guard let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey]) else { return nil }
         let isLink = values.isSymbolicLink == true
         return Side(url: url, size: Int64(values.fileSize ?? 0), modified: values.contentModificationDate,

@@ -132,11 +132,22 @@ struct StorageMapView: View {
             ForEach(current.children) { node in
                 StorageRow(node: node, total: current.size)
                     .tag(node.id)
-                    .contentShape(Rectangle())
-                    .onTapGesture(count: 2) { model.open(node) }
             }
         }
         .listStyle(.inset)
+        // Double-click opens; the menu has the Finder actions (DaisyDisk).
+        .contextMenu(forSelectionType: StorageNode.ID.self) { ids in
+            if let node = current.children.first(where: { ids.contains($0.id) }) {
+                if node.canOpen { Button("Open") { model.open(node) } }
+                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([node.url]) }
+                Button("Copy Path") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(node.url.path, forType: .string)
+                }
+            }
+        } primaryAction: { ids in
+            if let node = current.children.first(where: { ids.contains($0.id) }) { model.open(node) }
+        }
         .onKeyPress(.return) {
             if let node = model.selected { model.open(node) }
             return .handled

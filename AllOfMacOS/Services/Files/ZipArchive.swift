@@ -71,17 +71,24 @@ enum ZipArchive {
         var count = Int64(le16(tail, eocd + 10))
         var directorySize = Int64(le32(tail, eocd + 12))
         var directoryOffset = Int64(le32(tail, eocd + 16))
+        // 64-bit fields of a damaged or hostile archive can exceed Int64.max.
+        func int64(_ value: UInt64) throws -> Int64 {
+            guard value <= UInt64(Int64.max) else { throw Failure.damaged("a size or offset is out of range") }
+            return Int64(value)
+        }
         // ZIP64: the locator sits just before the end record.
         if eocd >= 20, le32(tail, eocd - 20) == 0x0706_4b50 {
-            let recordOffset = Int64(le64(tail, eocd - 20 + 8))
+            let recordOffset = try int64(le64(tail, eocd - 20 + 8))
+            guard recordOffset >= 0, recordOffset + 56 <= length else { throw Failure.damaged("the ZIP64 end record points past the end") }
             try handle.seek(toOffset: UInt64(recordOffset))
             let record = [UInt8](try handle.read(upToCount: 56) ?? Data())
             guard record.count >= 56, le32(record, 0) == 0x0606_4b50 else { throw Failure.damaged("the ZIP64 end record is missing") }
-            count = Int64(le64(record, 32))
-            directorySize = Int64(le64(record, 40))
-            directoryOffset = Int64(le64(record, 48))
+            count = try int64(le64(record, 32))
+            directorySize = try int64(le64(record, 40))
+            directoryOffset = try int64(le64(record, 48))
         }
-        guard directoryOffset >= 0, directorySize >= 0, directoryOffset + directorySize <= length, count < 2_000_000 else {
+        guard directoryOffset >= 0, directorySize >= 0, directorySize <= length, directoryOffset <= length - directorySize,
+              count >= 0, count < 2_000_000 else {
             throw Failure.damaged("the directory points past the end of the file")
         }
         try handle.seek(toOffset: UInt64(directoryOffset))
@@ -114,9 +121,9 @@ enum ZipArchive {
                 guard body + length <= extraStart + extraLength else { break }
                 if id == 0x0001 {
                     var field = body
-                    if size == 0xFFFF_FFFF, field + 8 <= body + length { size = Int64(le64(directory, field)); field += 8 }
-                    if compressed == 0xFFFF_FFFF, field + 8 <= body + length { compressed = Int64(le64(directory, field)); field += 8 }
-                    if offset == 0xFFFF_FFFF, field + 8 <= body + length { offset = Int64(le64(directory, field)) }
+                    if size == 0xFFFF_FFFF, field + 8 <= body + length { size = try int64(le64(directory, field)); field += 8 }
+                    if compressed == 0xFFFF_FFFF, field + 8 <= body + length { compressed = try int64(le64(directory, field)); field += 8 }
+                    if offset == 0xFFFF_FFFF, field + 8 <= body + length { offset = try int64(le64(directory, field)) }
                 } else if id == 0x7075, length > 5, directory[body] == 1 {
                     let nameCRC = le32(directory, body + 1)
                     if nameCRC == rawName.withUnsafeBufferPointer({ UInt32(crc32(0, $0.baseAddress, uInt($0.count))) }),
@@ -136,7 +143,8 @@ enum ZipArchive {
             var problem: String?
             if components == nil { problem = "Points outside the folder it would go in" }
             else if flags & 0x0001 != 0 || method == 99 { problem = "Password-protected; AOM doesn't open encrypted entries" }
-            else if host == 3, mode == 0xA000 { problem = "A symbolic link; links aren't extracted" }
+            // Unix (3) and OS X (19) keep the file type in the high bits.
+            else if host == 3 || host == 19, mode == 0xA000 { problem = "A symbolic link; links aren't extracted" }
             else if !isDirectory, method != 0, method != 8 { problem = "Compressed with method \(method), which AOM can't read; Archive Utility may" }
             entries.append(Entry(id: index, path: normalized, components: components, size: size, compressedSize: compressed,
                                  method: method, crc: crc, localHeaderOffset: offset, isDirectory: isDirectory,
@@ -221,9 +229,11 @@ enum ZipArchive {
         var folder = root
         for part in parts {
             folder.appendPathComponent(part, isDirectory: true)
-            var isDirectory: ObjCBool = false
-            if FileManager.default.fileExists(atPath: folder.path, isDirectory: &isDirectory) {
-                guard isDirectory.boolValue else { throw Failure.unsupported("a file named “\(part)” is where its folder would go") }
+            var status = stat()
+            if lstat(folder.path, &status) == 0 {
+                // A link already there isn't followed, even to a folder inside the destination.
+                guard (status.st_mode & S_IFMT) != S_IFLNK else { throw Failure.unsupported("a link named “\(part)” is where its folder would go") }
+                guard (status.st_mode & S_IFMT) == S_IFDIR else { throw Failure.unsupported("a file named “\(part)” is where its folder would go") }
             } else {
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
             }
@@ -265,7 +275,8 @@ enum ZipArchive {
             produced += Int64(bytes.count)
             guard produced <= entry.size else { throw Failure.damaged("\(entry.name) holds more than its listed size") }
             crc = crc32(crc, bytes.bindMemory(to: Bytef.self).baseAddress, uInt(bytes.count))
-            output.write(Data(bytes))
+            // The throwing write: a full disk or a removed drive is an error here, not an exception.
+            try output.write(contentsOf: Data(bytes))
             wrote(Int64(bytes.count))
         }
         var remaining = entry.compressedSize
@@ -295,12 +306,13 @@ enum ZipArchive {
         guard produced == entry.size else { throw Failure.damaged("\(entry.name) came out \(produced) bytes instead of \(entry.size)") }
         guard UInt32(crc) == entry.crc else { throw Failure.damaged("\(entry.name)'s checksum doesn't match") }
         try output.synchronize()
+        try output.close()
         if let modified = entry.modified {
             try? FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: temporary.path)
         }
+        guard resolvesInside(folder, root) else { throw Failure.outside(name) }
         let final = try commitExclusive(temporary, in: folder, name: name)
         committed = true
-        guard FolderRulesSafety.isInside(final, root) else { throw Failure.outside(name) }
         return final
     }
 

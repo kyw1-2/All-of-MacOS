@@ -987,17 +987,17 @@ enum ParityActions {
             else { log("Bluetooth power didn't change") }
             completion(done)
         case .setAirplaneMode:
-            let on: Bool
+            let on: Bool?
             switch p.switchMode ?? "toggle" {
             case "on": on = true
             case "off": on = false
-            default: on = !AOMRadios.airplaneOn
+            default: on = nil
             }
             // 7.5 (Codex D02): the HUD, the log and the result say the same thing.
             AOMRadios.setAirplaneModeInBackground(on) { outcome in
                 if !outcome.succeeded { log("Airplane Mode: \(outcome.title). \(outcome.detail ?? "")") }
                 GestureHUD.shared.show(title: outcome.title, detail: outcome.detail,
-                                       icon: outcome.succeeded ? (on ? "airplane" : "wifi") : "exclamationmark.triangle")
+                                       icon: outcome.succeeded ? (outcome.on ? "airplane" : "wifi") : "exclamationmark.triangle")
                 completion(outcome.succeeded)
             }
         case .dismissNotifications:

@@ -940,9 +940,13 @@ extension QuickCommandPalette {
             let leave = answerRow("out", "Leave Out “\(field.name)”", value: SnippetField.off, icon: "square",
                                   accessory: defaultOn ? nil : "Default")
             let rows = defaultOn ? [include, leave] : [leave, include]
+            // Typing narrows the two rows; yes/no, on/off and 포함/제외 count too, and no match keeps both.
             let typed = query.trimmingCharacters(in: .whitespaces).lowercased()
             guard !typed.isEmpty else { return rows }
-            return rows.filter { $0.title.lowercased().contains(typed) }
+            let yes = ["y", "yes", "on", "in", "include", "포함", "넣기", "예", "네"].contains { $0.hasPrefix(typed) }
+            let no = ["n", "no", "off", "out", "leave", "제외", "빼기", "아니오", "아니요"].contains { $0.hasPrefix(typed) }
+            let narrowed = yes != no ? [yes ? include : leave] : rows.filter { $0.title.lowercased().contains(typed) }
+            return narrowed.isEmpty ? rows : narrowed
         }
     }
 

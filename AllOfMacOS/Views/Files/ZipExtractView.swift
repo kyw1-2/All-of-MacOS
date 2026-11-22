@@ -91,7 +91,11 @@ final class ZipExtractModel: ObservableObject {
         stop = flag
         let archive = archive, keep = keepFolders
         Task.detached(priority: .userInitiated) {
+            var last = Date.distantPast
             let outcome = ZipArchive.extract(entries, from: archive, into: folder, keepFolders: keep, isCancelled: { flag.isSet }) { bytes in
+                let now = Date()
+                guard now.timeIntervalSince(last) > 0.1 else { return }
+                last = now
                 Task { @MainActor in self.written = bytes }
             }
             await MainActor.run {
@@ -109,6 +113,40 @@ final class ZipExtractModel: ObservableObject {
     }
 
     func cancel() { stop?.set() }
+
+    // MARK: Quick Look before extracting (BetterZip)
+
+    /// The entry shown in Quick Look, extracted alone into a temporary folder.
+    @Published var previewURL: URL?
+    @Published private(set) var previewURLs: [URL] = []
+    private var previewFolder: URL?
+
+    func quickLook(_ entry: ZipArchive.Entry) {
+        guard entry.unsupported == nil else { return }
+        if previewURL != nil { previewURL = nil; return }
+        let folder = previewFolder ?? FileManager.default.temporaryDirectory.appendingPathComponent("AOMZipPreview-\(UUID().uuidString)", isDirectory: true)
+        previewFolder = folder
+        let archive = archive
+        Task.detached(priority: .userInitiated) {
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let outcome = ZipArchive.extract([entry], from: archive, into: folder, keepFolders: false)
+            await MainActor.run {
+                guard let file = outcome.written.first else {
+                    self.result = ("Couldn't preview \(entry.name): \(outcome.failures.first ?? "")", [], true)
+                    return
+                }
+                self.previewURLs = [file]
+                self.previewURL = file
+            }
+        }
+    }
+
+    /// The window closed: stop work and remove preview copies.
+    func close() {
+        cancel()
+        if let previewFolder { try? FileManager.default.removeItem(at: previewFolder) }
+        previewFolder = nil
+    }
 }
 
 struct ZipExtractView: View {
@@ -165,7 +203,16 @@ struct ZipExtractView: View {
                         Text(SystemStatus.size(entry.size)).monospacedDigit().foregroundStyle(AOMColor.textSecondary)
                     }
                     .width(80)
+                    TableColumn("") { entry in
+                        Button { model.quickLook(entry) } label: { Image(systemName: "eye") }
+                            .buttonStyle(.borderless)
+                            .disabled(entry.unsupported != nil)
+                            .help("Quick Look this file before extracting it")
+                            .accessibilityLabel("Quick Look \(entry.name)")
+                    }
+                    .width(28)
                 }
+                .quickLookPreview($model.previewURL, in: model.previewURLs)
                 .overlay {
                     if model.shown.isEmpty {
                         Text(model.files.isEmpty ? "The archive has no files" : "No file matches “\(model.query)”")
@@ -177,6 +224,7 @@ struct ZipExtractView: View {
         }
         .padding(AOMSpace.x4)
         .onAppear { searchFocused = true }
+        .onDisappear { model.close() }
     }
 
     private var summary: String {

@@ -26,9 +26,13 @@ final class AOMToolWindows: NSObject, NSWindowDelegate {
         window.setContentSize(size)
         window.minSize = minSize
         window.isReleasedWhenClosed = false
+        // A saved frame wins; otherwise centred, or offset from a window of the tools already open.
+        let restored = window.setFrameUsingName(autosave)
         window.setFrameAutosaveName(autosave)
-        if windows.isEmpty { window.center() } else if let last = windows.values.first {
+        if let last = windows.values.first {
             window.setFrameTopLeftPoint(NSPoint(x: last.frame.minX + 24, y: last.frame.maxY - 24))
+        } else if !restored {
+            window.center()
         }
         window.delegate = self
         windows[key] = window
@@ -43,6 +47,14 @@ final class AOMToolWindows: NSObject, NSWindowDelegate {
     }
 
     func close(_ key: String) { windows[key]?.close() }
+
+    /// Brings the window forward when it is open.
+    func focus(_ key: String) -> Bool {
+        guard let window = windows[key] else { return false }
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        return true
+    }
 }
 
 /// A flag one thread sets and another reads (Stop buttons).
@@ -72,6 +84,7 @@ enum AOMFileToolsLauncher {
     /// Extract from ZIP: the archive's entries to search and pick from.
     static func openZip(_ url: URL? = nil) {
         guard let archive = url ?? pick("Choose a ZIP archive; pick the files you need from it.", types: ["zip"])?.first else { return }
+        guard !AOMToolWindows.shared.focus("zip:" + archive.path) else { return }
         let model = ZipExtractModel(archive: archive)
         AOMToolWindows.shared.show("zip:" + archive.path, title: archive.lastPathComponent, size: NSSize(width: 760, height: 560),
                                    minSize: NSSize(width: 560, height: 380), autosave: "AOMZipWindow") {

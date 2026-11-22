@@ -114,6 +114,14 @@ final class FolderCompareModel: ObservableObject {
                     for index in comparison.items.indices where result.copied.contains(comparison.items[index].id) {
                         comparison.items[index].status = .same
                         comparison.items[index].note = "Copied \(direction.title)"
+                        // The copy is the other side now.
+                        if let source = direction == .leftToRight ? comparison.items[index].left : comparison.items[index].right,
+                           let parent = comparison.items[index].otherParent,
+                           let copy = FolderCompare.side(parent.appendingPathComponent(source.url.lastPathComponent)) {
+                            let filled = copy.isFolder ? FolderCompare.Side(url: copy.url, size: source.size, modified: copy.modified, isFolder: true,
+                                                                            isLink: false, files: source.files, fingerprint: copy.fingerprint) : copy
+                            if direction == .leftToRight { comparison.items[index].right = filled } else { comparison.items[index].left = filled }
+                        }
                     }
                     self.comparison = comparison
                 }
@@ -139,11 +147,14 @@ struct FolderCompareView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: AOMSpace.x3) {
             HStack(spacing: AOMSpace.x2) {
-                folderButton(model.left, title: "Left", isLeft: true)
-                Button { model.swapSides() } label: { Image(systemName: "arrow.left.arrow.right") }
-                    .help("Swap the two folders")
-                    .disabled(model.left == nil && model.right == nil)
-                folderButton(model.right, title: "Right", isLeft: false)
+                Group {
+                    folderButton(model.left, title: "Left", isLeft: true)
+                    Button { model.swapSides() } label: { Image(systemName: "arrow.left.arrow.right") }
+                        .help("Swap the two folders")
+                        .disabled(model.left == nil && model.right == nil)
+                    folderButton(model.right, title: "Right", isLeft: false)
+                }
+                .disabled(model.comparing || model.copying)
                 Button(model.comparison == nil ? "Compare" : "Compare Again") { model.compare() }
                     .disabled(model.left == nil || model.right == nil || model.comparing || model.copying)
             }
@@ -197,6 +208,25 @@ struct FolderCompareView: View {
                     TableColumn("Right") { item in Text(describe(item.right)).font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary) }
                         .width(min: 110, ideal: 150)
                 }
+                // Gemini 7.5 idea (ForkLift): a row that differs opens in the tool that shows how.
+                .contextMenu(forSelectionType: FolderCompare.Item.ID.self) { ids in
+                    if let item = comparison.items.first(where: { ids.contains($0.id) }) {
+                        let urls = [item.left?.url, item.right?.url].compactMap { $0 }
+                        if urls.count == 2, urls.allSatisfy({ $0.pathExtension.lowercased() == "pdf" }) {
+                            Button("Compare the Two PDFs") { AOMFileToolsLauncher.comparePDFs(urls) }
+                        }
+                        Button(urls.count == 2 ? "Show Both in Finder" : "Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting(urls) }
+                        Button("Copy Path") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(urls.map(\.path).joined(separator: "\n"), forType: .string)
+                        }
+                    }
+                } primaryAction: { ids in
+                    guard let item = comparison.items.first(where: { ids.contains($0.id) }) else { return }
+                    let urls = [item.left?.url, item.right?.url].compactMap { $0 }
+                    if urls.count == 2, urls.allSatisfy({ $0.pathExtension.lowercased() == "pdf" }) { AOMFileToolsLauncher.comparePDFs(urls) }
+                    else { NSWorkspace.shared.activateFileViewerSelecting(urls) }
+                }
                 .overlay {
                     if model.shown.isEmpty {
                         Text(comparison.items.isEmpty ? "Both folders are empty" : "Nothing differs: every file is on both sides with the same contents")
@@ -215,6 +245,7 @@ struct FolderCompareView: View {
             }
         }
         .padding(AOMSpace.x4)
+        .onDisappear { model.cancel() }
     }
 
     private func folderButton(_ url: URL?, title: String, isLeft: Bool) -> some View {

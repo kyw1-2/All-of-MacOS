@@ -796,7 +796,10 @@ struct FilesShelfView: View {
                 // 7.5 (Codex F03, F07, F08): the selection (or the whole shelf) opened in a tool.
                 let pdfs = urls.filter { $0.pathExtension.lowercased() == "pdf" }
                 let zips = urls.filter { $0.pathExtension.lowercased() == "zip" }
-                let folders = urls.filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true && $0.pathExtension.isEmpty }
+                let folders = urls.filter {
+                    let values = try? $0.resourceValues(forKeys: [.isDirectoryKey, .isPackageKey])
+                    return values?.isDirectory == true && values?.isPackage != true
+                }
                 if pdfs.count == 2 || zips.count == 1 || folders.count == 2 {
                     Divider()
                     if pdfs.count == 2 { Button("Compare the Two PDFs") { AOMFileToolsLauncher.comparePDFs(pdfs) } }

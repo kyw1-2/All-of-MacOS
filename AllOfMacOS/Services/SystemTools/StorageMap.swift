@@ -116,8 +116,8 @@ enum StorageMap {
             var found: [StorageNode] = []
             found.reserveCapacity(contents.count)
             // In name order, so which path of a hard link counts is the same every time.
-            for item in contents.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
-                if cancelled { break }
+            for (number, item) in contents.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }).enumerated() {
+                if cancelled || (number % 512 == 511 && isCancelled()) { cancelled = true; break }
                 guard let values = try? item.resourceValues(forKeys: Set(keys)) else { continue }
                 counter.items += 1
                 let allocated = Int64(values.totalFileAllocatedSize ?? values.fileAllocatedSize ?? 0)
@@ -176,7 +176,8 @@ enum StorageMap {
         func place(_ row: [Int]) {
             let areas = row.map { sizes[$0] * scale }
             let sum = areas.reduce(0, +)
-            guard sum > 0 else { return }
+            // Rounding can leave a sliver: nothing more fits, so the rest stay empty.
+            guard sum > 0, free.width > 0.5, free.height > 0.5 else { return }
             if free.width >= free.height {
                 // A column along the left edge.
                 let width = CGFloat(sum / Double(free.height))

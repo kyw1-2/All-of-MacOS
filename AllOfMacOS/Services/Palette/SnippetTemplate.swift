@@ -34,6 +34,10 @@ indirect enum SnippetToken: Equatable {
     case choice(String, [String], Int)
     /// Name, in by default, what it holds.
     case section(String, Bool, [SnippetToken])
+    /// Last token of a template that uses sections and doesn't end with a
+    /// line break: the text comes out without one at its end either, so a
+    /// section left out (or a section's last line) never types a Return.
+    case trimEnd
 }
 
 /// One question the snippet asks before it goes in.
@@ -45,8 +49,12 @@ struct SnippetField: Equatable {
     }
     let name: String
     let kind: Kind
-    /// The optional section it sits in: asked only when that section is in.
-    let section: String?
+    /// The optional sections it sits in (empty when it's also used outside
+    /// any): asked unless every one of them was left out.
+    let sections: [String]
+
+    /// The one section it sits in, if it sits in exactly one.
+    var section: String? { sections.count == 1 ? sections[0] : nil }
 
     static let on = "1", off = "0"
     /// Pure: an optional section's answer.
@@ -104,10 +112,11 @@ enum SnippetTemplate {
         func standalone(from start: Int, to end: Int) -> Bool {
             var before = start - 1
             while before >= 0, characters[before] == " " || characters[before] == "\t" { before -= 1 }
-            guard before < 0 || characters[before] == "\n" else { return false }
+            // "\r\n" is one Character, so line breaks are matched with isNewline.
+            guard before < 0 || characters[before].isNewline else { return false }
             var after = end + 1
             while after < characters.count, characters[after] == " " || characters[after] == "\t" { after += 1 }
-            return after == characters.count || characters[after] == "\n"
+            return after == characters.count || characters[after].isNewline
         }
         func skipLine(after close: Int) -> Int {
             var next = close + 1
@@ -209,6 +218,8 @@ enum SnippetTemplate {
         if let section = open {
             return .failure(SnippetTemplateError(offset: section.offset, message: "{optional:\(section.name)} isn't closed; end the section with {/optional}"))
         }
+        let usesSections = kinds.values.contains { if case .optional = $0 { return true }; return false }
+        if usesSections, !(template.last?.isNewline ?? false) { tokens.append(.trimEnd) }
         return .success(tokens)
     }
 
@@ -248,7 +259,8 @@ enum SnippetTemplate {
         walk(tokens, in: nil)
         return order.map { name in
             let places = sections[name] ?? []
-            return SnippetField(name: name, kind: kinds[name] ?? .text, section: places.count == 1 ? places.first ?? nil : nil)
+            let inside = places.contains(nil) ? [] : places.compactMap { $0 }.sorted()
+            return SnippetField(name: name, kind: kinds[name] ?? .text, sections: inside)
         }
     }
 
@@ -293,10 +305,16 @@ enum SnippetTemplate {
                 cursorCharacters = text.count
                 cursorUTF16 = text.utf16.count
             case .arg(let name): text += context.arguments[name] ?? ""
+            case .trimEnd: break
             }
         }
         }
         append(tokens)
+        if tokens.last == .trimEnd {
+            var trimmed = 0
+            while let last = text.last, last.isNewline { text.removeLast(); trimmed += 1 }
+            if let at = cursorCharacters, at > text.count, trimmed > 0 { cursorCharacters = text.count; cursorUTF16 = text.utf16.count }
+        }
         let after = cursorCharacters.map { text.count - $0 }
         return SnippetRender(text: text, charactersAfterCursor: after == 0 ? nil : after, cursorUTF16: after == 0 ? nil : cursorUTF16, notes: notes)
     }
@@ -526,11 +544,14 @@ final class PaletteSnippetForm: ObservableObject {
             return (asked + 1, asked + remaining)
         }
 
-        /// Pure: a field inside a section that was answered “leave out”.
+        /// Pure: a field whose every section was answered “leave out”.
         func skips(_ field: SnippetField) -> Bool {
-            guard let section = field.section, let outer = fields.first(where: { $0.name == section }),
-                  case .optional(let on) = outer.kind else { return false }
-            return !SnippetField.isOn(values[section], default: on) && values[section] != nil
+            guard !field.sections.isEmpty else { return false }
+            return field.sections.allSatisfy { section in
+                guard let outer = fields.first(where: { $0.name == section }), case .optional(let on) = outer.kind,
+                      values[section] != nil else { return false }
+                return !SnippetField.isOn(values[section], default: on)
+            }
         }
 
         /// Takes the answer for the current field and moves to the next one asked.
