@@ -1,3 +1,25 @@
+## [7.10.0] - 2026-11-22
+
+The menu bar works the way Bartender 7 does, on macOS 27: hiding actually hides, the settings follow Bartender's own panes (decoded from its app bundle for DeepSeek's report 07 on Oracle), and a Setup guide explains how to use it. Details and what is still open: `docs/design-7.10.md`.
+
+### Hiding that works on macOS 27
+- 7.9's ❮ hid nothing on macOS 27: the system drops a status item that grows very wide, so the old "long divider" never pushed icons off. AOM now uses macOS's own menu bar restriction (MenuBarClientCore, as Hidden Bar 1.11 and Bartender 7 do): you choose Shown, Hidden or Always Hidden **per app**, and macOS hides the rest and closes the gaps. macOS's own icons (clock, Control Center, battery …) always stay. This is a private macOS framework — the first exception to AOM's no-private-API rule — wrapped so a change in macOS fails open (everything shows) instead of crashing.
+- If macOS ever hid AOM's own ❮ too, AOM shows everything again at once, so the menu bar can't get stuck hidden.
+- Clicking a hidden icon in the Bar lets that one app back into the menu bar, clicks it, and hides it again once its menu has closed (Advanced › delay, 15 s like Bartender). The clock still opens Notification Center while icons are hidden.
+
+### Settings, pane by pane (Bartender 7)
+- **Setup Guide** (opens the first time, and from the page header or ❮'s menu): the three sections, the Accessibility and Screen Recording cards with live ticks and "Open macOS … Settings", and how to show hidden icons.
+- **Menu Bar Items**: "Shown / Hidden / Always Hidden menu bar items" as strips in your menu bar's colour, icons right-aligned with their real pictures and no boxes — drag between strips. The **New Menu Bar Items** pill sets where apps seen for the first time go. **Presets** save a layout and switch to it ("Preset: … / Remove Applied Preset").
+- **Item Settings**: every app with an icon, "Menu bar item should: Show / Hide / Always Hide", expand for each icon's search name, Rename… and Open.
+- **General**: "Show hidden menu bar items when" — **Click on empty menu bar space** (on by default), **Swipe or scroll in menu bar**, **Hover over empty menu bar space** with both delays; Automatically rehide; the Bar; the menu bar icon (chevron, dots, dot, line); icon spacing; show everything on a display wider than a width you pick.
+- **Bar**: preview, at the mouse or under ❮, hide when the pointer leaves and after how long.
+- **Hotkeys**: Show hidden / Show all / Quick Search / Keyboard navigate, and **a key per menu bar item** with Left Click, Right Click, either with Option, or "None - just show".
+- **Advanced**: **⌘-dragging in the menu bar shows every section**, the Bar when the menu bar has no room for the hidden icons, the temporary-show delay, the hiding method in use, Reset layout.
+- ❮'s right-click menu: Show/Hide, Show All, Search, Keep Shown, the Bar, hover, empty-space click, Hide Again After, Menu Bar Settings…, Setup Guide….
+
+### Cleanup
+- One event monitor watches only what your settings need (pointer moves only while hover is on); menu bar hit tests run off the main thread with timeouts; launches are coalesced. Unused code found by periphery and confirmed by search was removed (dead tokens, an unused greeting and menu-editor section, stale properties).
+
 ## [7.9.0] - 2026-11-22
 
 The Menu Bar page is rebuilt after Bartender, Ice and Hidden Bar (the Oracle analyses of Bartender 7.1, Ice 0.11.12 and Hidden Bar 1.11.1), the weather card is redesigned, and the words that showed through the window in 7.8 are gone. Details: `docs/design-7.9.md`.
