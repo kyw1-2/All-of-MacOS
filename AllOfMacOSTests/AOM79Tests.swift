@@ -50,18 +50,44 @@ final class AOM79Tests: XCTestCase {
         XCTAssertLessThan(try XCTUnwrap(MenuBarLayoutPolicy.dropPoint(section: .hidden, before: nil, divider: divider, always: always)).x, divider.minX)
         XCTAssertLessThan(try XCTUnwrap(MenuBarLayoutPolicy.dropPoint(section: .alwaysHidden, before: nil, divider: divider, always: always)).x, always.minX)
         XCTAssertNil(MenuBarLayoutPolicy.dropPoint(section: .alwaysHidden, before: nil, divider: divider, always: nil))
+        let toggle = CGRect(x: 1012, y: 4, width: 24, height: 24)
+        XCTAssertGreaterThan(try XCTUnwrap(MenuBarLayoutPolicy.dropPoint(section: .shown, before: nil, toggle: toggle, divider: divider, always: nil)).x,
+                             toggle.maxX, "right of ❮, not between it and the divider")
+        XCTAssertNotNil(MenuBarLayoutPolicy.dropPoint(section: .shown, before: CGRect(x: 1200, y: 4, width: 28, height: 24), divider: nil, always: nil),
+                        "reordering works without the Hider")
         let neighbor = CGRect(x: 1200, y: 4, width: 28, height: 24)
         let before = try XCTUnwrap(MenuBarLayoutPolicy.dropPoint(section: .shown, before: neighbor, divider: divider, always: always))
         XCTAssertTrue(before.x > neighbor.minX && before.x < neighbor.midX, "over the neighbour's left half puts it to the left")
         XCTAssertEqual(before.y, neighbor.midY)
     }
 
-    func testImageCacheKeysRoundTripThroughFileNames() {
-        for key in ["com.apple.MenuBarAgent|ax:com.apple.menuextra.battery", "com.kakao|desc:카카오톡 새 메시지", "a/b+c|pos:3"] {
-            let file = MenuBarLayoutModel.file(forKey: key)
-            XCTAssertFalse(file.contains("/"))
-            XCTAssertEqual(MenuBarLayoutModel.key(fromFile: file), key)
-        }
+    func testImageCacheFileNamesAreShortAndDistinct() {
+        let keys = ["com.apple.MenuBarAgent|ax:com.apple.menuextra.battery", "com.kakao|desc:카카오톡 새 메시지",
+                    "a/b+c|pos:3", "com.example|desc:" + String(repeating: "아주 긴 설명 ", count: 40)]
+        let files = keys.map(MenuBarLayoutModel.file(forKey:))
+        XCTAssertEqual(Set(files).count, keys.count)
+        for file in files { XCTAssertFalse(file.contains("/")); XCTAssertLessThan(file.utf8.count, 80, "under the 255-byte name limit") }
+    }
+
+    func testOnlyMenuBarPopoversHoldTheHider() {
+        XCTAssertTrue(MenuBarRehidePolicy.hangsFromMenuBar(top: 30, height: 400, menuBarHeight: 24))
+        XCTAssertFalse(MenuBarRehidePolicy.hangsFromMenuBar(top: 300, height: 400, menuBarHeight: 24), "a window lower down")
+        XCTAssertFalse(MenuBarRehidePolicy.hangsFromMenuBar(top: 0, height: 24, menuBarHeight: 24), "the menu bar itself")
+        XCTAssertTrue(MenuBarLayoutPolicy.isVisible(CGRect(x: 10, y: 0, width: 20, height: 24),
+                                                    displays: [.init(frame: CGRect(x: 0, y: 0, width: 1440, height: 900))]))
+        XCTAssertFalse(MenuBarLayoutPolicy.isVisible(CGRect(x: 700, y: 0, width: 20, height: 24),
+                                                     displays: [.init(frame: CGRect(x: 0, y: 0, width: 1440, height: 900),
+                                                                      notch: CGRect(x: 640, y: 0, width: 160, height: 32))]),
+                       "behind the notch")
+        XCTAssertFalse(MenuBarLayoutPolicy.isVisible(CGRect(x: -400, y: 0, width: 20, height: 24),
+                                                     displays: [.init(frame: CGRect(x: 0, y: 0, width: 1440, height: 900))]))
+    }
+
+    func testBarWidthFollowsThePictures() {
+        let narrow = MenuBarStripController.width(tiles: [28, 28], screen: 1440)
+        let wide = MenuBarStripController.width(tiles: [44, 44], screen: 1440)
+        XCTAssertGreaterThan(wide, narrow)
+        XCTAssertEqual(MenuBarStripController.width(tiles: Array(repeating: 44, count: 80), screen: 1440), 1424, "never wider than the screen")
     }
 
     func testSampleFillsEveryLaneWithLongNames() {

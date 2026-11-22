@@ -135,7 +135,10 @@ enum AOMMenuShelfPolicy {
             .sorted { a, b in
                 func rank(_ app: NSRunningApplication) -> Int {
                     let id = app.bundleIdentifier ?? ""
-                    if id.hasPrefix("com.apple.controlcenter") || id.hasPrefix("com.apple.systemuiserver") { return 0 }
+                    // Gemini 7.9: macOS 27's MenuBarAgent hosts Battery, Sound, Control
+                    // Center and the clock; read it first, before any deadline.
+                    if id.hasPrefix("com.apple.MenuBarAgent") || id.hasPrefix("com.apple.controlcenter")
+                        || id.hasPrefix("com.apple.systemuiserver") { return 0 }
                     return app.activationPolicy == .prohibited ? 2 : 1
                 }
                 return rank(a) != rank(b) ? rank(a) < rank(b) : (a.localizedName ?? "") < (b.localizedName ?? "")
@@ -513,11 +516,12 @@ final class AOMMenuShelfController: ObservableObject {
         hoverPending?.cancel()
         hoverPending = nil
         guard hoverEnabled else { return }
+        // Monitors already run on the main thread (Gemini 7.9: no hop per mouse move).
         hoverMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved]) { [weak self] _ in
-            DispatchQueue.main.async { self?.observeHover() }
+            MainActor.assumeIsolated { self?.observeHover() }
         }
         hoverLocalMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved]) { [weak self] event in
-            DispatchQueue.main.async { self?.observeHover() }
+            MainActor.assumeIsolated { self?.observeHover() }
             return event
         }
     }
@@ -563,7 +567,7 @@ private struct AOMMenuShelfView: View {
             }
             TextField("Search app or menu bar item", text: $controller.query)
                 .textFieldStyle(.roundedBorder)
-            Toggle("Reveal shelf when hovering over the notch", isOn: $controller.hoverEnabled)
+            Toggle("Open the Bar when the pointer rests at the top center", isOn: $controller.hoverEnabled)
                 .font(.caption)
                 .toggleStyle(.switch)
             Divider()

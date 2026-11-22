@@ -84,8 +84,12 @@ final class MenuBarStripController: NSObject, ObservableObject, NSWindowDelegate
 
     @Published var selection = 0
     @Published private(set) var hovered: String?
+    /// Always Hidden icons too — ⌥-click or the bar's eye button (Gemini 7.9:
+    /// the lane promises "only with ⌥-click or Show All").
+    @Published var includeAlways = false
     private var panel: MenuBarStripPanel?
     private var observer: AnyCancellable?
+    private var leaveWork: DispatchWorkItem?
 
     var isVisible: Bool { panel?.isVisible ?? false }
 
@@ -94,15 +98,16 @@ final class MenuBarStripController: NSObject, ObservableObject, NSWindowDelegate
     var entries: [MenuBarLayoutItem] {
         let model = MenuBarLayoutModel.shared
         let lanes = model.lanes
-        let hidden = (lanes[.hidden] ?? []) + (lanes[.alwaysHidden] ?? [])
+        let hidden = (lanes[.hidden] ?? []) + (includeAlways ? (lanes[.alwaysHidden] ?? []) : [])
         let list = MenuBarHider.shared.isRunning || model.isSample ? hidden : (lanes[.shown] ?? [])
         return list.filter { $0.lockedReason == nil || $0.section != .shown }
     }
 
-    func toggle() { if isVisible { dismiss() } else { show() } }
+    func toggle(includeAlways: Bool = false) { if isVisible { dismiss() } else { show(includeAlways: includeAlways) } }
 
-    func show() {
+    func show(includeAlways: Bool = false) {
         guard !ScreenLock.isLocked else { return }
+        self.includeAlways = includeAlways
         let model = MenuBarLayoutModel.shared
         guard AXIsProcessTrusted() || model.isSample else {
             GestureHUD.shared.show(title: "Menu Bar", detail: "Needs Accessibility to read other apps' menu bar items: System Settings › Privacy & Security › Accessibility.")
@@ -130,13 +135,39 @@ final class MenuBarStripController: NSObject, ObservableObject, NSWindowDelegate
 
     func dismiss() {
         observer = nil
+        leaveWork?.cancel()
         panel?.orderOut(nil)
+    }
+
+    func setIncludeAlways(_ on: Bool) {
+        includeAlways = on
+        selection = 0
+        if let panel, panel.isVisible { place(panel) }
+    }
+
+    /// Bartender: the bar goes a moment after the pointer leaves it.
+    func pointerInside(_ inside: Bool) {
+        leaveWork?.cancel()
+        guard !inside, !PresetManager.isUIPreview else { return }
+        let work = DispatchWorkItem { [weak self] in self?.dismiss() }
+        leaveWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: work)
+    }
+
+    /// Pure: each tile is its picture's width (28–44 pt) plus padding; the
+    /// row ends with the bar's three buttons (Gemini 7.9: a fixed 34 pt a tile
+    /// cut wide icons off).
+    static func width(tiles: [CGFloat], screen: CGFloat) -> CGFloat {
+        let icons = tiles.reduce(0) { $0 + min(44, max(28, $1)) + 6 }
+        return min(max(160, icons + 12 + 3 * 26 + 10), screen - 16)
     }
 
     /// Right-aligned under the chevron on its display, else under the pointer.
     private func place(_ panel: MenuBarStripPanel) {
-        let count = max(1, entries.count)
-        let width = min(CGFloat(count) * 34 + 20, 1000)
+        let model = MenuBarLayoutModel.shared
+        let tiles = entries.map { model.images[$0.imageKey]?.size.width ?? 28 }
+        let anchorScreen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main
+        let width = Self.width(tiles: tiles, screen: anchorScreen?.frame.width ?? 1200)
         let height: CGFloat = 34
         let chevron = MenuBarHider.shared.isRunning ? MenuBarHider.shared.toggleWindowFrame : nil
         let anchorPoint = chevron.map { CGPoint(x: $0.maxX, y: $0.midY) } ?? NSEvent.mouseLocation
@@ -202,7 +233,10 @@ final class MenuBarStripController: NSObject, ObservableObject, NSWindowDelegate
     /// Hider's timer, which waits while its menu is open.
     func openItem(_ item: AOMMenuShelfItem, section: MenuBarSection) {
         let hider = MenuBarHider.shared
-        let reveal = section != .shown && hider.isRunning && hider.isCollapsed
+        // Gemini 7.9: an always-hidden item needs Show All even when the
+        // ordinary hidden ones are already out.
+        let reveal = hider.isRunning && ((section == .hidden && hider.isCollapsed)
+            || (section == .alwaysHidden && (hider.isCollapsed || !hider.showsAll)))
         if reveal { hider.expand(all: section == .alwaysHidden) }
         DispatchQueue.main.asyncAfter(deadline: .now() + (reveal ? 0.35 : 0)) {
             AOMMenuShelfController.shared.activate(item, retry: "Open the bar and pick it again.")
@@ -217,21 +251,40 @@ private struct MenuBarStripView: View {
     var body: some View {
         let entries = controller.entries
         let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
-        HStack(spacing: 2) {
-            if entries.isEmpty {
-                Text(model.busy ? "Reading the menu bar…" : "Nothing hidden")
-                    .font(.system(size: 12)).foregroundStyle(.secondary)
-                    .padding(.horizontal, 10)
+        HStack(spacing: 4) {
+            GeometryReader { geometry in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 2) {
+                        Spacer(minLength: 0)
+                        if entries.isEmpty {
+                            Text(model.busy ? "Reading the menu bar…" : "Nothing hidden")
+                                .font(.system(size: 12)).foregroundStyle(.secondary)
+                                .padding(.horizontal, 10)
+                        }
+                        ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                            icon(entry, selected: index == controller.selection, hovered: controller.hovered == entry.id)
+                                .onTapGesture { controller.open(index) }
+                                .onHover { inside in controller.setHovered(inside ? entry.id : nil) }
+                                .help(entry.item.displayName)
+                        }
+                    }
+                    .frame(minWidth: geometry.size.width, maxHeight: .infinity, alignment: .trailing)
+                }
             }
-            ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
-                icon(entry, selected: index == controller.selection, hovered: controller.hovered == entry.id)
-                    .onTapGesture { controller.open(index) }
-                    .onHover { inside in controller.setHovered(inside ? entry.id : nil) }
-                    .help(entry.item.displayName)
+            Rectangle().fill(Color.primary.opacity(0.15)).frame(width: 1, height: 18)
+            barButton(controller.includeAlways ? "eye.fill" : "eye", help: controller.includeAlways ? "Hide Always Hidden icons" : "Show Always Hidden icons too") {
+                controller.setIncludeAlways(!controller.includeAlways)
+            }
+            barButton("magnifyingglass", help: "Search every menu bar icon") {
+                controller.dismiss(); AOMMenuShelfController.shared.show()
+            }
+            barButton("gearshape", help: "Arrange the menu bar") {
+                controller.dismiss(); MenuBarNavigation.open()
             }
         }
         .padding(.horizontal, 6)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onHover { controller.pointerInside($0) }
         .background {
             ZStack {
                 VisualEffectBackground(material: .menu, blendingMode: .behindWindow, state: .active, cornerRadius: 10)
@@ -242,6 +295,17 @@ private struct MenuBarStripView: View {
         .overlay(shape.strokeBorder(AOMCraftColor.hairline, lineWidth: 0.5).allowsHitTesting(false))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Hidden menu bar items")
+    }
+
+    private func barButton(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol).font(.system(size: 12, weight: .medium)).frame(width: 24, height: 24)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .help(help)
+        .accessibilityLabel(help)
     }
 
     private func icon(_ entry: MenuBarLayoutItem, selected: Bool, hovered: Bool) -> some View {

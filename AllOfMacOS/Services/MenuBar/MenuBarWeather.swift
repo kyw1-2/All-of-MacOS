@@ -260,7 +260,12 @@ final class MenuBarWeather: NSObject, ObservableObject, NSMenuDelegate {
             let result: Result<WeatherReading, WeatherError>
             do { result = .success(try await provider.fetch(city, unit)) }
             catch let error as WeatherError { result = .failure(error) }
-            catch is CancellationError { return }
+            catch is CancellationError {
+                // Gemini 7.9: a cancel AOM didn't ask for (the network layer)
+                // must still free the slot, or refreshing stops for good.
+                if let self, generation == self.generation { self.inFlight = nil }
+                return
+            }
             catch { result = .failure(.failed(error.localizedDescription)) }
             // Only the current request clears the slot (Gemini 7.6: an old one
             // used to clear the new one's, so two could run at once).
@@ -683,9 +688,7 @@ struct WeatherMenuCard: View {
 
     private func hero(_ reading: WeatherReading) -> some View {
         HStack(alignment: .center, spacing: 12) {
-            Image(systemName: MenuBarWeather.colorSymbol(code: reading.code, isDay: reading.isDay))
-                .symbolRenderingMode(.multicolor)
-                .font(.system(size: 34))
+            WeatherGlyph(code: reading.code, isDay: reading.isDay, size: 34)
                 .frame(width: 44)
             Text("\(Int(reading.temperature.rounded()))°")
                 .font(.system(size: 42, weight: .semibold, design: .rounded).monospacedDigit())
@@ -703,6 +706,9 @@ struct WeatherMenuCard: View {
         }
     }
 
+    /// Gemini 7.9: four wider chips (2 × 2) and one line for the sun, so
+    /// "104 km/h NNW" or "11 · Extreme" fit at a readable size; plain stacks,
+    /// not a lazy grid, so the menu item measures its height right.
     private func details(_ reading: WeatherReading) -> some View {
         var chips: [(String, String, String)] = []
         if let humidity = reading.humidity { chips.append(("humidity.fill", "\(humidity)%", "Humidity")) }
@@ -711,36 +717,54 @@ struct WeatherMenuCard: View {
             let direction = reading.windDirection.map { " " + MenuBarWeather.compass($0) } ?? ""
             chips.append(("wind", "\(Int(wind.rounded())) \(unit)\(direction)", "Wind"))
         }
-        if let uv = reading.uvIndex { chips.append(("sun.max.fill", "\(Int(uv.rounded())) · \(MenuBarWeather.uvBand(uv))", "UV")) }
+        if let uv = reading.uvIndex { chips.append(("sun.max.fill", "\(Int(uv.rounded())) · \(MenuBarWeather.uvBand(uv))", "UV index")) }
         if let rain = reading.rainChance { chips.append(("umbrella.fill", "\(rain)%", "Rain today")) }
-        if let sunrise = reading.sunrise.flatMap(clock) { chips.append(("sunrise.fill", sunrise, "Sunrise")) }
-        if let sunset = reading.sunset.flatMap(clock) { chips.append(("sunset.fill", sunset, "Sunset")) }
-        return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
-            ForEach(Array(chips.enumerated()), id: \.offset) { _, chip in
+        let rows = stride(from: 0, to: chips.count, by: 2).map { Array(chips[$0..<min($0 + 2, chips.count)]) }
+        let sunrise = reading.sunrise.flatMap(clock), sunset = reading.sunset.flatMap(clock)
+        return VStack(spacing: 6) {
+            ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
                 HStack(spacing: 6) {
-                    Image(systemName: chip.0).symbolRenderingMode(.multicolor).font(.system(size: 12)).frame(width: 16)
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text(chip.1).font(.system(size: 11.5, weight: .semibold).monospacedDigit()).lineLimit(1).minimumScaleFactor(0.8)
-                        Text(chip.2).font(.system(size: 9.5)).foregroundStyle(.secondary).lineLimit(1)
-                    }
+                    ForEach(Array(row.enumerated()), id: \.offset) { _, chip in chipView(chip) }
+                    if row.count == 1 { Color.clear.frame(maxWidth: .infinity, maxHeight: 1) }
+                }
+            }
+            if sunrise != nil || sunset != nil {
+                HStack(spacing: 14) {
+                    if let sunrise { Label { Text("Sunrise \(sunrise)") } icon: { Image(systemName: "sunrise.fill").symbolRenderingMode(.multicolor) } }
+                    if let sunset { Label { Text("Sunset \(sunset)") } icon: { Image(systemName: "sunset.fill").symbolRenderingMode(.multicolor) } }
                     Spacer(minLength: 0)
                 }
-                .padding(.horizontal, 7).padding(.vertical, 5)
-                .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-                .accessibilityElement(children: .combine)
+                .font(.system(size: 11, weight: .medium).monospacedDigit())
+                .padding(.horizontal, 2)
             }
         }
+    }
+
+    private func chipView(_ chip: (String, String, String)) -> some View {
+        HStack(spacing: 7) {
+            Image(systemName: chip.0).symbolRenderingMode(.multicolor).font(.system(size: 13)).frame(width: 18)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(chip.1).font(.system(size: 12.5, weight: .semibold).monospacedDigit()).lineLimit(1).minimumScaleFactor(0.85)
+                Text(chip.2).font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 8).padding(.vertical, 6)
+        .frame(maxWidth: .infinity)
+        .weatherWell(radius: 8)
+        .accessibilityElement(children: .combine)
     }
 
     private func hourly(_ hours: [WeatherHour]) -> some View {
         HStack(spacing: 0) {
             ForEach(Array(hours.prefix(8).enumerated()), id: \.offset) { index, hour in
                 VStack(spacing: 3) {
+                    // Now is the reading itself, so it matches the big number (Gemini 7.9).
+                    let now = index == 0 ? reading : nil
                     Text(index == 0 ? "Now" : hourLabel(hour.time)).font(.system(size: 10, weight: index == 0 ? .semibold : .regular))
                         .foregroundStyle(index == 0 ? .primary : .secondary).lineLimit(1).minimumScaleFactor(0.8)
-                    Image(systemName: MenuBarWeather.colorSymbol(code: hour.code, isDay: hour.isDay))
-                        .symbolRenderingMode(.multicolor).font(.system(size: 13)).frame(height: 16)
-                    Text("\(Int(hour.temperature.rounded()))°").font(.system(size: 11.5, weight: .semibold).monospacedDigit())
+                    WeatherGlyph(code: now?.code ?? hour.code, isDay: now?.isDay ?? hour.isDay, size: 13).frame(height: 16)
+                    Text("\(Int((now?.temperature ?? hour.temperature).rounded()))°").font(.system(size: 11.5, weight: .semibold).monospacedDigit())
                     Text(hour.rain.map { $0 >= 20 ? "\($0)%" : " " } ?? " ")
                         .font(.system(size: 9, weight: .medium).monospacedDigit()).foregroundStyle(Color.blue)
                 }
@@ -749,18 +773,17 @@ struct WeatherMenuCard: View {
             }
         }
         .padding(.vertical, 6)
-        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .weatherWell(radius: 8)
     }
 
     private func weekly(_ days: [WeatherDay], now: WeatherReading) -> some View {
         let lowest = days.map(\.low).min() ?? 0, highest = days.map(\.high).max() ?? 1
-        return VStack(spacing: 3) {
+        return VStack(spacing: 2) {
             ForEach(Array(days.prefix(7).enumerated()), id: \.offset) { index, day in
                 HStack(spacing: 6) {
                     Text(index == 0 ? "Today" : dayLabel(day.date)).font(.system(size: 11.5, weight: index == 0 ? .semibold : .regular))
                         .frame(width: 46, alignment: .leading).lineLimit(1)
-                    Image(systemName: MenuBarWeather.colorSymbol(code: day.code, isDay: true))
-                        .symbolRenderingMode(.multicolor).font(.system(size: 12)).frame(width: 20)
+                    WeatherGlyph(code: day.code, isDay: true, size: 12).frame(width: 20)
                     Text(day.rain.map { $0 >= 20 ? "\($0)%" : "" } ?? "")
                         .font(.system(size: 9.5, weight: .medium).monospacedDigit()).foregroundStyle(Color.blue)
                         .frame(width: 28, alignment: .leading)
@@ -772,10 +795,12 @@ struct WeatherMenuCard: View {
                     Text("\(Int(day.high.rounded()))°").font(.system(size: 11.5, weight: .medium).monospacedDigit())
                         .frame(width: 30, alignment: .trailing)
                 }
-                .frame(height: 19)
+                .frame(height: 20)
                 .accessibilityElement(children: .combine)
             }
         }
+        .padding(.horizontal, 8).padding(.vertical, 6)
+        .weatherWell(radius: 8)
     }
 
     private var footer: some View {
@@ -841,13 +866,13 @@ struct WeatherRangeBar: View {
             let start = CGFloat((low - lowest) / span) * geometry.size.width
             let end = CGFloat((high - lowest) / span) * geometry.size.width
             ZStack(alignment: .leading) {
-                Capsule().fill(Color.primary.opacity(0.09))
+                Capsule().fill(Color.primary.opacity(0.12))
                 Capsule()
                     .fill(LinearGradient(colors: [Self.color(celsius(low)), Self.color(celsius(high))], startPoint: .leading, endPoint: .trailing))
                     .frame(width: max(5, end - start))
                     .offset(x: start)
                 if let current {
-                    Circle().fill(Color.white).overlay(Circle().strokeBorder(Color.black.opacity(0.25), lineWidth: 0.5))
+                    Circle().fill(Color.white).overlay(Circle().strokeBorder(Color.black.opacity(0.4), lineWidth: 0.75))
                         .frame(width: 6, height: 6)
                         .offset(x: min(max(0, CGFloat((current - lowest) / span) * geometry.size.width - 3), geometry.size.width - 6))
                 }
@@ -866,6 +891,55 @@ struct WeatherRangeBar: View {
         case ..<18: return Color(red: 0.45, green: 0.82, blue: 0.45)
         case ..<25: return Color(red: 0.98, green: 0.80, blue: 0.25)
         default: return Color(red: 0.98, green: 0.47, blue: 0.22)
+        }
+    }
+}
+
+private struct WeatherWell: ViewModifier {
+    let radius: CGFloat
+    @Environment(\.colorScheme) private var scheme
+
+    /// A quiet fill, with a hairline in light mode where the fill alone
+    /// disappears on white (Gemini 7.9).
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+        content
+            .background(Color.primary.opacity(scheme == .dark ? 0.07 : 0.045), in: shape)
+            .overlay(shape.strokeBorder(Color.primary.opacity(scheme == .dark ? 0.06 : 0.09), lineWidth: 0.5))
+    }
+}
+
+extension View {
+    fileprivate func weatherWell(radius: CGFloat) -> some View { modifier(WeatherWell(radius: radius)) }
+}
+
+/// A weather symbol that reads in both modes: Apple's multicolour symbols in
+/// dark mode; in light mode their white clouds vanish on white, so each kind
+/// of weather gets its own tint (sun orange, cloud grey, rain blue …).
+struct WeatherGlyph: View {
+    let code: Int
+    let isDay: Bool
+    var size: CGFloat = 13
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        let symbol = Image(systemName: MenuBarWeather.colorSymbol(code: code, isDay: isDay)).font(.system(size: size))
+        if scheme == .dark {
+            symbol.symbolRenderingMode(.multicolor)
+        } else {
+            symbol.symbolRenderingMode(.hierarchical).foregroundStyle(Self.tint(code: code, isDay: isDay))
+        }
+    }
+
+    static func tint(code: Int, isDay: Bool) -> Color {
+        switch code {
+        case 0, 1: return isDay ? Color.orange : Color.indigo
+        case 2: return isDay ? Color(red: 0.85, green: 0.55, blue: 0.15) : Color.indigo
+        case 3, 45, 48: return Color.gray
+        case 51...67, 80...82: return Color.blue
+        case 71...77, 85, 86: return Color.cyan
+        case 95...99: return Color.purple
+        default: return Color.secondary
         }
     }
 }

@@ -88,6 +88,9 @@ final class MenuBarHider: NSObject {
     func stop() {
         startCollapse?.cancel()
         startCollapse = nil
+        hoverWork?.cancel()
+        hoverWork = nil
+        inspection = nil
         cancelRehide()
         visibilityCheck?.cancel()
         for item in [toggle, divider, always].compactMap({ $0 }) { NSStatusBar.system.removeStatusItem(item) }
@@ -100,9 +103,11 @@ final class MenuBarHider: NSObject {
 
     @objc private func clicked() {
         if NSApp.currentEvent?.type == .rightMouseUp { showOptions(); return }
-        if NSEvent.modifierFlags.contains(.option) { expand(all: true); return }
-        // 7.9 (Bartender Bar): the hidden icons can open in a bar below instead.
-        if Self.revealMode == .bar, isCollapsed { MenuBarStripController.shared.toggle(); return }
+        // 7.9 (Bartender Bar): the hidden icons can open in a bar below instead;
+        // ⌥ brings the Always Hidden ones too, in either place.
+        let option = NSEvent.modifierFlags.contains(.option)
+        if Self.revealMode == .bar, isCollapsed { MenuBarStripController.shared.toggle(includeAlways: option); return }
+        if option { expand(all: true); return }
         if isCollapsed { expand() } else { collapse() }
     }
 
@@ -404,11 +409,23 @@ final class MenuBarHider: NSObject {
         return point.y >= screen.frame.maxY - height
     }
 
-    /// Any app's menu on screen (menus sit at the pop-up menu window level).
+    /// Any app's menu on screen (menus sit at the pop-up menu window level),
+    /// or a popover or panel hanging from the menu bar — Control Center,
+    /// 1Password, Stats (Gemini 7.9: those aren't menus and were hidden under
+    /// the person using them).
     private static func menuIsOpen() -> Bool {
         let level = Int(CGWindowLevelForKey(.popUpMenuWindow))
         guard let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return false }
-        return windows.contains { ($0[kCGWindowLayer as String] as? Int) == level }
+        let own = Int(ProcessInfo.processInfo.processIdentifier)
+        let menuBar = max(24, (NSScreen.main.map { $0.frame.maxY - $0.visibleFrame.maxY }) ?? 24)
+        return windows.contains { window in
+            let layer = window[kCGWindowLayer as String] as? Int ?? 0
+            if layer == level { return true }
+            guard layer >= Int(CGWindowLevelForKey(.floatingWindow)), (window[kCGWindowOwnerPID as String] as? Int) != own,
+                  let bounds = window[kCGWindowBounds as String] as? [String: CGFloat] else { return false }
+            let top = bounds["Y"] ?? 999, height = bounds["Height"] ?? 0
+            return MenuBarRehidePolicy.hangsFromMenuBar(top: top, height: height, menuBarHeight: menuBar)
+        }
     }
 }
 
@@ -425,5 +442,11 @@ enum MenuBarRehidePolicy {
 
     static func shouldCollapse(now: TimeInterval, deadline: TimeInterval, busy: Bool) -> Bool {
         !busy && now >= deadline
+    }
+
+    /// Pure: a window whose top edge meets the bottom of the menu bar and is
+    /// taller than the bar itself (a status item's popover or panel).
+    static func hangsFromMenuBar(top: CGFloat, height: CGFloat, menuBarHeight: CGFloat) -> Bool {
+        top >= menuBarHeight - 2 && top <= menuBarHeight + 14 && height > menuBarHeight + 16
     }
 }

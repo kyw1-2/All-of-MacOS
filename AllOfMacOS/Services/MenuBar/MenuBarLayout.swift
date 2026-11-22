@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import Combine
+import CryptoKit
 import ScreenCaptureKit
 
 // 7.9: Bartender's Layout page for AOM (Oracle: Bartender 7.1 GoldenGate
@@ -97,16 +98,25 @@ enum MenuBarLayoutPolicy {
     /// Where to let go of the Command-drag (AX coordinates). Before a
     /// neighbour: over its left quarter, so macOS puts the item left of it.
     /// At a lane's end: just past the divider that bounds the lane.
-    static func dropPoint(section: MenuBarSection, before neighbor: CGRect?, divider: CGRect, always: CGRect?) -> CGPoint? {
-        let y = divider.midY
+    /// Gemini 7.9: a Shown drop lands right of ❮ (not between the divider and
+    /// it), and reordering before a neighbour works without the Hider.
+    static func dropPoint(section: MenuBarSection, before neighbor: CGRect?, toggle: CGRect? = nil, divider: CGRect?, always: CGRect?) -> CGPoint? {
         if let neighbor { return CGPoint(x: neighbor.minX + max(2, neighbor.width * 0.25), y: neighbor.midY) }
+        guard let divider else { return nil }
+        let y = divider.midY
         switch section {
-        case .shown: return CGPoint(x: divider.maxX + 3, y: y)
+        case .shown: return CGPoint(x: max(divider.maxX, toggle?.maxX ?? divider.maxX) + 4, y: y)
         case .hidden: return CGPoint(x: divider.minX - 3, y: y)
         case .alwaysHidden:
             guard let always else { return nil }
             return CGPoint(x: always.minX - 3, y: y)
         }
+    }
+
+    /// Gemini 7.9: an item behind the notch or off every display can't be
+    /// dragged or photographed.
+    static func isVisible(_ frame: CGRect, displays: [MenuBarStripPolicy.Display]) -> Bool {
+        displays.contains { $0.frame.contains(frame) && $0.notch?.intersects(frame) != true }
     }
 
     /// The colour most of the menu bar shows (its top row), for lanes that
@@ -127,17 +137,28 @@ enum MenuBarCommandDrag {
     /// pointer where it was.
     static func perform(from start: CGPoint, to end: CGPoint) {
         let source = CGEventSource(stateID: .combinedSessionState)
+        // Gemini 7.9: no 250 ms freeze of the real mouse after the warp back.
+        source?.localEventsSuppressionInterval = 0
         let original = CGEvent(source: nil)?.location
+        let number = Int64.random(in: 10_000...9_999_999)
         func key(_ down: Bool) {
-            let event = CGEvent(keyboardEventSource: source, virtualKey: 0x37, keyDown: down)
-            event?.flags = down ? .maskCommand : []
-            event?.post(tap: .cghidEventTap)
+            // ⌘ is a modifier: it travels as flagsChanged, not keyDown.
+            guard let event = CGEvent(keyboardEventSource: source, virtualKey: 0x37, keyDown: down) else { return }
+            event.type = .flagsChanged
+            event.flags = down ? .maskCommand : []
+            event.post(tap: .cghidEventTap)
         }
         func mouse(_ type: CGEventType, _ point: CGPoint, command: Bool = true) {
-            let event = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: point, mouseButton: .left)
-            event?.flags = command ? .maskCommand : []
-            event?.post(tap: .cghidEventTap)
+            guard let event = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: point, mouseButton: .left) else { return }
+            event.flags = command ? .maskCommand : []
+            if type != .mouseMoved {
+                // One press: the same event number and a click count of one.
+                event.setIntegerValueField(.mouseEventNumber, value: number)
+                event.setIntegerValueField(.mouseEventClickState, value: 1)
+            }
+            event.post(tap: .cghidEventTap)
         }
+        CGWarpMouseCursorPosition(start)
         mouse(.mouseMoved, start, command: false)
         usleep(40_000)
         key(true)
@@ -168,17 +189,41 @@ enum MenuBarItemImager {
     static var hasPermission: Bool { CGPreflightScreenCaptureAccess() }
 
     /// `frames` in AX coordinates (top-left origin of the main display).
-    static func capture(_ frames: [String: CGRect]) async -> Result {
+    /// Display scales and notches, read on the main thread (Gemini 7.9: NSScreen
+    /// isn't for the capture's background executor).
+    struct Displays: Sendable {
+        var scales: [CGDirectDisplayID: CGFloat] = [:]
+        var notches: [CGDirectDisplayID: CGRect] = [:]
+    }
+
+    @MainActor static func displays() -> Displays {
+        let primary = NSScreen.screens.first?.frame.height ?? 0
+        var out = Displays()
+        for screen in NSScreen.screens {
+            guard let id = (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value else { continue }
+            out.scales[id] = screen.backingScaleFactor
+            if let notch = GestureHUD.notchRect(screen) { out.notches[id] = MenuBarStripPolicy.axRect(notch, primaryHeight: primary) }
+        }
+        return out
+    }
+
+    static func capture(_ frames: [String: CGRect], displays info: Displays) async -> Result {
         guard hasPermission, !frames.isEmpty,
               let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) else { return Result() }
         var result = Result()
         for display in content.displays {
             let bounds = CGDisplayBounds(display.displayID)
-            let mine = frames.filter { bounds.intersects($0.value) && $0.value.width > 0 }
+            let notch = info.notches[display.displayID]
+            // Only items wholly on this display and clear of its notch: an item
+            // pushed off the next display, or under the notch, would come back
+            // as app-menu text or black (Gemini 7.9).
+            let mine = frames.filter { _, rect in
+                rect.width > 0 && rect.height > 0 && bounds.contains(rect) && notch?.intersects(rect) != true
+            }
             guard !mine.isEmpty else { continue }
             let band = CGRect(x: 0, y: 0, width: bounds.width,
                               height: min(bounds.height, max(24, (mine.values.map(\.maxY).max() ?? 24) - bounds.minY + 1)))
-            let scale = NSScreen.screens.first { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == display.displayID }?.backingScaleFactor ?? 2
+            let scale = info.scales[display.displayID] ?? 2
             let configuration = SCStreamConfiguration()
             configuration.sourceRect = band
             configuration.width = Int(band.width * scale)
@@ -187,14 +232,19 @@ enum MenuBarItemImager {
             configuration.captureResolution = .best
             let filter = SCContentFilter(display: display, excludingWindows: [])
             guard let image = try? await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration) else { continue }
+            // The scale the image really has (rounding, even widths).
+            let sx = CGFloat(image.width) / max(1, band.width), sy = CGFloat(image.height) / max(1, band.height)
             for (key, frame) in mine {
-                let local = CGRect(x: (frame.minX - bounds.minX) * scale, y: (frame.minY - bounds.minY) * scale,
-                                   width: frame.width * scale, height: frame.height * scale).integral
+                let local = CGRect(x: (frame.minX - bounds.minX) * sx, y: (frame.minY - bounds.minY) * sy,
+                                   width: frame.width * sx, height: frame.height * sy).integral
                 guard let crop = image.cropping(to: local) else { continue }
-                result.images[key] = NSImage(cgImage: crop, size: frame.size)
+                result.images[key] = NSImage(cgImage: crop, size: NSSize(width: CGFloat(crop.width) / sx, height: CGFloat(crop.height) / sy))
             }
-            if result.background == nil, let bitmap = Optional(NSBitmapImageRep(cgImage: image)) {
-                let samples = stride(from: 0, to: bitmap.pixelsWide, by: max(1, bitmap.pixelsWide / 40)).compactMap { bitmap.colorAt(x: $0, y: 1) }
+            if result.background == nil {
+                // The right side, where the status items sit — not the notch or app menus.
+                let bitmap = NSBitmapImageRep(cgImage: image)
+                let start = Int(Double(bitmap.pixelsWide) * 0.65)
+                let samples = stride(from: start, to: bitmap.pixelsWide, by: max(1, (bitmap.pixelsWide - start) / 24)).compactMap { bitmap.colorAt(x: $0, y: 1) }
                 result.background = MenuBarLayoutPolicy.median(samples)
             }
         }
@@ -214,7 +264,7 @@ final class MenuBarLayoutModel: ObservableObject {
     @Published private(set) var lastRefresh: Date?
     /// True in an isolated preview filled with sample items.
     @Published private(set) var isSample = false
-    private var lastReveal = Date.distantPast
+    fileprivate var lastReveal = Date.distantPast
 
     private let worker = DispatchQueue(label: "com.kyw.aom.menubar-layout", qos: .userInitiated)
     private var generation = 0
@@ -222,12 +272,17 @@ final class MenuBarLayoutModel: ObservableObject {
     private init() {
         // Pictures from earlier reads, so the bar has real icons from the start
         // (Bartender keeps them on disk too; keys are identities, never places).
+        // A new look (dark/light, wallpaper) gets new pictures at the next read.
+        DistributedNotificationCenter.default().addObserver(forName: Notification.Name("AppleInterfaceThemeChangedNotification"), object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { MenuBarLayoutModel.shared.lastReveal = .distantPast }
+        }
         guard let folder = Self.cacheFolder,
-              let files = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil) else { return }
-        for file in files where file.pathExtension == "png" {
-            guard let key = Self.key(fromFile: file.deletingPathExtension().lastPathComponent),
-                  let image = NSImage(contentsOf: file) else { continue }
-            images[key] = image
+              let data = try? Data(contentsOf: folder.appendingPathComponent("index.json")),
+              let index = try? JSONDecoder().decode([String: String].self, from: data) else { return }
+        // Gemini 7.9: names are hashes (a long key overran the 255-byte limit);
+        // index.json maps them back. Read once, a few dozen small files.
+        for (file, key) in index {
+            if let image = NSImage(contentsOf: folder.appendingPathComponent(file)) { images[key] = image }
         }
     }
 
@@ -240,26 +295,28 @@ final class MenuBarLayoutModel: ObservableObject {
         return folder
     }
 
+    /// A fixed-length file name for a key (SHA-256, hex).
     nonisolated static func file(forKey key: String) -> String {
-        Data(key.utf8).base64EncodedString().replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "+", with: "-")
-    }
-
-    nonisolated static func key(fromFile name: String) -> String? {
-        let base64 = name.replacingOccurrences(of: "_", with: "/").replacingOccurrences(of: "-", with: "+")
-        return Data(base64Encoded: base64).flatMap { String(data: $0, encoding: .utf8) }
+        SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined() + ".png"
     }
 
     private func store(_ pictures: [String: NSImage]) {
         guard let folder = Self.cacheFolder, !pictures.isEmpty else { return }
+        // The index lists only the keys still pictured (no endless growth).
+        let index = Dictionary(images.keys.map { (Self.file(forKey: $0), $0) }, uniquingKeysWith: { a, _ in a })
+        let indexData = try? JSONEncoder().encode(index)
         let encoded: [(URL, Data)] = pictures.compactMap { key, image in
             guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
             // The point size goes into the PNG's resolution, so it loads at its size.
             let rep = NSBitmapImageRep(cgImage: cg)
             rep.size = image.size
             guard let data = rep.representation(using: .png, properties: [:]) else { return nil }
-            return (folder.appendingPathComponent(Self.file(forKey: key)).appendingPathExtension("png"), data)
+            return (folder.appendingPathComponent(Self.file(forKey: key)), data)
         }
-        DispatchQueue.global(qos: .utility).async { for (url, data) in encoded { try? data.write(to: url, options: .atomic) } }
+        DispatchQueue.global(qos: .utility).async {
+            for (url, data) in encoded { try? data.write(to: url, options: .atomic) }
+            if let indexData { try? indexData.write(to: folder.appendingPathComponent("index.json"), options: .atomic) }
+        }
     }
 
     var lanes: [MenuBarSection: [MenuBarLayoutItem]] { MenuBarLayoutPolicy.lanes(items) }
@@ -269,7 +326,9 @@ final class MenuBarLayoutModel: ObservableObject {
     /// Shows everything for a moment if the Hider has items hidden, reads
     /// every item's place, takes their pictures and puts the Hider back.
     func refresh(quietly: Bool = false, reveal allowReveal: Bool = true) {
-        guard !isSample else { return }
+        // Gemini 7.9: one read at a time — a second one used to end the first's
+        // reveal while it was still reading, and could cut into a move.
+        guard !isSample, !busy else { return }
         guard AXIsProcessTrusted() else {
             items = []
             status = "Allow Accessibility so AOM can read the menu bar."
@@ -315,9 +374,14 @@ final class MenuBarLayoutModel: ObservableObject {
                     self.items = laid
                     if snapshot.appsLeft > 0 { self.status = "\(snapshot.appsLeft) app\(snapshot.appsLeft == 1 ? "" : "s") didn't answer in time; Refresh to try again." }
                     var frames: [String: CGRect] = [:]
-                    for entry in laid { if let frame = entry.item.frame { frames[entry.imageKey] = frame } }
+                    // While the Hider is collapsed only the Shown items are where they look.
+                    let collapsed = MenuBarHider.shared.isRunning && MenuBarHider.shared.isCollapsed
+                    for entry in laid where !collapsed || entry.section == .shown {
+                        if let frame = entry.item.frame { frames[entry.imageKey] = frame }
+                    }
+                    let displays = MenuBarItemImager.displays()
                     Task { @MainActor [weak self] in
-                        let pictures = await MenuBarItemImager.capture(frames)
+                        let pictures = await MenuBarItemImager.capture(frames, displays: displays)
                         guard let self, ticket == self.generation else { done(); return }
                         // Pictures stay from earlier reads (an item behind the notch keeps its last one).
                         self.images.merge(pictures.images) { _, new in new }
@@ -344,17 +408,20 @@ final class MenuBarLayoutModel: ObservableObject {
             status = "Turn on Hide Icons to give the menu bar hidden sections."
             return
         }
+        busy = true
+        status = "Moving \(entry.item.displayName)…"
+        // The state to come back to is read before the always-hidden divider
+        // is added (Gemini 7.9: adding it first left everything shown).
+        hider.revealForInspection()
         if section == .alwaysHidden, !hider.hasAlwaysSection {
             hider.setAlwaysSection(true, announce: false)
         }
-        busy = true
-        status = "Moving \(entry.item.displayName)…"
-        hider.revealForInspection()
         let target = entry.item
         let neighborItem = neighbor.flatMap { key in items.first { $0.id == key }?.item }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
             guard let self else { return }
             let frames = hider.axFrames()
+            let displays = MenuBarStripPolicy.displays()
             let apps = AOMMenuShelfPolicy.orderedApps(NSWorkspace.shared.runningApplications.filter {
                 $0.processIdentifier == target.pid || $0.processIdentifier == neighborItem?.pid })
             self.worker.async { [weak self] in
@@ -367,11 +434,10 @@ final class MenuBarLayoutModel: ObservableObject {
                     return live.first { $0.ordinal == item.ordinal && $0.siblings == item.siblings }?.frame
                 }
                 let from = fresh(target)
-                let to: CGPoint? = frames.divider.flatMap {
-                    MenuBarLayoutPolicy.dropPoint(section: section, before: fresh(neighborItem), divider: $0, always: frames.always)
-                }
+                let to = MenuBarLayoutPolicy.dropPoint(section: section, before: fresh(neighborItem), toggle: frames.toggle,
+                                                       divider: frames.divider, always: frames.always)
                 var moved = false
-                if let from, let to, from.width > 0 {
+                if let from, let to, from.width > 0, MenuBarLayoutPolicy.isVisible(from, displays: displays) {
                     MenuBarCommandDrag.perform(from: CGPoint(x: from.midX, y: from.midY), to: to)
                     moved = true
                 }
@@ -382,7 +448,7 @@ final class MenuBarLayoutModel: ObservableObject {
                         self.busy = false
                         if !moved {
                             hider.endInspection()
-                            self.status = "Couldn't find \(target.displayName) on screen. ⌘-drag it yourself, then Refresh."
+                            self.status = "\(target.displayName) isn't on screen (behind the notch?). ⌘-drag it yourself, then Refresh."
                             return
                         }
                         self.generation &+= 1

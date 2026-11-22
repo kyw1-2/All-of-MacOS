@@ -15,6 +15,8 @@ struct MenuBarLayoutEditor: View {
     @ObservedObject private var modules = AOMModuleSwitches.shared
     @State private var selection: String?
     @State private var targeted: MenuBarSection?
+    /// The icon a drag would land before (an insertion line is drawn).
+    @State private var targetTile: String?
     @State private var renaming = false
 
     private var hiderOn: Bool { modules.isOn(.menuBarHider) || model.isSample }
@@ -100,25 +102,38 @@ struct MenuBarLayoutEditor: View {
     private func laneStrip(_ section: MenuBarSection, items: [MenuBarLayoutItem]) -> some View {
         let shape = RoundedRectangle(cornerRadius: 9, style: .continuous)
         let isTarget = targeted == section
-        return ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 2) {
-                Spacer(minLength: 0)
-                if items.isEmpty {
-                    Text(isTarget ? "Drop to move it here" : "Drag icons here")
-                        .font(AOMFont.caption).foregroundStyle(AOMColor.textTertiary)
-                        .padding(.horizontal, 10)
-                }
-                ForEach(items) { entry in
-                    tile(entry)
+        // Gemini 7.9: a horizontal scroll view offers its content unlimited
+        // width, so the icons only sit on the right (as in the menu bar) when
+        // the row is at least as wide as the lane.
+        return GeometryReader { geometry in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 2) {
+                    Spacer(minLength: 0)
+                    if items.isEmpty {
+                        Text(isTarget ? "Drop to move it here" : "Drag icons here")
+                            .font(AOMFont.caption).foregroundStyle(laneInk.opacity(0.6))
+                            .padding(.horizontal, 10)
+                    }
+                    ForEach(items) { entry in
+                        HStack(spacing: 2) {
+                            Capsule().fill(AOMColor.accent)
+                                .frame(width: 2.5, height: 24)
+                                .opacity(targetTile == entry.id ? 1 : 0)
+                            tile(entry)
+                        }
                         .dropDestination(for: String.self) { ids, _ in
+                            targetTile = nil
                             guard let id = ids.first, id != entry.id else { return false }
                             model.move(id, to: section, before: entry.id)
                             return true
+                        } isTargeted: { inside in
+                            if inside { targetTile = entry.id } else if targetTile == entry.id { targetTile = nil }
                         }
+                    }
                 }
+                .padding(.horizontal, 6)
+                .frame(minWidth: geometry.size.width, minHeight: 38, alignment: .trailing)
             }
-            .padding(.horizontal, 6)
-            .frame(minWidth: 0, maxWidth: .infinity, minHeight: 34, alignment: .trailing)
         }
         .frame(height: 38)
         .background(laneColor, in: shape)
@@ -140,6 +155,13 @@ struct MenuBarLayoutEditor: View {
         return AOMColor.sunken
     }
 
+    /// Text and badges that stay readable on the sampled bar colour.
+    private var laneInk: Color {
+        guard let color = model.barColor?.usingColorSpace(.sRGB) else { return AOMColor.text }
+        let luminance = 0.2126 * color.redComponent + 0.7152 * color.greenComponent + 0.0722 * color.blueComponent
+        return luminance * color.alphaComponent + (1 - color.alphaComponent) * 0.5 > 0.55 ? .black : .white
+    }
+
     private func tile(_ entry: MenuBarLayoutItem) -> some View {
         let selected = selection == entry.id
         let shape = RoundedRectangle(cornerRadius: 6, style: .continuous)
@@ -156,7 +178,8 @@ struct MenuBarLayoutEditor: View {
             .padding(.horizontal, 3)
             if entry.lockedReason != nil {
                 Image(systemName: "lock.fill").font(.system(size: 7, weight: .bold))
-                    .foregroundStyle(AOMColor.textSecondary)
+                    .foregroundStyle(laneInk.opacity(0.8))
+                    .shadow(color: laneInk == .white ? .black.opacity(0.5) : .white.opacity(0.7), radius: 0.5)
                     .offset(x: 1, y: 1)
                     .accessibilityHidden(true)
             }
@@ -164,7 +187,7 @@ struct MenuBarLayoutEditor: View {
         .background(selected ? AOMColor.accent.opacity(0.25) : .clear, in: shape)
         .overlay(shape.strokeBorder(selected ? AOMColor.accent : .clear, lineWidth: 1.5))
         .contentShape(shape)
-        .onTapGesture(count: 2) { open(entry) }
+        // One tap selects at once (a double-tap recogniser delayed it); Open is beside it.
         .onTapGesture { selection = selected ? nil : entry.id }
         .help("\(entry.item.displayName) · \(entry.item.ownerName)" + (entry.lockedReason.map { " — \($0)" } ?? ""))
         .modifier(DraggableUnlessLocked(id: entry.id, locked: entry.lockedReason != nil))
@@ -213,7 +236,7 @@ struct MenuBarLayoutEditor: View {
             .padding(10)
             .background(AOMColor.sunken.opacity(0.6), in: RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous))
         } else {
-            Text("Click an icon to name or open it. Double-click opens its menu.")
+            Text("Click an icon to name it, open its menu or move it.")
                 .font(AOMFont.caption).foregroundStyle(AOMColor.textTertiary)
         }
     }
@@ -237,6 +260,7 @@ private struct DraggableUnlessLocked: ViewModifier {
 /// The Bar as it will look, drawn from the same pictures (Settings preview).
 struct MenuBarBarPreview: View {
     @ObservedObject private var model = MenuBarLayoutModel.shared
+    @ObservedObject private var modules = AOMModuleSwitches.shared
 
     var body: some View {
         let entries = MenuBarStripController.shared.entries

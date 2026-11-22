@@ -85,7 +85,7 @@ struct MenuBarControlPage: View {
             AOMSection("Weather", detail: "Open-Meteo · no location permission", padding: 14) {
                 HStack(alignment: .top, spacing: 18) {
                     VStack(alignment: .leading, spacing: 10) {
-                        Toggle("Show in menu bar", isOn: module(.weather))
+                        Toggle("Show in menu bar", isOn: module(.weather)).toggleStyle(.switch)
                         HStack(spacing: 8) {
                             Image(systemName: "mappin.and.ellipse").foregroundStyle(AOMColor.textSecondary)
                             Text(weather.city?.name ?? "No city").font(.system(size: 13, weight: .semibold)).lineLimit(1)
@@ -141,6 +141,13 @@ struct MenuBarControlPage: View {
             }
         }
         .aomPage("Menu Bar")
+        // Gemini 7.9: ❮'s right-click menu and a move can change these too.
+        .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification).receive(on: RunLoop.main)) { _ in
+            if alwaysHidden != MenuBarHider.alwaysSectionOn { alwaysHidden = MenuBarHider.alwaysSectionOn }
+            if rehide != MenuBarHider.rehideSeconds { rehide = MenuBarHider.rehideSeconds }
+            if revealMode != MenuBarHider.revealMode { revealMode = MenuBarHider.revealMode }
+            if hover != MenuBarHider.hoverReveal { hover = MenuBarHider.hoverReveal }
+        }
         .aomPageLifecycle(minimumInterval: 20, onActivate: {
             if AXIsProcessTrusted() { layout.refresh(quietly: true) }
             spacing = SystemToolsModel.MenuBarSpacing.current(spacing: SystemToolsModel.MenuBarSpacing.Store.live.read("NSStatusItemSpacing"))
@@ -167,7 +174,8 @@ struct MenuBarControlPage: View {
             let saved = choice.apply(to: .live)
             var restarted = 0
             if saved {
-                for name in ["ControlCenter", "SystemUIServer"] {
+                // macOS 27 hosts system items in MenuBarAgent (Gemini 7.9).
+                for name in ["ControlCenter", "SystemUIServer", "MenuBarAgent"] {
                     let task = Process()
                     task.executableURL = URL(fileURLWithPath: "/usr/bin/killall")
                     task.arguments = [name]
@@ -179,7 +187,7 @@ struct MenuBarControlPage: View {
             DispatchQueue.main.async {
                 spacingBusy = false
                 if !saved { spacing = previous; spacingMessage = "Spacing failed; original values were restored." }
-                else { spacingMessage = restarted == 2 ? "Applied \(choice.title)." : "Saved; any remaining icons update at next login." }
+                else { spacingMessage = restarted >= 2 ? "Applied." : "Saved; any remaining icons update at next login." }
             }
         }
     }
