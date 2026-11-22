@@ -543,6 +543,11 @@ final class MenuBarLayoutModel: ObservableObject {
         }
         let hider = MenuBarHider.shared
         if hider.isRunning { hider.reapply() }
+        // Gemini 7.10: with icons showing, a move to Hidden changed nothing you
+        // could see — hide now, as Bartender does when you drop it there.
+        if section != .shown, hider.isRunning, !hider.isCollapsed, !MenuBarTriggers.shared.wideHold {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { MenuBarHider.shared.collapse(quiet: true) }
+        }
         switch section {
         case .shown: status = "\(name) stays in the menu bar."
         case .hidden: status = hider.isRunning ? "\(name) hides; ❮ or the Bar shows it." : "\(name) will hide once Hide icons is on."

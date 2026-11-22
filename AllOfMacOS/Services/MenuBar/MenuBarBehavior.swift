@@ -162,13 +162,12 @@ enum MenuBarTriggerPolicy {
         return CGRect(x: screen.minX, y: screen.maxY - height, width: screen.width, height: height)
     }
 
-    /// An Accessibility role under the pointer that is not an item: the bar
-    /// itself, the app, nothing at all.
-    static func isEmptySpace(role: String?, parentRole: String?) -> Bool {
+    /// The roles from the element under the pointer up through its
+    /// ancestors: empty space only when none of them is an item (Gemini 7.10:
+    /// custom icons nest groups inside their AXMenuBarItem).
+    static func isEmptySpace(chain: [String]) -> Bool {
         let itemRoles: Set<String> = ["AXMenuBarItem", "AXMenuExtra", "AXMenuItem", "AXButton", "AXImage", "AXStaticText"]
-        if let role, itemRoles.contains(role) { return false }
-        if let parentRole, ["AXMenuBarItem", "AXMenuExtra"].contains(parentRole) { return false }
-        return true
+        return !chain.contains { itemRoles.contains($0) }
     }
 
     /// Hidden icons fit when the space left for icons (right of the notch, or
@@ -197,14 +196,15 @@ enum MenuBarTriggerPolicy {
 /// How far the front app's menus reach (File, Edit … on the left), cached
 /// per front app for a few seconds: it is asked on every reveal.
 enum MenuBarAppMenus {
-    @MainActor private static var cache: (pid: pid_t, maxX: CGFloat, at: TimeInterval)?
+    @MainActor private static var cache: (pid: pid_t, screen: CGFloat, maxX: CGFloat, at: TimeInterval)?
 
+    /// The width the menus take from the screen's left edge.
     @MainActor
     static func maxX(on screen: NSScreen) -> CGFloat {
-        let fallback = screen.frame.minX + 400
+        let fallback: CGFloat = 400
         guard AXIsProcessTrusted(), let app = NSWorkspace.shared.frontmostApplication else { return fallback }
         let now = ProcessInfo.processInfo.systemUptime
-        if let cache, cache.pid == app.processIdentifier, now - cache.at < 5 { return cache.maxX }
+        if let cache, cache.pid == app.processIdentifier, cache.screen == screen.frame.minX, now - cache.at < 5 { return cache.maxX }
         let element = AXUIElementCreateApplication(app.processIdentifier)
         AXUIElementSetMessagingTimeout(element, 0.25)
         guard let bar = AOMMenuShelfProbe.attribute(element, kAXMenuBarAttribute as CFString),
@@ -213,7 +213,7 @@ enum MenuBarAppMenus {
               let items = AOMMenuShelfProbe.attribute(bar as! AXUIElement, kAXChildrenAttribute as CFString) as? [AXUIElement],
               let last = items.last, let frame = AOMMenuShelfProbe.frame(last) else { return fallback }
         let value = frame.maxX - screen.frame.minX
-        cache = (app.processIdentifier, value, now)
+        cache = (app.processIdentifier, screen.frame.minX, value, now)
         return value
     }
 }
@@ -231,6 +231,9 @@ enum MenuBarHitTest {
         AOMMenuShelfProbe.attribute(element, kAXRoleAttribute as CFString) as? String
     }
 
+    /// One question at a time, so quick hovers don't pile up.
+    private static let queue = DispatchQueue(label: "aom.menubar.hittest", qos: .userInitiated)
+
     /// True when the point (Accessibility coordinates, top-left origin) is
     /// menu bar space with no item or app menu under it. Unknown answers
     /// count as not empty.
@@ -239,11 +242,15 @@ enum MenuBarHitTest {
         var element: AXUIElement?
         let result = AXUIElementCopyElementAtPosition(systemWide, Float(point.x), Float(point.y), &element)
         // Over nothing at all (the empty bar belongs to no app's tree).
-        guard result == .success, let element else { return result == .noValue }
-        let parent = AOMMenuShelfProbe.attribute(element, kAXParentAttribute as CFString)
-        // swiftlint:disable:next force_cast
-        let parentRole = parent.flatMap { CFGetTypeID($0) == AXUIElementGetTypeID() ? role($0 as! AXUIElement) : nil }
-        return MenuBarTriggerPolicy.isEmptySpace(role: role(element), parentRole: parentRole)
+        guard result == .success, var current = element else { return result == .noValue }
+        var chain: [String] = []
+        for _ in 0..<6 {
+            if let role = role(current) { chain.append(role) }
+            guard let parent = AOMMenuShelfProbe.attribute(current, kAXParentAttribute as CFString),
+                  CFGetTypeID(parent) == AXUIElementGetTypeID() else { break }
+            current = parent as! AXUIElement // swiftlint:disable:this force_cast
+        }
+        return MenuBarTriggerPolicy.isEmptySpace(chain: chain)
     }
 
     /// Asks off the main thread and answers on it.
@@ -251,7 +258,7 @@ enum MenuBarHitTest {
     static func whenEmpty(at point: CGPoint, then: @escaping @MainActor () -> Void) {
         let primary = NSScreen.screens.first?.frame.height ?? 0
         let ax = CGPoint(x: point.x, y: primary - point.y)
-        DispatchQueue.global(qos: .userInitiated).async {
+        queue.async {
             guard isEmpty(atAX: ax) else { return }
             DispatchQueue.main.async { MainActor.assumeIsolated { then() } }
         }
@@ -267,7 +274,12 @@ final class MenuBarTriggers {
     static let shared = MenuBarTriggers()
 
     private var monitor: Any?
+    /// Gemini 7.10: global monitors miss events sent to AOM itself (its
+    /// Settings window in front), so the same handler also watches locally.
+    private var localMonitor: Any?
     private var mask: NSEvent.EventTypeMask = []
+    private var activationObserver: NSObjectProtocol?
+    private var arrangeEnd: DispatchWorkItem?
     private var screenObserver: NSObjectProtocol?
     /// The menu bar band of each screen, refreshed when displays change.
     private var bands: [CGRect] = []
@@ -291,16 +303,26 @@ final class MenuBarTriggers {
                 MenuBarTriggers.shared.applyWideRule()
             }
         }
+        // "Active screen": the one in use changes as you move between apps.
+        activationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { MenuBarTriggers.shared.applyWideRule() }
+        }
         reconfigure()
         applyWideRule()
     }
 
     func stop() {
-        if let monitor { NSEvent.removeMonitor(monitor) }
+        for item in [monitor, localMonitor].compactMap({ $0 }) { NSEvent.removeMonitor(item) }
         monitor = nil
+        localMonitor = nil
         mask = []
         if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
         screenObserver = nil
+        if let activationObserver { NSWorkspace.shared.notificationCenter.removeObserver(activationObserver) }
+        activationObserver = nil
+        arrangeEnd?.cancel()
+        arrangeEnd = nil
         hoverWork?.cancel()
         hoverHideWork?.cancel()
         revealedByHover = false
@@ -325,21 +347,36 @@ final class MenuBarTriggers {
         let wanted = Self.mask(click: MenuBarPrefs.showOnEmptyClick, scroll: MenuBarPrefs.showOnScroll,
                                hover: MenuBarPrefs.showOnHover, commandDrag: MenuBarPrefs.commandDragShowsAll)
         guard wanted != mask || monitor == nil else { return }
-        if let monitor { NSEvent.removeMonitor(monitor) }
+        for item in [monitor, localMonitor].compactMap({ $0 }) { NSEvent.removeMonitor(item) }
         mask = wanted
         monitor = NSEvent.addGlobalMonitorForEvents(matching: wanted) { event in
-            // AOM's own synthetic clicks (item hotkeys, ⌘-drag moves) are not the user's.
-            if event.cgEvent?.getIntegerValueField(.eventSourceUserData) == SyntheticInput.selfTag { return }
-            let type = event.type, flags = event.modifierFlags, delta = event.scrollingDeltaY + event.scrollingDeltaX
-            MainActor.assumeIsolated { MenuBarTriggers.shared.handle(type, flags: flags, scroll: delta) }
+            MainActor.assumeIsolated { MenuBarTriggers.shared.receive(event) }
         }
+        localMonitor = NSEvent.addLocalMonitorForEvents(matching: wanted) { event in
+            MainActor.assumeIsolated { MenuBarTriggers.shared.receive(event) }
+            return event
+        }
+    }
+
+    private func receive(_ event: NSEvent) {
+        // AOM's own synthetic clicks (item hotkeys, ⌘-drag moves) are not the user's.
+        if event.cgEvent?.getIntegerValueField(.eventSourceUserData) == SyntheticInput.selfTag { return }
+        var delta: CGFloat = 0
+        // Scroll fields only on scroll events (they raise on others); the
+        // momentum after a swipe is ignored, and the direction is the
+        // fingers' (natural scrolling flips the numbers).
+        if event.type == .scrollWheel, event.momentumPhase.isEmpty {
+            let raw = abs(event.scrollingDeltaY) >= abs(event.scrollingDeltaX) ? event.scrollingDeltaY : event.scrollingDeltaX
+            delta = event.isDirectionInvertedFromDevice ? -raw : raw
+        }
+        handle(event.type, flags: event.modifierFlags, scroll: delta)
     }
 
     private func readBands() {
         bands = NSScreen.screens.map { MenuBarTriggerPolicy.band(screen: $0.frame, visibleMaxY: $0.visibleFrame.maxY) }
     }
 
-    private func inBar(_ point: CGPoint) -> Bool { bands.contains { $0.contains(point) } }
+    fileprivate func inBar(_ point: CGPoint) -> Bool { bands.contains { $0.contains(point) } }
 
     private func handle(_ type: NSEvent.EventType, flags: NSEvent.ModifierFlags, scroll: CGFloat) {
         let hider = MenuBarHider.shared
@@ -382,12 +419,21 @@ final class MenuBarTriggers {
             let now = NSEvent.mouseLocation
             guard self.inBar(now), MenuBarHider.shared.isCollapsed, NSEvent.pressedMouseButtons == 0 else { return }
             MenuBarHitTest.whenEmpty(at: now) {
-                MenuBarTriggers.shared.revealedByHover = true
-                MenuBarHider.shared.revealFromTrigger()
+                // The answer can come late: only if the pointer is still there.
+                let triggers = MenuBarTriggers.shared
+                guard triggers.inBar(NSEvent.mouseLocation), MenuBarHider.shared.isCollapsed else { return }
+                triggers.revealByHover()
             }
         }
         hoverWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + MenuBarPrefs.hoverShowDelay, execute: work)
+    }
+
+    /// Shown by resting the pointer (on empty space or on ❮): hidden again
+    /// when it leaves the menu bar for the hover-hide delay.
+    func revealByHover() {
+        revealedByHover = true
+        MenuBarHider.shared.revealFromTrigger()
     }
 
     private func pointerLeftBar() {
@@ -398,6 +444,9 @@ final class MenuBarTriggers {
             guard let self else { return }
             self.hoverHideWork = nil
             guard !self.inBar(NSEvent.mouseLocation) else { return }
+            // Gemini 7.10: the hover opened the Bar and the pointer went down
+            // into it — the Bar's own leave timer decides, not this one.
+            if MenuBarStripController.shared.isVisible { self.revealedByHover = false; return }
             // A menu or popover of a shown icon is open: look again shortly.
             guard !MenuBarHider.isMenuBarBusy() else { self.pointerLeftBar(); return }
             self.revealedByHover = false
@@ -409,6 +458,8 @@ final class MenuBarTriggers {
 
     /// ⌘ held on the menu bar: every section shows so icons can be dragged.
     private func beginArranging() {
+        arrangeEnd?.cancel()
+        arrangeEnd = nil
         guard !arranging else { return }
         arranging = true
         MenuBarHider.shared.showAllForArranging()
@@ -416,15 +467,17 @@ final class MenuBarTriggers {
 
     private func endArranging() {
         arranging = false
-        // A moment for macOS to settle the drop, then back to how it was.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-            MenuBarHider.shared.endArranging()
-        }
+        // A moment for macOS to settle the drop, then back to how it was
+        // (a second ⌘-drag in that moment cancels it).
+        let work = DispatchWorkItem { MenuBarHider.shared.endArranging() }
+        arrangeEnd = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: work)
     }
 
     /// "Show all menu bar items when active screen is bigger than …".
     func applyWideRule() {
-        let width = NSScreen.main?.frame.width ?? 0
+        let mouse = NSEvent.mouseLocation
+        let width = (NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main)?.frame.width ?? 0
         let wide = MenuBarTriggerPolicy.showsAll(screenWidth: width, threshold: MenuBarPrefs.showAllWiderThan)
         guard wide != wideHold else { return }
         wideHold = wide

@@ -59,8 +59,9 @@ final class MenuBarHider: NSObject {
     func start() {
         guard toggle == nil else { return }
         native = MenuBarNativeHiding.isAvailable
-        // 7.10: Bartender's click / scroll / hover on empty menu bar space.
-        MenuBarTriggers.shared.start()
+        // 7.10: Bartender's click / scroll / hover on empty menu bar space —
+        // started once ❮ exists (Gemini 7.10: before it, nothing was installed).
+        defer { MenuBarTriggers.shared.start() }
         if native { startNative(); return }
         // Items are added right to left, so the chevron comes first and the
         // divider lands on its left.
@@ -77,7 +78,10 @@ final class MenuBarHider: NSObject {
         isCollapsed = false
         updateAppearance()
         if UserDefaults.standard.bool(forKey: Self.usedKey) {
-            let work = DispatchWorkItem { [weak self] in self?.collapse(quiet: true) }
+            let work = DispatchWorkItem { [weak self] in
+                guard !MenuBarTriggers.shared.wideHold else { return }
+                self?.collapse(quiet: true)
+            }
             startCollapse = work
             DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: work)
         } else {
@@ -87,10 +91,19 @@ final class MenuBarHider: NSObject {
 
     private func startNative() {
         toggle = makeToggle(tip: "Hidden menu bar icons · click to show or hide · ⌥-click shows all · right-click for options")
+        // Know where the clock and every icon are without opening Settings
+        // (the clock hand-off and item hotkeys need them; Gemini 7.10).
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+            let model = MenuBarLayoutModel.shared
+            if AXIsProcessTrusted(), model.items.isEmpty { model.refresh(quietly: true, reveal: false) }
+        }
         isCollapsed = false
         updateAppearance()
         if UserDefaults.standard.bool(forKey: Self.usedKey) {
-            let work = DispatchWorkItem { [weak self] in self?.collapse(quiet: true) }
+            let work = DispatchWorkItem { [weak self] in
+                guard !MenuBarTriggers.shared.wideHold else { return }
+                self?.collapse(quiet: true)
+            }
             startCollapse = work
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
         }
@@ -110,6 +123,12 @@ final class MenuBarHider: NSObject {
 
     fileprivate func checkChevronSurvived() {
         guard native, isCollapsed, MenuBarNativeHiding.shared.isHolding else { return }
+        // A full-screen app or "automatically hide the menu bar" moves ❮ off
+        // screen too; look again once the menu bar is back (Gemini 7.10).
+        if let screen = NSScreen.screens.first, screen.visibleFrame.maxY >= screen.frame.maxY - 1 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { MenuBarHider.shared.checkChevronSurvived() }
+            return
+        }
         guard !Self.chevronVisible(toggle?.button?.window) else { return }
         MenuBarNativeHiding.shared.release()
         isCollapsed = false
@@ -202,7 +221,9 @@ final class MenuBarHider: NSObject {
     /// the Bar — also when the menu bar has no room for them (Bartender:
     /// "the Bar will show these items instead").
     func revealFromTrigger(includeAlways: Bool = false) {
-        guard isRunning, isCollapsed else { return }
+        guard isRunning else { return }
+        // Already showing the Hidden ones: Show All adds Always Hidden (Gemini 7.10).
+        if !isCollapsed { if includeAlways, !showsAll { expand(all: true) }; return }
         if Self.revealMode == .bar || (MenuBarPrefs.barWhenNoRoom && !hasRoomForHidden(includeAlways: includeAlways)) {
             MenuBarStripController.shared.show(includeAlways: includeAlways)
             return
@@ -327,10 +348,10 @@ final class MenuBarHider: NSObject {
         hoverWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self, self.isCollapsed else { return }
-            self.revealFromTrigger()
+            MenuBarTriggers.shared.revealByHover()
         }
         hoverWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + MenuBarPrefs.hoverShowDelay, execute: work)
     }
 
     @objc(mouseExited:) func hoverExited(_ event: NSEvent) {
@@ -445,7 +466,8 @@ final class MenuBarHider: NSObject {
 
     func setRehideSeconds(_ seconds: Double) {
         Self.rehideSeconds = seconds
-        if !isCollapsed { expand(all: showsAll) } // update the active timeout too
+        // Update the active timeout too — not while a wide display shows everything.
+        if !isCollapsed { expand(all: showsAll, holdOpen: MenuBarTriggers.shared.wideHold) }
     }
 
     /// Sets both lengths for the state, then checks the chevron is still on a
@@ -525,7 +547,7 @@ final class MenuBarHider: NSObject {
                 }
             }
             if !quiet, !MenuBarSectionStore.all.values.contains(where: { $0 != .shown }) {
-                GestureHUD.shared.show(title: "Nothing to Hide Yet", detail: "Drag icons to Hidden in Menu Bar › Layout.")
+                GestureHUD.shared.show(title: "Nothing to Hide Yet", detail: "Drag icons to Hidden in Menu Bar › Menu Bar Items.")
             }
             return
         }
@@ -576,7 +598,7 @@ final class MenuBarHider: NSObject {
     /// the pointer on it, a menu open (theirs or another app's) or a mouse
     /// button held (a ⌘-drag) restart it from the full time.
     private func tickRehide() {
-        guard !isCollapsed, toggle != nil else { cancelRehide(); return }
+        guard !isCollapsed, toggle != nil, !MenuBarTriggers.shared.wideHold else { cancelRehide(); return }
         let now = ProcessInfo.processInfo.systemUptime
         let busy = MenuBarRehidePolicy.isBusy(pointerInMenuBar: Self.pointerInMenuBar(),
                                                menuOpen: Self.menuIsOpen(),
@@ -602,14 +624,19 @@ final class MenuBarHider: NSObject {
         let level = Int(CGWindowLevelForKey(.popUpMenuWindow))
         guard let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return false }
         let own = Int(ProcessInfo.processInfo.processIdentifier)
-        let menuBar = max(24, (NSScreen.main.map { $0.frame.maxY - $0.visibleFrame.maxY }) ?? 24)
+        // Each display's menu bar, in window-list coordinates (Gemini 7.10:
+        // popovers on a display above or below the main one were missed).
+        let primary = NSScreen.screens.first?.frame.maxY ?? 0
+        let bars = NSScreen.screens.map { screen in
+            (top: primary - screen.frame.maxY, height: max(24, screen.frame.maxY - screen.visibleFrame.maxY))
+        }
         return windows.contains { window in
             let layer = window[kCGWindowLayer as String] as? Int ?? 0
             if layer == level { return true }
             guard layer >= Int(CGWindowLevelForKey(.floatingWindow)), (window[kCGWindowOwnerPID as String] as? Int) != own,
                   let bounds = window[kCGWindowBounds as String] as? [String: CGFloat] else { return false }
             let top = bounds["Y"] ?? 999, height = bounds["Height"] ?? 0
-            return MenuBarRehidePolicy.hangsFromMenuBar(top: top, height: height, menuBarHeight: menuBar)
+            return bars.contains { MenuBarRehidePolicy.hangsFromMenuBar(top: top - $0.top, height: height, menuBarHeight: $0.height) }
         }
     }
 }

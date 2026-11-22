@@ -41,9 +41,30 @@ Deferred: a `HidingBackend` protocol and a single "reveal reasons" state instead
 
 Orphans (periphery 3.8 on a native SwiftPM index, kept only names that occur once in all Swift code): 20 dead constants/properties, `AOMMenuEditorSection`, and `AOMWorkspaceGreeting` (kept alive only by its own test since 6.0 dropped the greeting). Type-level hits (BatteryCare, SMC, SystemTools result structs) are referenced from other files or targets and were left.
 
-## Gemini review
+## Gemini review (AI Studio, Gemini 4 Neon, Thinking High, new chat "AOM 7.10 코드 검수 결과", ~39k tokens of raw code)
 
-See the section added after the AI Studio review.
+Fixed (checked against the code first):
+- Triggers were started before ❮ existed, so `reconfigure()` returned early and nothing was installed until a setting changed; the wide-display rule was also lost at launch.
+- Global monitors miss events sent to AOM itself; a local monitor now feeds the same handler.
+- A Bar opened by hover closed under the pointer (AOM's own panel never counted as busy); the Bar's own leave timer now decides.
+- Setup page 3 had no way out without Accessibility, and unticking "Do not show this again" was ignored.
+- The first drag to Hidden changed nothing visible (icons were showing); a move out of Shown now hides at once.
+- Hit-test answers arriving after the pointer left still revealed; custom icons with nested groups counted as empty space (the ancestor chain is checked now, on one serial queue).
+- `showTemporarily` could lose its click to an app-launch re-hide; a lift is marked before the request, and a second click on a shown app restarts its time.
+- Changing icon spacing restarts MenuBarAgent; the restriction is now asked for again.
+- The clock hand-off didn't bump the request generation, checked only the first display's clock, and had no positions until Settings was opened (a quiet read now runs after start).
+- App-menu width fallback mixed absolute and relative X; popover detection assumed the main display.
+- Chevron hover ignored the hover delays; a second ⌘-drag within 1.2 s was cut short; "Show All" did nothing while Hidden icons showed; the Show All hotkey didn't toggle.
+- Item hotkeys after a restart couldn't find a hidden app's icon (its app is let back first); a missing fresh position fell back to an old one that might be another icon; changing the click type could lose the key; recording left every key suspended if AOM went to the back.
+- A wide display's "show all" was collapsed by the rehide timer after changing its time.
+- Reset layout left a preset applied; the Bar and Advanced panes didn't follow changes made from ❮'s menu.
+- White glyphs on light menu bars; strips scrolled from the left; the hovered app's other icons now light up (they move together on macOS 27); the Bar toggle is back in the Bar pane.
+- Scrolling ignored momentum and natural scrolling. (Also found while fixing: scroll fields were read on every event type, which can raise for mouse events.)
+
+Disproved or not changed:
+- "Clock" detection depending on the macOS language: it comes from the item's Accessibility identifier.
+- Item hotkey keys: they already store the stable key (`stableKey ?? pinKey`).
+- "❮" in help text when another icon is chosen, a hidden-icon mode, hotkey hints in ❮'s menu, Triggers: left for later.
 
 ## Verified / not verified
 

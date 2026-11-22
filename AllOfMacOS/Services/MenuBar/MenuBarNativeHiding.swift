@@ -7,7 +7,7 @@ import AppKit
 // pushed anything off; macOS's own menu bar restriction (MenuBarClientCore,
 // as Hidden Bar 1.11 and Bartender 7 use) hid Raycast, ChatGPT and Google
 // Drive at once and reflowed the bar. So on macOS 27 AOM keeps a section per
-// app — Shown, Hidden, Always Hidden — chosen in Menu Bar › Layout, and asks
+// app — Shown, Hidden, Always Hidden — chosen in Menu Bar › Menu Bar Items, and asks
 // macOS to show only the allowed apps. Nothing is dragged in the real menu bar.
 //
 // Limits macOS 27 sets: hiding is per app (an app's icons go together), and
@@ -87,6 +87,8 @@ final class MenuBarNativeHiding {
 
     /// Hides the apps in these sections; nil leaves everything visible.
     func hide(_ sections: Set<MenuBarSection>, completion: ((Bool) -> Void)? = nil) {
+        // A lift whose request this one replaces never started its timer.
+        if let lift, lift.timer == nil { self.lift = nil }
         hiding = sections
         guard !sections.isEmpty else { release(); completion?(true); return }
         let running = NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier)
@@ -167,17 +169,38 @@ final class MenuBarNativeHiding {
     /// Lets one hidden app show (its icons come back where they were) until
     /// its menu closes and the pointer leaves the menu bar.
     func showTemporarily(_ bundle: String, then: @escaping () -> Void) {
-        guard isHolding, let current = allowed, !current.contains(bundle) else { then(); return }
+        guard isHolding, let current = allowed else { then(); return }
+        // Already let back: start its time over (Gemini 7.10: it could vanish
+        // just before the click).
+        if current.contains(bundle) {
+            if lift?.bundle == bundle { startLift(bundle: bundle) }
+            then()
+            return
+        }
         endLift()
-        activate((current + [bundle]).sorted()) { [weak self] ok in
+        // Marked before the request goes out, so an app launch in between
+        // doesn't re-hide over it and swallow the click (Gemini 7.10).
+        lift = (bundle, nil)
+        activate((current + [bundle]).sorted()) { [weak self] _ in
             guard let self else { return }
             self.startLift(bundle: bundle)
             then()
-            _ = ok
         }
     }
 
+    /// macOS restarted its menu bar (the spacing setting does): the old
+    /// restriction may be gone on its side, so it is asked for again.
+    func renewHold() {
+        guard isHolding else { return }
+        let sections = hiding
+        if let assertion { AOMMenuBarNativeInvalidate(assertion) }
+        assertion = nil
+        allowed = nil
+        hide(sections)
+    }
+
     private func startLift(bundle: String?) {
+        lift?.timer?.invalidate()
         var quietTicks = 0
         // Bartender's "Delay before hiding temporarily shown menu bar items"
         // (15 s); the clock's lift ends as soon as its panel closes.
@@ -210,8 +233,12 @@ final class MenuBarNativeHiding {
         guard isHolding, lift == nil else { return false }
         let primary = NSScreen.screens.first?.frame.height ?? 0
         let ax = CGPoint(x: point.x, y: primary - point.y)
-        guard let clock = MenuBarLayoutModel.shared.items.first(where: { $0.item.identity?.name == "Clock" })?.item,
-              let frame = clock.frame, frame.insetBy(dx: -2, dy: -2).contains(ax) else { return false }
+        // Every display has a clock.
+        guard let clock = MenuBarLayoutModel.shared.items.first(where: { entry in
+            entry.item.identity?.name == "Clock" && (entry.item.frame?.insetBy(dx: -2, dy: -2).contains(ax) ?? false)
+        })?.item else { return false }
+        // A request still on its way must not put the restriction back (Gemini 7.10).
+        generation &+= 1
         let keep = hiding
         if let assertion { AOMMenuBarNativeInvalidate(assertion) }
         assertion = nil

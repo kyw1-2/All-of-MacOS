@@ -170,6 +170,8 @@ struct MenuBarGeneralPane: View {
                 spacingBusy = false
                 if !saved { spacing = previous; spacingMessage = "Spacing failed; original values were restored." }
                 else { spacingMessage = restarted >= 2 ? "Applied." : "Saved; any remaining icons update at next login." }
+                // MenuBarAgent restarted: ask macOS again for the hiding (Gemini 7.10).
+                if saved { DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { MenuBarNativeHiding.shared.renewHold() } }
             }
         }
     }
@@ -180,6 +182,7 @@ struct MenuBarGeneralPane: View {
 struct MenuBarBarPane: View {
     @ObservedObject private var shelf = AOMMenuShelfController.shared
     @ObservedObject private var modules = AOMModuleSwitches.shared
+    private let bar = Pref(read: { MenuBarHider.revealMode == .bar }, write: { MenuBarHider.revealMode = $0 ? .bar : .menuBar })
     private let atMouse = Pref(read: { MenuBarPrefs.barAtMouse }, write: { MenuBarPrefs.barAtMouse = $0 })
     private let autohide = Pref(read: { MenuBarPrefs.barAutohide }, write: { MenuBarPrefs.barAutohide = $0 })
     private let leave = Pref(read: { MenuBarPrefs.barLeaveDelay }, write: { MenuBarPrefs.barLeaveDelay = $0 })
@@ -205,10 +208,8 @@ struct MenuBarBarPane: View {
             }
         }
         AOMSection("Behaviour") {
-            AOMSettingRow("Show hidden icons in the Bar instead of the menu bar", detail: "General › Bar", symbol: "menubar.dock.rectangle") {
-                Button("General…") { UserDefaults.standard.set(MenuBarSettingsTab.general.rawValue, forKey: MenuBarSettingsTab.key) }
-                    .controlSize(.small)
-            }
+            AOMToggleRow("Show hidden icons in the Bar", detail: "Instead of swapping them into the menu bar (also in General)",
+                         symbol: "menubar.dock.rectangle", isOn: bar.binding)
             AOMToggleRow("Show the Bar at the mouse", detail: "Otherwise under ❮", symbol: "cursorarrow", isOn: atMouse.binding)
             AOMToggleRow("Hide the Bar when your pointer leaves it", symbol: "rectangle.portrait.and.arrow.right", isOn: autohide.binding)
             AOMSettingRow("After", symbol: "timer", indent: true) {
@@ -223,6 +224,9 @@ struct MenuBarBarPane: View {
                 .disabled(!AXIsProcessTrusted())
         }
         .disabled(!modules.isOn(.menuBarHider))
+        .onReceive(defaultsChanged) { _ in
+            bar.sync(); atMouse.sync(); autohide.sync(); leave.sync()
+        }
     }
 }
 
@@ -249,6 +253,8 @@ struct MenuBarHotkeysPane: View {
             itemTable
         }
         .onDisappear { stopRecording() }
+        // Recording suspends every AOM key; never leave them off when AOM goes to the back.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in stopRecording() }
     }
 
     private var itemBindings: [PaletteHotkey] {
@@ -296,8 +302,8 @@ struct MenuBarHotkeysPane: View {
         HStack(spacing: 8) {
             if let entry = entry(for: key) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 5).fill(model.barColor.map { Color(nsColor: $0) } ?? AOMColor.sunken)
-                    MenuBarItemPicture(entry: entry, height: 14, ink: .white)
+                    RoundedRectangle(cornerRadius: 5).fill(model.laneColor)
+                    MenuBarItemPicture(entry: entry, height: 14, ink: model.ink)
                 }
                 .frame(width: 34, height: 22)
             }
@@ -343,7 +349,11 @@ struct MenuBarHotkeysPane: View {
         let shortcut = binding.shortcut
         store.remove(binding.itemID)
         do { try store.set(shortcut, for: MenuBarHotkeys.itemID(key, activation: activation), title: binding.title) }
-        catch { problem = error.localizedDescription }
+        catch {
+            // Put the old key back rather than lose it (Gemini 7.10).
+            _ = try? store.set(shortcut, for: binding.itemID, title: binding.title)
+            problem = error.localizedDescription
+        }
     }
 
     private func recorder(_ id: String, title: String, saved: (() -> Void)? = nil) -> some View {
@@ -414,6 +424,9 @@ struct MenuBarAdvancedPane: View {
             }
         }
         .disabled(!modules.isOn(.menuBarHider))
+        .onReceive(defaultsChanged) { _ in
+            commandDrag.sync(); noRoom.sync(); temporary.sync(); always.sync()
+        }
         AOMSection("Hiding method") {
             AOMSettingRow(MenuBarNativeHiding.isAvailable ? "macOS menu bar restriction" : "Divider",
                           detail: MenuBarNativeHiding.isAvailable
@@ -434,6 +447,10 @@ struct MenuBarAdvancedPane: View {
         }
         .confirmationDialog("Show every app's icons again?", isPresented: $confirmReset) {
             Button("Reset Layout", role: .destructive) {
+                // An applied preset is let go too, or removing it later would
+                // bring the old layout back (Gemini 7.10).
+                UserDefaults.standard.removeObject(forKey: MenuBarPresets.appliedKey)
+                UserDefaults.standard.removeObject(forKey: MenuBarPresets.baseKey)
                 MenuBarSectionStore.replaceAll([:])
                 MenuBarLayoutModel.shared.reloadSections()
                 MenuBarHider.shared.reapply()

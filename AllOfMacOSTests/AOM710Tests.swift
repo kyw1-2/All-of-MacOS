@@ -75,10 +75,12 @@ final class AOM710BartenderTests: XCTestCase {
     }
 
     func testEmptySpaceAndBand() {
-        XCTAssertTrue(MenuBarTriggerPolicy.isEmptySpace(role: "AXMenuBar", parentRole: "AXApplication"))
-        XCTAssertTrue(MenuBarTriggerPolicy.isEmptySpace(role: nil, parentRole: nil))
-        XCTAssertFalse(MenuBarTriggerPolicy.isEmptySpace(role: "AXMenuBarItem", parentRole: "AXMenuBar"))
-        XCTAssertFalse(MenuBarTriggerPolicy.isEmptySpace(role: "AXImage", parentRole: "AXMenuExtra"), "an icon's picture is an item")
+        XCTAssertTrue(MenuBarTriggerPolicy.isEmptySpace(chain: ["AXMenuBar", "AXApplication"]))
+        XCTAssertTrue(MenuBarTriggerPolicy.isEmptySpace(chain: []))
+        XCTAssertFalse(MenuBarTriggerPolicy.isEmptySpace(chain: ["AXMenuBarItem", "AXMenuBar"]))
+        XCTAssertFalse(MenuBarTriggerPolicy.isEmptySpace(chain: ["AXImage", "AXMenuExtra"]), "an icon's picture is an item")
+        XCTAssertFalse(MenuBarTriggerPolicy.isEmptySpace(chain: ["AXGroup", "AXGroup", "AXMenuBarItem", "AXMenuBar"]),
+                       "a custom icon's nested groups still belong to its item (Gemini 7.10)")
         let band = MenuBarTriggerPolicy.band(screen: CGRect(x: 0, y: 0, width: 1440, height: 900), visibleMaxY: 867)
         XCTAssertEqual(band.minY, 867)
         XCTAssertEqual(band.height, 33)

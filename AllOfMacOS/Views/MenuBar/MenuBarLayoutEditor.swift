@@ -21,6 +21,8 @@ struct MenuBarLayoutEditor: View {
     @ObservedObject private var modules = AOMModuleSwitches.shared
     @State private var targeted: MenuBarSection?
     @State private var hovered: String?
+    /// The hovered icon's app: on macOS 27 its other icons move with it.
+    @State private var hoveredApp: String?
     @State private var renaming: String?
     @State private var newItems = MenuBarPrefs.newItemsSection
     @State private var presets = MenuBarPresets.all
@@ -184,10 +186,12 @@ struct MenuBarLayoutEditor: View {
                         ForEach(items) { entry in icon(entry) }
                     }
                     .padding(.horizontal, 10)
-                    .frame(minWidth: geometry.size.width, minHeight: 44, alignment: .trailing)
+                    .frame(minWidth: geometry.size.width, minHeight: geometry.size.height, alignment: .trailing)
                 }
+                // Like the menu bar, the right end shows first (Gemini 7.10).
+                .defaultScrollAnchor(.trailing)
             }
-            .frame(height: 52)
+            .frame(height: 60)
             .background(laneColor, in: shape)
             .overlay(shape.strokeBorder(isTarget ? AOMColor.accent : Color.black.opacity(0.1), lineWidth: isTarget ? 2 : 0.5))
             .clipShape(shape)
@@ -224,29 +228,25 @@ struct MenuBarLayoutEditor: View {
             .accessibilityLabel("New Menu Bar Items go to this section")
     }
 
-    private var laneColor: Color {
-        if let color = model.barColor { return Color(nsColor: color.withAlphaComponent(1)) }
-        return Color(nsColor: .windowBackgroundColor)
-    }
-
-    /// Text that reads on the sampled bar colour.
-    private var laneInk: Color {
-        guard let color = model.barColor?.usingColorSpace(.sRGB) else { return AOMColor.text }
-        let luminance = 0.2126 * color.redComponent + 0.7152 * color.greenComponent + 0.0722 * color.blueComponent
-        return luminance > 0.55 ? .black : .white
-    }
+    private var laneColor: Color { model.laneColor }
+    private var laneInk: Color { model.ink }
 
     /// An icon as it looks in the menu bar, a little larger: its picture, no
     /// box; hover lights it as the menu bar does; locked ones are dimmed.
     private func icon(_ entry: MenuBarLayoutItem) -> some View {
         let lit = hovered == entry.id
+        let sibling = !lit && MenuBarNativeHiding.isAvailable && hoveredApp == entry.item.ownerBundleID
         return MenuBarItemPicture(entry: entry, height: 22, ink: laneInk)
             .padding(.horizontal, 6)
             .frame(height: 32)
-            .background(lit ? laneInk.opacity(0.16) : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .background(lit ? laneInk.opacity(0.16) : (sibling ? laneInk.opacity(0.08) : .clear),
+                        in: RoundedRectangle(cornerRadius: 6, style: .continuous))
             .opacity(entry.lockedReason == nil ? 1 : 0.5)
             .contentShape(Rectangle())
-            .onHover { hovered = $0 ? entry.id : (hovered == entry.id ? nil : hovered) }
+            .onHover { inside in
+                hovered = inside ? entry.id : (hovered == entry.id ? nil : hovered)
+                hoveredApp = inside ? entry.item.ownerBundleID : (hovered == nil ? nil : hoveredApp)
+            }
             .help("\(entry.item.displayName) — \(entry.item.ownerName)" + (entry.lockedReason.map { "\n\($0)" } ?? "\nDrag to another section"))
             .modifier(DraggableUnlessLocked(id: entry.id, locked: entry.lockedReason != nil, preview: { MenuBarItemPicture(entry: entry, height: 22, ink: laneInk) }))
             .contextMenu { MenuBarItemMenu(entry: entry, rename: { renaming = entry.id }) }
@@ -275,6 +275,20 @@ extension MenuBarSection {
         case .hidden: return "Hide"
         case .alwaysHidden: return "Always Hide"
         }
+    }
+}
+
+extension MenuBarLayoutModel {
+    /// The menu bar's sampled colour (the window's colour until it is read).
+    var laneColor: Color {
+        barColor.map { Color(nsColor: $0.withAlphaComponent(1)) } ?? Color(nsColor: .windowBackgroundColor)
+    }
+
+    /// Ink that reads on `laneColor` (Gemini 7.10: white glyphs vanished on light bars).
+    var ink: Color {
+        guard let color = barColor?.usingColorSpace(.sRGB) else { return AOMColor.text }
+        let luminance = 0.2126 * color.redComponent + 0.7152 * color.greenComponent + 0.0722 * color.blueComponent
+        return luminance > 0.55 ? .black : .white
     }
 }
 
@@ -421,8 +435,8 @@ struct MenuBarItemSettingsList: View {
     private func itemRow(_ entry: MenuBarLayoutItem) -> some View {
         HStack(spacing: 10) {
             ZStack {
-                RoundedRectangle(cornerRadius: 5, style: .continuous).fill(model.barColor.map { Color(nsColor: $0) } ?? AOMColor.sunken)
-                MenuBarItemPicture(entry: entry, height: 16, ink: .white)
+                RoundedRectangle(cornerRadius: 5, style: .continuous).fill(model.laneColor)
+                MenuBarItemPicture(entry: entry, height: 16, ink: model.ink)
             }
             .frame(width: 40, height: 24)
             VStack(alignment: .leading, spacing: 1) {
@@ -480,14 +494,14 @@ struct MenuBarBarPreview: View {
                 Text("Nothing hidden").font(AOMFont.caption).foregroundStyle(AOMColor.textTertiary).padding(.horizontal, 8)
             }
             ForEach(entries.prefix(12)) { entry in
-                MenuBarItemPicture(entry: entry, height: 18).help(entry.item.displayName)
+                MenuBarItemPicture(entry: entry, height: 18, ink: model.ink).help(entry.item.displayName)
             }
             if entries.count > 12 {
                 Text("+\(entries.count - 12)").font(.system(size: 10, weight: .semibold)).foregroundStyle(AOMColor.textSecondary)
             }
-            Rectangle().fill(Color.white.opacity(0.25)).frame(width: 1, height: 16)
+            Rectangle().fill(model.ink.opacity(0.25)).frame(width: 1, height: 16)
             ForEach(["eye", "magnifyingglass", "gearshape"], id: \.self) { symbol in
-                Image(systemName: symbol).font(.system(size: 11)).foregroundStyle(.white.opacity(0.85))
+                Image(systemName: symbol).font(.system(size: 11)).foregroundStyle(model.ink.opacity(0.85))
             }
         }
         .padding(.horizontal, 10)

@@ -113,7 +113,8 @@ struct MenuBarTabStrip: View {
                 Button { selection = tab } label: {
                     VStack(spacing: 3) {
                         Image(systemName: tab.symbol).font(.system(size: 15, weight: selected ? .semibold : .regular))
-                        Text(tab.title).font(.system(size: 11, weight: selected ? .semibold : .regular)).lineLimit(1)
+                        Text(tab.title).font(.system(size: 11, weight: selected ? .semibold : .regular))
+                            .lineLimit(1).minimumScaleFactor(0.75)
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 7)

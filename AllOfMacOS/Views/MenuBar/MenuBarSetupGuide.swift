@@ -39,6 +39,10 @@ struct MenuBarSetupGuide: View {
             HStack {
                 if page == 2 {
                     Toggle("Do not show this welcome message again", isOn: $dontShow).toggleStyle(.checkbox).font(AOMFont.caption)
+                    // Gemini 7.10: without Accessibility there was no way out of this page.
+                    if !axTrusted && !PresetManager.isUIPreview {
+                        Button("Later") { finish(enable: false) }.buttonStyle(.borderless)
+                    }
                 } else {
                     Button("Skip") { finish(enable: false) }.buttonStyle(.borderless)
                 }
@@ -64,7 +68,7 @@ struct MenuBarSetupGuide: View {
 
     private func finish(enable: Bool) {
         if enable, !modules.isOn(.menuBarHider) { _ = modules.set(.menuBarHider, on: true) }
-        if dontShow || enable { MenuBarPrefs.setupDone = true }
+        if dontShow { MenuBarPrefs.setupDone = true }
         if enable, axTrusted { MenuBarLayoutModel.shared.refresh() }
         done()
     }
@@ -164,6 +168,10 @@ struct MenuBarSetupGuide: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("How to use it").font(.system(size: 22, weight: .bold))
             MenuBarSetupIllustration()
+            if !axTrusted && !PresetManager.isUIPreview {
+                Label("Allow Accessibility on the previous page to start hiding.", systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 12, weight: .medium)).foregroundStyle(AOMColor.warningText)
+            }
             VStack(alignment: .leading, spacing: 9) {
                 step("cursorarrow.click", "Click ❮ in the menu bar — or empty space in the menu bar — to show your hidden icons. Click again to hide them; they also hide by themselves after 15 seconds.")
                 step("option", "⌥-click ❮ to show the Always Hidden icons too.")

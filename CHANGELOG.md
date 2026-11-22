@@ -17,6 +17,9 @@ The menu bar works the way Bartender 7 does, on macOS 27: hiding actually hides,
 - **Advanced**: **⌘-dragging in the menu bar shows every section**, the Bar when the menu bar has no room for the hidden icons, the temporary-show delay, the hiding method in use, Reset layout.
 - ❮'s right-click menu: Show/Hide, Show All, Search, Keep Shown, the Bar, hover, empty-space click, Hide Again After, Menu Bar Settings…, Setup Guide….
 
+### Gemini review
+- About 20 points from Gemini (AI Studio) were checked against the code and fixed — among them triggers that never started at launch, nothing hiding on the first drag to Hidden, a hover-opened Bar closing under the pointer, the Setup guide's dead end without Accessibility, item hotkeys after a restart, and hiding lost after changing icon spacing. Two claims were disproved. List: `docs/design-7.10.md`.
+
 ### Cleanup
 - One event monitor watches only what your settings need (pointer moves only while hover is on); menu bar hit tests run off the main thread with timeouts; launches are coalesced. Unused code found by periphery and confirmed by search was removed (dead tokens, an unused greeting and menu-editor section, stale properties).
 

@@ -82,7 +82,9 @@ enum MenuBarHotkeys {
             guard hider.isRunning else { GestureHUD.shared.show(title: "Menu Bar", detail: "Turn on Hide icons in Menu Bar › General."); return }
             hider.toggleFromTrigger()
         case .showAll:
-            if hider.isCollapsed { hider.revealFromTrigger(includeAlways: true) } else { hider.expand(all: true) }
+            guard hider.isRunning else { GestureHUD.shared.show(title: "Menu Bar", detail: "Turn on Hide icons in Menu Bar › General."); return }
+            // Pressed again while everything shows: hide again (a toggle, like ❮).
+            if !hider.isCollapsed, hider.showsAll { hider.hideFromTrigger() } else { hider.revealFromTrigger(includeAlways: true) }
         case .search:
             AOMMenuShelfController.shared.show()
         case .navigate:
@@ -97,9 +99,17 @@ enum MenuBarHotkeys {
     static func activate(key: String, activation: Activation, title: String) {
         let model = MenuBarLayoutModel.shared
         guard let entry = model.items.first(where: { $0.item.stableKey == key || $0.imageKey == key }) else {
-            // Not read yet this session: read the menu bar, then try once more.
-            if !model.busy { model.refresh(quietly: true, reveal: false) }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+            // Not read yet (after a restart, or its app is hidden, so macOS
+            // leaves it out): let its app back first — the key starts with
+            // its bundle id — then read the menu bar and try once more.
+            let bundle = String(key.prefix { $0 != "|" })
+            let read = { if !model.busy { model.refresh(quietly: true, reveal: false) } }
+            if MenuBarHider.shared.native, MenuBarNativeHiding.shared.isHolding, !bundle.isEmpty {
+                MenuBarNativeHiding.shared.showTemporarily(bundle) { DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { read() } }
+            } else {
+                read()
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
                 guard let again = MenuBarLayoutModel.shared.items.first(where: { $0.item.stableKey == key || $0.imageKey == key }) else {
                     GestureHUD.shared.show(title: title, detail: "Isn't in the menu bar right now.")
                     return
@@ -133,7 +143,13 @@ enum MenuBarClick {
             let live = AOMMenuShelfProbe.snapshot(apps: apps, deadline: 1.0).items.filter { $0.pid == item.pid }
             let fresh = item.stableKey.flatMap { key in live.first { $0.stableKey == key } }
                 ?? live.first { $0.ordinal == item.ordinal && $0.siblings == item.siblings }
-            guard let frame = fresh?.frame ?? item.frame, frame.width > 0 else { return }
+            // Only where it is now: an old position may be another app's icon.
+            guard let frame = fresh?.frame, frame.width > 0 else {
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated { GestureHUD.shared.show(title: item.displayName, detail: "Isn't on screen right now; press the key again.") }
+                }
+                return
+            }
             let point = CGPoint(x: frame.midX, y: frame.midY)
             let right = activation == .rightClick || activation == .optionRightClick
             let option = activation == .optionLeftClick || activation == .optionRightClick
