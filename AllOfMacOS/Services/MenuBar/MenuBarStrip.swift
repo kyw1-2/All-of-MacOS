@@ -59,7 +59,7 @@ enum MenuBarStripPolicy {
     }
 }
 
-private final class MenuBarStripPanel: NSPanel {
+final class MenuBarStripPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
     /// ← → ↩ esc, taken before any view sees them.

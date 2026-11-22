@@ -353,7 +353,10 @@ final class MenuBarTriggers {
             MainActor.assumeIsolated { MenuBarTriggers.shared.receive(event) }
         }
         localMonitor = NSEvent.addLocalMonitorForEvents(matching: wanted) { event in
-            MainActor.assumeIsolated { MenuBarTriggers.shared.receive(event) }
+            // Clicks on AOM's own menu bar items (❮ has its own action) and
+            // on the Bar are not menu bar space.
+            let own = event.window.map { String(describing: type(of: $0)).contains("StatusBar") || $0 is MenuBarStripPanel } ?? false
+            if !own { MainActor.assumeIsolated { MenuBarTriggers.shared.receive(event) } }
             return event
         }
     }
