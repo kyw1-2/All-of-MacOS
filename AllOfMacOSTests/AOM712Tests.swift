@@ -89,16 +89,18 @@ final class AOM712Tests: XCTestCase {
     // MARK: FIX-1 — a stopped ZIP leaves nothing
 
     func testStoppedCompressLeavesNoArchiveAndNoWorkingFile() async throws {
-        let big = folder.appendingPathComponent("big.bin")
-        FileManager.default.createFile(atPath: big.path, contents: Data((0..<(24 << 20)).map { UInt8(truncatingIfNeeded: $0 &* 2_654_435_761) }))
-        let handle = FilesProcess.Handle()
-        let task = Task { try await FilesFileActions.compress([big], handle: handle) }
-        try await Task.sleep(nanoseconds: 30_000_000)
-        handle.cancel()
-        _ = try? await task.value
-        let names = try FileManager.default.contentsOfDirectory(atPath: folder.path)
-        XCTAssertFalse(names.contains { $0.hasSuffix(".zip") }, "no ZIP under the finished name: \(names)")
-        XCTAssertFalse(names.contains { $0.contains("aom-partial") }, "no working file: \(names)")
+        // Stopped before ditto ends (deterministic: the Stop is already in when it starts),
+        // for one file and for several (copied first, then archived).
+        let one = try touch("big.bin", String(repeating: "a", count: 1 << 20))
+        let two = try touch("other.txt", "b")
+        for urls in [[one], [one, two]] {
+            let handle = FilesProcess.Handle()
+            handle.cancel()
+            _ = try? await FilesFileActions.compress(urls, handle: handle)
+            let names = try FileManager.default.contentsOfDirectory(atPath: folder.path)
+            XCTAssertFalse(names.contains { $0.hasSuffix(".zip") }, "no ZIP under the finished name: \(names)")
+            XCTAssertFalse(names.contains { $0.contains("aom-partial") }, "no working file: \(names)")
+        }
     }
 
     func testFinishedCompressNeverReplacesAFileThatTookTheName() async throws {
