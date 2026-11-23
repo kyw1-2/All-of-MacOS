@@ -1,3 +1,7 @@
+## [7.12.1] - 2026-11-23
+
+- **The HomePod code-residency change of 7.12.0 didn't take effect**: on the installed 7.12.0 only 1.7 of AOM's 26 MB of code was resident during a HomePod stream — macOS 27 refuses `mlock` on code pages ("Operation not permitted", measured with a test program; constant data can still be wired). While a HomePod stream runs, a utility timer now reads one byte of each code page every second (about 1,700 reads), which keeps the code resident without wiring; constant data stays wired. `AOMAudioWireCode` = NO still turns both off.
+
 ## [7.12.0] - 2026-11-23
 
 Codex's two specs of 2026-11-23 (`AOM-7.11-개선-및-신규기능-명세서`, `AOM-상용앱-30종-기능확장-명세서`), the HomePod dropouts measured today, and bugs found in AOM's own log. Details and what is still open: `docs/design-7.12.md`.

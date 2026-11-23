@@ -39,7 +39,8 @@ Previews: `--aom-preview-shelf`, `--aom-preview-launcher --aom-preview-palette-r
   2.4 GHz congestion. A larger IO buffer was measured ineffective on this HomePod since 3.3.2.
 - Changes: wire `__TEXT` + `__DATA_CONST` while a direct stream lives (`AudioRealtimeMemory.retainCode`);
   `AudioGlitchAdvisor` (30-minute summary, top memory apps, Quit and Reopen, hourly burst notice).
-- **Not verified**: whether wiring the code removes the late wake-ups. Check after a day with
+- 7.12.1: macOS 27 returns EPERM for `mlock` on `__TEXT` (test program, 2026-11-23); 7.12.0 left the code unwired (vmmap: 1.7 of 26.2 MB resident). `__TEXT` is now kept resident by a 1 s page-touch timer while a direct stream lives; `__DATA_CONST` stays wired.
+- **Not verified**: whether keeping the code resident removes the late wake-ups. Check after a day with
   `audio-health.json` (`wiredCodeBytes`, overload count per hour under `memory warn`) and the
   `skipping cycle` count in AOM's log.
 

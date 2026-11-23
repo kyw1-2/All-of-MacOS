@@ -55,7 +55,7 @@ enum AudioRealtimeMemory {
 
     // MARK: Code (7.12)
 
-    /// 7.12: AOM's own code and constant data, wired while a HomePod stream
+    /// 7.12: AOM's own code and constant data, kept resident while a HomePod stream
     /// runs. On 2026-11-23 (8 GB, 7.6 GB swapped) every overload of a 6-minute
     /// burst was logged by the HAL in AOM's process only ("IOWorkLoop:
     /// skipping cycle due to overload", none in coreaudiod), each a wake-up
@@ -73,20 +73,39 @@ enum AudioRealtimeMemory {
         UserDefaults.standard.object(forKey: "AOMAudioWireCode") as? Bool ?? true
     }
 
-    /// One more HomePod stream: the first one wires the code.
+    /// One more HomePod stream: the first one keeps the code resident.
+    /// 7.12.1: macOS 27 refuses `mlock` on code pages (EPERM, measured);
+    /// only __DATA_CONST can be wired. __TEXT is kept resident instead by
+    /// reading one byte of each of its pages every second on a utility
+    /// thread (about 1,700 reads), so a page the IO thread needs is never
+    /// one the kernel has just taken back.
     static func retainCode() {
         guard wiresCode else { return }
         codeLock.lock(); defer { codeLock.unlock() }
         codeUsers += 1
-        guard codeUsers == 1, codeRegions.isEmpty else { return }
-        for (pointer, bytes) in mainImageSegments(["__TEXT", "__DATA_CONST"]) where mlock(pointer, bytes) == 0 {
+        guard codeUsers == 1, codeRegions.isEmpty, toucher == nil else { return }
+        for (pointer, bytes) in mainImageSegments(["__DATA_CONST"]) where mlock(pointer, bytes) == 0 {
             codeRegions.append((pointer, bytes))
             codeBytesCounter.add(UInt64(bytes))
         }
-        if codeRegions.isEmpty { failureCounter.add() }
+        guard let text = mainImageSegments(["__TEXT"]).first else { return }
+        let page = Int(getpagesize())
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
+        timer.schedule(deadline: .now(), repeating: 1.0, leeway: .milliseconds(250))
+        timer.setEventHandler {
+            let base = UnsafeRawPointer(text.0)
+            var sum: UInt8 = 0
+            var offset = 0
+            while offset < text.1 { sum &+= base.load(fromByteOffset: offset, as: UInt8.self); offset += page }
+            touchSink.store(UInt64(sum))
+        }
+        timer.resume()
+        toucher = timer
+        codeBytesCounter.add(UInt64(text.1))
+        touchedBytes = UInt64(text.1)
     }
 
-    /// One HomePod stream fewer: the last one unwires the code.
+    /// One HomePod stream fewer: the last one lets the code go.
     static func releaseCode() {
         codeLock.lock(); defer { codeLock.unlock() }
         guard codeUsers > 0 else { return }
@@ -97,7 +116,16 @@ enum AudioRealtimeMemory {
             codeBytesCounter.add(0 &- UInt64(bytes))
         }
         codeRegions = []
+        toucher?.cancel()
+        toucher = nil
+        codeBytesCounter.add(0 &- touchedBytes)
+        touchedBytes = 0
     }
+
+    nonisolated(unsafe) private static var toucher: DispatchSourceTimer?
+    nonisolated(unsafe) private static var touchedBytes: UInt64 = 0
+    /// Keeps the touch loop's reads from being optimized away.
+    private static let touchSink = AudioAtomicCounter()
 
     /// Code bytes wired right now (audio-health.json `wiredCodeBytes`).
     static var wiredCodeBytes: UInt64 { codeBytesCounter.load() }
