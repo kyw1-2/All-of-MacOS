@@ -630,7 +630,9 @@ struct QuickCommandPalette: View {
         // 7.12 (Codex 30-app #1): saved file searches by their names.
         items += savedSearchRootItems()
         // 7.12 (Codex NEW-1): each Drop Shelf by its name, pinned shelves first.
-        for (rank, shelf) in FilesShelfStore.shared.shelves.enumerated() {
+        // One unnamed Default Shelf stays under "Show Drop Shelf" only.
+        let shelves = FilesShelfStore.shared.shelves
+        for (rank, shelf) in shelves.enumerated() where shelves.count > 1 || shelf.name != FilesShelfLibrary.defaultName {
             let count = shelf.items.count
             command("files.shelf.\(shelf.id.uuidString)", "\(shelf.name)",
                     "Drop Shelf · \(count == 1 ? "1 file" : "\(count) files")\(shelf.pinned ? " · pinned" : "") · 보관함",

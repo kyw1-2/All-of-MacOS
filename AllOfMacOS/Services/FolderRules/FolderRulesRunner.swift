@@ -443,6 +443,7 @@ final class FolderRulesRunner: @unchecked Sendable {
                     // review and given to no later rule in this pass.
                     if let reason = Self.reviewReason(rule, info, now: now) {
                         if !memory.isSettled(key, signature: rule.conditionSignature), reviewed[key] != (info.dateModified ?? .distantPast) {
+                            if reviewed.count > 2_000 { reviewed.removeAll() }
                             reviewed[key] = info.dateModified ?? .distantPast
                             output.runs.append(Self.reviewRecord(rule, info: info, folder: folder, reason: reason))
                         }
