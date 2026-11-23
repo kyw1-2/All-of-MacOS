@@ -877,8 +877,11 @@ final class AppAudioEngine {
         guard let objects else { return }
         let live = Set(objects)
         var playingAddress = AudioOutputService.address(kAudioProcessPropertyIsRunningOutput)
+        // 7.12: a process object that left the list is usually gone already;
+        // removing its listener then only logged "no object with given ID"
+        // (11 times in 3 hours). Remove it only while the object still answers.
         for id in Array(processListeners.keys) where !live.contains(id) {
-            if let block = processListeners.removeValue(forKey: id) {
+            if let block = processListeners.removeValue(forKey: id), AudioObjectHasProperty(id, &playingAddress) {
                 AudioObjectRemovePropertyListenerBlock(id, &playingAddress, DispatchQueue.main, block)
             }
         }

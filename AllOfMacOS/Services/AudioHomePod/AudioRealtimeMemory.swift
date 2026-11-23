@@ -1,4 +1,6 @@
 import Darwin
+import Foundation
+import MachO
 
 /// 3.4.0 (HomePod crackle): the buffers AOM's realtime audio threads touch are
 /// wired, so macOS never compresses or swaps them out.
@@ -49,6 +51,70 @@ enum AudioRealtimeMemory {
 
     static func unwire(_ pointer: UnsafeMutablePointer<Float>, count: Int, wired: Bool) {
         unwire(UnsafeMutableRawPointer(pointer), bytes: count * MemoryLayout<Float>.stride, wired: wired)
+    }
+
+    // MARK: Code (7.12)
+
+    /// 7.12: AOM's own code and constant data, wired while a HomePod stream
+    /// runs. On 2026-11-23 (8 GB, 7.6 GB swapped) every overload of a 6-minute
+    /// burst was logged by the HAL in AOM's process only ("IOWorkLoop:
+    /// skipping cycle due to overload", none in coreaudiod), each a wake-up
+    /// 5–12 ms late while AOM's render took 30 µs. The buffers were already
+    /// wired; the code the IO thread runs was not, and AOM pages in about
+    /// two pages of its binary a second under that pressure. Wiring __TEXT
+    /// and __DATA_CONST costs about 30 MB while a HomePod plays and nothing
+    /// otherwise. `defaults write com.kyw.allofmacos AOMAudioWireCode -bool NO` turns it off.
+    private static let codeLock = NSLock()
+    nonisolated(unsafe) private static var codeUsers = 0
+    nonisolated(unsafe) private static var codeRegions: [(UnsafeMutableRawPointer, Int)] = []
+    private static let codeBytesCounter = AudioAtomicCounter()
+
+    static var wiresCode: Bool {
+        UserDefaults.standard.object(forKey: "AOMAudioWireCode") as? Bool ?? true
+    }
+
+    /// One more HomePod stream: the first one wires the code.
+    static func retainCode() {
+        guard wiresCode else { return }
+        codeLock.lock(); defer { codeLock.unlock() }
+        codeUsers += 1
+        guard codeUsers == 1, codeRegions.isEmpty else { return }
+        for (pointer, bytes) in mainImageSegments(["__TEXT", "__DATA_CONST"]) where mlock(pointer, bytes) == 0 {
+            codeRegions.append((pointer, bytes))
+            codeBytesCounter.add(UInt64(bytes))
+        }
+        if codeRegions.isEmpty { failureCounter.add() }
+    }
+
+    /// One HomePod stream fewer: the last one unwires the code.
+    static func releaseCode() {
+        codeLock.lock(); defer { codeLock.unlock() }
+        guard codeUsers > 0 else { return }
+        codeUsers -= 1
+        guard codeUsers == 0 else { return }
+        for (pointer, bytes) in codeRegions {
+            munlock(pointer, bytes)
+            codeBytesCounter.add(0 &- UInt64(bytes))
+        }
+        codeRegions = []
+    }
+
+    /// Code bytes wired right now (audio-health.json `wiredCodeBytes`).
+    static var wiredCodeBytes: UInt64 { codeBytesCounter.load() }
+
+    /// The main executable's segments, page aligned.
+    private static func mainImageSegments(_ names: [String]) -> [(UnsafeMutableRawPointer, Int)] {
+        let slide = _dyld_get_image_vmaddr_slide(0)
+        let page = Int(getpagesize())
+        return names.compactMap { name in
+            guard let segment = getsegbyname(name) else { return nil }
+            let start = Int(segment.pointee.vmaddr) + slide
+            let size = Int(segment.pointee.vmsize)
+            guard size > 0, size < 256 << 20 else { return nil }
+            let aligned = start & ~(page - 1)
+            guard let pointer = UnsafeMutableRawPointer(bitPattern: aligned) else { return nil }
+            return (pointer, size + (start - aligned))
+        }
     }
 
     /// Bytes wired by AOM's audio buffers right now (any thread).

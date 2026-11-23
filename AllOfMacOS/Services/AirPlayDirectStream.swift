@@ -321,6 +321,7 @@ final class AirPlayDirectStream: AppAudioActivitySource {
     private let secondsPerTick: Double
 
     private var procID: AudioDeviceIOProcID?
+    private var retainsCode = false
     private let queue: DispatchQueue
     private var listeners: [(AudioObjectPropertyAddress, AudioObjectPropertyListenerBlock)] = []
     /// On the AirPlay device itself, not the aggregate (its availability).
@@ -377,11 +378,15 @@ final class AirPlayDirectStream: AppAudioActivitySource {
         guard status == noErr, let created else { throw SetupError.start(status) }
         procID = created
         addListeners(onReconfigure: onReconfigure)
+        // 7.12: the code the IO thread runs stays resident while a HomePod plays.
+        AudioRealtimeMemory.retainCode()
+        retainsCode = true
     }
 
     deinit { releaseBuffers() }
 
     private func releaseBuffers() {
+        if retainsCode { AudioRealtimeMemory.releaseCode() }
         AudioRealtimeMemory.unwire(left, count: Self.capacity, wired: wired.left)
         AudioRealtimeMemory.unwire(right, count: Self.capacity, wired: wired.right)
         left.deallocate(); right.deallocate()

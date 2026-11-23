@@ -950,6 +950,7 @@ final class AirPlayPCMBridge {
         // 3.4.0: the realtime buffers AOM keeps resident (process-wide).
         result["wiredKilobytes"] = AudioRealtimeMemory.wiredBytes / 1024
         result["wireFailures"] = AudioRealtimeMemory.failures
+        result["wiredCodeBytes"] = AudioRealtimeMemory.wiredCodeBytes
         return result
     }
     func discard() { queue.requestClear() }
