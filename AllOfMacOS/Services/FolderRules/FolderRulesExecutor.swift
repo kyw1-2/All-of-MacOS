@@ -183,6 +183,8 @@ struct FolderRuleExecutor {
                     var refreshed = FolderRuleFileReader.read(next, depth: currentInfo.depth) ?? currentInfo
                     refreshed.url = next
                     refreshed.name = next.lastPathComponent
+                    // 7.12 (NEW-2): a move keeps the text read for the rule's Rename.
+                    refreshed.pdf = currentInfo.pdf
                     currentInfo = refreshed
                 }
                 outcome.finalURL = current

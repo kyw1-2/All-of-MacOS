@@ -139,6 +139,10 @@ class AppState: ObservableObject {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { AOMLauncherController.shared.show() }
             }
         }
+        // 7.12: `--aom-preview-shelf` — named shelves with Korean names, one file missing.
+        if PresetManager.isUIPreview, ProcessInfo.processInfo.arguments.contains("--aom-preview-shelf") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { FilesShelfPanelController.previewSample() }
+        }
         // 7.5: `--aom-preview-file-tool zip:<path> | pdfs:<a>|<b> | folders:<a>|<b> | storageMap:<path>`.
         if PresetManager.isUIPreview, let index = ProcessInfo.processInfo.arguments.firstIndex(of: "--aom-preview-file-tool"),
            ProcessInfo.processInfo.arguments.indices.contains(index + 1) {

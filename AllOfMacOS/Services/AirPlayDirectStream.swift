@@ -440,7 +440,10 @@ final class AirPlayDirectStream: AppAudioActivitySource {
         let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
             guard let self, self.stopRequested.load() == 0 else { return }
             self.overloads.add()
-            AudioEventLog.shared.record(.overload, source: name, detail: AudioSystemLoad.overloadDetail())
+            let detail = AudioSystemLoad.overloadDetail()
+            AudioEventLog.shared.record(.overload, source: name, detail: detail)
+            // 7.12: a burst while memory is short gets one notice an hour.
+            AudioGlitchAdvisor.noteOverload(detail: detail)
         }
         if AudioObjectAddPropertyListenerBlock(aggregateID, &overload, queue, block) == noErr {
             listeners.append((overload, block))

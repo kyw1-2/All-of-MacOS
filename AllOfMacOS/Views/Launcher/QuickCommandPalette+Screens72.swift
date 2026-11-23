@@ -23,7 +23,12 @@ extension QuickCommandPalette {
         // 7.11: ⌘[ goes back a screen even though the search field has the
         // cursor — the Back gesture (and mouse button) sends ⌘[ (user report).
         if event.keyCode == 33, mods == .command, navigation.current != .hotkeyFinder, navigation.depth > 0 {
-            if !event.isARepeat { if showsActions { showsActions = false } else { pop() } }
+            if !event.isARepeat {
+                if showsActions { showsActions = false }
+                // 7.12 (Codex UX-1): in a snippet's questions ⌘[ goes to the previous one first.
+                else if case .snippetArguments = navigation.current, snippetFormBack() {}
+                else { pop() }
+            }
             return true
         }
         // 7.3: Find a Shortcut — any key combination is looked up, nothing is set.
@@ -438,7 +443,11 @@ extension QuickCommandPalette {
     func toolItems(_ tool: LauncherTool) -> [PaletteItem] {
         switch tool {
         case .brew(let tab, _): return brewItems(tab)
-        case .files: return data.files.map { fileRow($0, group: nil) }
+        case .files:
+            // 7.12 (Codex 30-app #1): the conditions can be saved by name.
+            let rows = data.files.map { fileRow($0, group: nil) }
+            guard case .done = data.fileStatus, let save = saveSearchRow() else { return rows }
+            return rows + [save]
         case .pasteStack: return pasteStackItems()
         case .rulePreview: return ruleListItems()
         case .vpn: return vpnItems()
@@ -845,6 +854,7 @@ extension QuickCommandPalette {
             case .handled: group = "Already handled"
             case .earlierRule(let name): group = "Taken by “\(name)”"
             case .noMatch: group = "Doesn't match"
+            case .needsReview: group = "Needs review"
             }
             var row = screenRow("ruleitem.\(item.id)", item.info.name, item.steps.joined(separator: " → "),
                                 icon: item.info.isDirectory ? "folder" : "doc", group: group, section: .files,
@@ -917,17 +927,26 @@ extension QuickCommandPalette {
                 }
                 : PaletteAction(title: "Next", symbol: "arrow.right", effect: .stay) {
                     _ = PaletteSnippetForm.shared.submit(value)
-                    query = ""
+                    // 7.12 (UX-1): a question visited before comes back with its draft.
+                    query = PaletteSnippetForm.shared.request?.restoredText ?? ""
                     sourcesChanged()
                 }
             var row = screenRow("snippetarg.\(request.index).\(key)", title, preview, icon: icon, group: group, primary: action)
             row.accessory = accessory.map { "\($0) · ↩ \(isLast ? "Insert" : "Next")" } ?? (isLast ? "↩ Insert" : "↩ Next")
             return row
         }
+        // 7.12 (Codex UX-1): from the second question on, a Previous row (⌘[).
+        let previousRow: [PaletteItem] = request.canGoBack ? {
+            var row = screenRow("snippetarg.previous", "Previous Question", "Change an earlier answer; what you typed here is kept",
+                                icon: "chevron.left", group: group,
+                                primary: PaletteAction(title: "Previous", symbol: "chevron.left", effect: .stay) { _ = snippetFormBack() })
+            row.accessory = "⌘["
+            return [row]
+        }() : []
         switch field.kind {
         case .text:
             let value = query
-            return [answerRow("text", "\(field.name): \(value.isEmpty ? "…" : value)", value: value, icon: "character.cursor.ibeam")]
+            return [answerRow("text", "\(field.name): \(value.isEmpty ? "…" : value)", value: value, icon: "character.cursor.ibeam")] + previousRow
         case .choice(let options, let defaultIndex):
             let ordered = [defaultIndex] + options.indices.filter { $0 != defaultIndex }
             let typed = query.trimmingCharacters(in: .whitespaces)
@@ -939,7 +958,7 @@ extension QuickCommandPalette {
             return shown.map { index in
                 answerRow("option\(index)", "\(field.name): \(options[index].isEmpty ? "(nothing)" : options[index])", value: options[index],
                           icon: "list.bullet", accessory: index == defaultIndex ? "Default" : nil)
-            }
+            } + previousRow
         case .optional(let defaultOn):
             let include = answerRow("in", "Include “\(field.name)”", value: SnippetField.on, icon: "checkmark.square",
                                     accessory: defaultOn ? "Default" : nil)
@@ -948,12 +967,21 @@ extension QuickCommandPalette {
             let rows = defaultOn ? [include, leave] : [leave, include]
             // Typing narrows the two rows; yes/no, on/off and 포함/제외 count too, and no match keeps both.
             let typed = query.trimmingCharacters(in: .whitespaces).lowercased()
-            guard !typed.isEmpty else { return rows }
+            guard !typed.isEmpty else { return rows + previousRow }
             let yes = ["y", "yes", "on", "in", "include", "포함", "넣기", "예", "네"].contains { $0.hasPrefix(typed) }
             let no = ["n", "no", "off", "out", "leave", "제외", "빼기", "아니오", "아니요"].contains { $0.hasPrefix(typed) }
             let narrowed = yes != no ? [yes ? include : leave] : rows.filter { $0.title.lowercased().contains(typed) }
-            return narrowed.isEmpty ? rows : narrowed
+            return (narrowed.isEmpty ? rows : narrowed) + previousRow
         }
+    }
+
+    /// 7.12 (UX-1): the previous question, its answer back in the field. False on the first.
+    @discardableResult
+    func snippetFormBack() -> Bool {
+        guard PaletteSnippetForm.shared.back(draft: query) else { return false }
+        query = PaletteSnippetForm.shared.request?.restoredText ?? ""
+        sourcesChanged()
+        return true
     }
 
     /// Renders and inserts a snippet with placeholders. From a typed
@@ -1432,7 +1460,7 @@ extension QuickCommandPalette {
         }
     }
 
-    private func privacyRow(_ id: String, _ pane: String) -> PaletteItem {
+    func privacyRow(_ id: String, _ pane: String) -> PaletteItem {
         screenRow(id, "Turn On \(pane) Access in System Settings…", "Privacy & Security › \(pane) › All of MacOS",
                   icon: "lock.shield", group: nil,
                   primary: PaletteAction(title: "Open Settings") {
@@ -1526,18 +1554,24 @@ extension QuickCommandPalette {
             switch data.fileStatus {
             case .idle where trimmed.isEmpty:
                 return RouteHeader(symbol: "doc.text.magnifyingglass", tint: AOMModule.files.hue, title: "Search Files",
-                                   detail: "Type part of a file or folder name. Spotlight looks through your home folder; ↩ on a folder browses it here.")
+                                   detail: "Type part of a name. Narrow it with in:~/Documents, kind:pdf and modified:7d (종류:, 수정:, 폴더: too), then Save This Search to find it again next week.")
             case .searching:
                 return RouteHeader(symbol: "doc.text.magnifyingglass", tint: AOMModule.files.hue, title: "Searching…",
                                    detail: "Spotlight, in your home folder.", busy: true)
             case .done(let total) where total == 0:
-                return RouteHeader(symbol: "doc.text.magnifyingglass", tint: AOMModule.files.hue, title: "No File Called “\(trimmed)”",
-                                   detail: "Spotlight found nothing in your home folder. Folders Spotlight skips (System Settings › Spotlight › Privacy) aren't searched.")
+                let parsed = data.fileQuery
+                return RouteHeader(symbol: "doc.text.magnifyingglass", tint: AOMModule.files.hue,
+                                   title: parsed.hasConditions ? "Nothing Matches" : "No File Called “\(trimmed)”",
+                                   detail: "Spotlight found no \(parsed.summary.prefix(1).lowercased() + parsed.summary.dropFirst()). Folders Spotlight skips (System Settings › Spotlight › Privacy) aren't searched.")
             case .done(let total) where total > data.files.count:
                 return nil
             case .failed:
                 return RouteHeader(symbol: "exclamationmark.triangle", tint: AOMColor.warning, title: "Spotlight Didn't Start",
                                    detail: "Spotlight indexing may be off for this disk.")
+            // 7.12: a saved search's folder that's gone or closed — not "no file".
+            case .unavailable(let why):
+                return RouteHeader(symbol: "folder.badge.questionmark", tint: AOMColor.warning, title: "Can't Search That Folder",
+                                   detail: "\(why). Change the in: part above to another folder (in:~/Documents), then save the search again.")
             default:
                 return nil
             }
@@ -1563,6 +1597,16 @@ extension QuickCommandPalette {
         case .snippets? where snippets.isEmpty && !isSearching:
             return RouteHeader(symbol: "text.badge.plus", tint: AOMModule.textActions.hue, title: "No Snippets Yet",
                                detail: "Type some text above and choose New Snippet, or copy it and choose New Snippet from Clipboard. A snippet types its text when you type its keyword in any app.")
+        // 7.12 (Codex 30-app #3).
+        case .availability? where schedule.access == .granted:
+            let hours = availability.hours
+            let window = String(format: "%02d:%02d–%02d:%02d", hours.start / 60, hours.start % 60, hours.end / 60, hours.end % 60)
+            return RouteHeader(symbol: "calendar.badge.clock", tint: AOMModule.focus.hue,
+                               title: "\(availability.minutes)-Minute Meetings · Weekdays \(window)",
+                               detail: "Pick up to three times with ↩, then Copy at the top. Only free and busy are read — titles, people and places never leave your calendars. Type 30, 45 or 90 to change the length.")
+        case .clipboardDiff?:
+            return RouteHeader(symbol: "arrow.left.arrow.right.square", tint: AOMModule.clipboard.hue, title: "What Changed",
+                               detail: "− the older copy, + the newer, ± a changed line with the changed part in [brackets]. ↑↓ goes from change to change; ↩ copies that line.")
         case .newSnippet(let text)?:
             return RouteHeader(symbol: "text.badge.plus", tint: AOMModule.textActions.hue, title: "New Snippet",
                                detail: "“\(text.prefix(160))\(text.count > 160 ? "…" : "")” — type the keyword above. It types this text from the launcher and whenever you type the keyword in another app.")
@@ -1734,6 +1778,9 @@ extension QuickCommandPalette {
         case "system": return .system
         // 7.8
         case "themes": return .themes
+        // 7.12
+        case "freeTimes": return .availability
+        case "saveSearch": return .saveSearch(argument.isEmpty ? "in:~/Documents kind:pdf modified:7d 견적" : argument)
         default: return nil
         }
     }

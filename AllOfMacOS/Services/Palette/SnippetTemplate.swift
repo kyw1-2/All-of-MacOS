@@ -530,6 +530,13 @@ final class PaletteSnippetForm: ObservableObject {
         var targetPID: pid_t?
         /// The abbreviation as typed (put back if the insert fails after the erase).
         var typed = ""
+        /// 7.12 (Codex UX-1): the questions shown before this one, newest last,
+        /// so ⌘[ / Previous goes back to the one actually asked.
+        var history: [Int] = []
+        /// 7.12: what was typed into a text question that was left with ⌘[.
+        var drafts: [String: String] = [:]
+
+        var canGoBack: Bool { !history.isEmpty }
 
         var names: [String] { fields.map(\.name) }
         var currentField: SnippetField? { fields.indices.contains(index) ? fields[index] : nil }
@@ -558,8 +565,25 @@ final class PaletteSnippetForm: ObservableObject {
         mutating func answer(_ value: String) {
             guard let field = currentField else { return }
             values[field.name] = value
+            drafts[field.name] = nil
+            history.append(index)
             index += 1
             while let next = currentField, skips(next) { index += 1 }
+        }
+
+        /// 7.12 (UX-1): back to the question asked before this one, keeping
+        /// what was typed here as its draft. Answers stay (a section turned
+        /// off later leaves its fields out of the text, as before).
+        mutating func back(draft: String) {
+            guard let previous = history.popLast() else { return }
+            if let name = currentName, case .text = currentField?.kind, !draft.isEmpty { drafts[name] = draft }
+            index = previous
+        }
+
+        /// The text a text question starts with: its draft, else its earlier answer.
+        var restoredText: String {
+            guard let field = currentField, case .text = field.kind else { return "" }
+            return drafts[field.name] ?? values[field.name] ?? ""
         }
     }
 
@@ -573,6 +597,14 @@ final class PaletteSnippetForm: ObservableObject {
         current.answer(value)
         request = current
         return current.isComplete
+    }
+
+    /// 7.12 (UX-1): ⌘[ / Previous. False on the first question (⌘[ then goes back a screen).
+    func back(draft: String) -> Bool {
+        guard var current = request, current.canGoBack else { return false }
+        current.back(draft: draft)
+        request = current
+        return true
     }
 
     func cancel() { request = nil }

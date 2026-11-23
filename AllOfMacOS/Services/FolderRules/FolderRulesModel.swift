@@ -88,6 +88,9 @@ struct FolderRule: Codable, Equatable, Identifiable {
     var includeSubfolders = false
     /// Destructive actions and installs ask first unless this is on.
     var runWithoutAsking = false
+    /// 7.12 (Codex NEW-2): a PDF with no text on its first page has that page
+    /// read on this Mac (Vision, Korean and English). Off: such a PDF needs review.
+    var recognizesScans = false
     /// The template this rule was made from, if any.
     var templateID: String?
     /// A condition or action of this rule could not be read: it was
@@ -111,7 +114,7 @@ struct FolderRule: Codable, Equatable, Identifiable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, folderID, name, isEnabled, match, conditions, actions, includeSubfolders, runWithoutAsking, templateID
+        case id, folderID, name, isEnabled, match, conditions, actions, includeSubfolders, runWithoutAsking, templateID, recognizesScans
     }
 
     init(from decoder: Decoder) throws {
@@ -128,6 +131,7 @@ struct FolderRule: Codable, Equatable, Identifiable {
         includeSubfolders = try c.decodeIfPresent(Bool.self, forKey: .includeSubfolders) ?? false
         runWithoutAsking = try c.decodeIfPresent(Bool.self, forKey: .runWithoutAsking) ?? false
         templateID = try c.decodeIfPresent(String.self, forKey: .templateID)
+        recognizesScans = try c.decodeIfPresent(Bool.self, forKey: .recognizesScans) ?? false
         if conditionList.dropped + actionList.dropped > 0 {
             isDamaged = true
             isEnabled = false
@@ -144,7 +148,14 @@ struct FolderRule: Codable, Equatable, Identifiable {
             plain.id = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
             return (try? encoder.encode(plain)).map { String(decoding: $0, as: UTF8.self) } ?? ""
         }
-        return "\(match.rawValue)|\(includeSubfolders)|" + parts.joined(separator: ";")
+        return "\(match.rawValue)|\(includeSubfolders)|" + (recognizesScans ? "ocr|" : "") + parts.joined(separator: ";")
+    }
+
+    /// 7.12 (NEW-2): the rule reads a PDF's first page — a PDF Text condition,
+    /// or {after:…} / {pdfdate} in a Rename. Only then is any PDF opened.
+    var readsPDFText: Bool {
+        conditions.contains { $0.attribute == .pdfText }
+            || actions.contains { $0.kind == .rename && FolderRulePatterns.usesPDFTokens($0.pattern) }
     }
 
     /// The actions that change or remove the item, which ask first unless
@@ -172,6 +183,8 @@ enum FolderRuleAttribute: String, Codable, CaseIterable, Identifiable {
     case name
     case fileExtension = "extension"
     case kind, dateAdded, dateCreated, dateModified, dateLastOpened, size, downloadedFrom, tags
+    /// 7.12 (Codex NEW-2, Hazel's "Contents contain"): the first page of a PDF.
+    case pdfText
 
     var id: String { rawValue }
 
@@ -187,6 +200,7 @@ enum FolderRuleAttribute: String, Codable, CaseIterable, Identifiable {
         case .size: return "Size"
         case .downloadedFrom: return "Downloaded From"
         case .tags: return "Tags"
+        case .pdfText: return "PDF Text (first page)"
         }
     }
 
@@ -201,6 +215,7 @@ enum FolderRuleAttribute: String, Codable, CaseIterable, Identifiable {
         case .size: return [.greaterThan, .lessThan]
         case .downloadedFrom: return [.contains, .doesNotContain]
         case .tags: return [.has, .hasNot]
+        case .pdfText: return [.contains, .doesNotContain]
         }
     }
 }
@@ -380,7 +395,7 @@ struct FolderRuleCondition: Codable, Equatable, Identifiable {
             if pattern.isEmpty { return "Name: enter a pattern." }
             if (try? NSRegularExpression(pattern: pattern)) == nil { return "Name: “\(pattern)” isn't a valid pattern." }
             return nil
-        case .name, .fileExtension, .downloadedFrom, .tags:
+        case .name, .fileExtension, .downloadedFrom, .tags, .pdfText:
             return cleanValues.isEmpty ? "\(attribute.title): add a value." : nil
         case .dateAdded, .dateCreated, .dateModified, .dateLastOpened, .size:
             return amount.isFinite && amount >= 0 ? nil : "\(attribute.title): enter a number."

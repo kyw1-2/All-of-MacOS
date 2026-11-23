@@ -64,6 +64,9 @@ struct QuickCommandPalette: View {
     @ObservedObject var hotkeys = PaletteHotkeyStore.shared
     @ObservedObject var schedule = PaletteSchedule.shared
     @ObservedObject var contacts = PaletteContacts.shared
+    /// 7.12 (Codex 30-app spec): saved file searches and free times.
+    @ObservedObject var savedSearches = PaletteSavedSearches.shared
+    @ObservedObject var availability = PaletteAvailability.shared
     /// 7.2 (report 05 §3-E): Clipboard History's kind filter (⇥ cycles it).
     @State var clipboardFilter: ClipboardEntry.Kind?
     /// ⌘ held for a moment: the first nine rows show ⌘1…⌘9.
@@ -363,6 +366,12 @@ struct QuickCommandPalette: View {
               aliases: ["kill process", "killprocess", "kill", "killapps", "kill apps", "force quit", "kill -9", "pkill",
                         "프로세스 강제 종료", "프로세스 종료", "강종", "강제 종료", "강제종료"],
               keywords: "process pid activity monitor helper cli terminal sigkill 프로세스 작업 관리자"),
+        // 7.12 (Codex 30-app #3): free times from your calendars, as text.
+        .init(id: "calendar.screen.freeTimes", route: .availability,
+              subtitle: "Pick up to three free times and copy them — no titles or people · 가능 시간 복사",
+              aliases: ["free times", "free time", "availability", "copy availability", "when am i free", "meeting times",
+                        "가능 시간", "가능 시간 복사", "빈 시간", "회의 시간", "일정 제안"],
+              keywords: "calendar fantastical proposal schedule slot meeting 캘린더 회의 약속 빈시간"),
         .init(id: "system.screen.killApps", route: .killApps,
               subtitle: "Quit an app the normal way, so it can save · 일반 종료",
               aliases: ["quit app", "quit apps", "앱 종료", "일반 종료", "종료", "앱 끄기"],
@@ -618,6 +627,17 @@ struct QuickCommandPalette: View {
                 keywords: "compare folders sync backup external drive missing files diff 폴더 비교 동기화 백업 누락") { AOMFileToolsLauncher.compareFolders() }
         command("files.tool.zipExtract", "Extract from ZIP", "Search a ZIP and take out only the files you pick · 압축 일부 풀기", "doc.zipper",
                 keywords: "unzip archive extract selected files zip 압축 풀기 압축해제 일부") { AOMFileToolsLauncher.openZip() }
+        // 7.12 (Codex 30-app #1): saved file searches by their names.
+        items += savedSearchRootItems()
+        // 7.12 (Codex NEW-1): each Drop Shelf by its name, pinned shelves first.
+        for (rank, shelf) in FilesShelfStore.shared.shelves.enumerated() {
+            let count = shelf.items.count
+            command("files.shelf.\(shelf.id.uuidString)", "\(shelf.name)",
+                    "Drop Shelf · \(count == 1 ? "1 file" : "\(count) files")\(shelf.pinned ? " · pinned" : "") · 보관함",
+                    shelf.pinned ? "pin" : "tray.full",
+                    keywords: "drop shelf dropover yoink files 보관함 선반 파일 모음 \(rank == 0 ? "last used" : "")",
+                    primaryTitle: "Open Shelf") { FilesShelfPanelController.shared.show(shelf: shelf.id) }
+        }
         command("capture.area", "Capture Area", "Drag a region to capture", "viewfinder",
                 keys: captureKeys(.captureArea)) { CaptureCoordinator.shared.captureArea() }
         command("capture.window", "Capture Window", "Pick a window to capture", "macwindow",
@@ -736,7 +756,7 @@ struct QuickCommandPalette: View {
                 keywords: "homepod airplay 홈팟 에어플레이 소리 무음 복구 다시 연결 reconnect repair silent") {
             AudioRecovery.reconnect()
         }
-        command("audio.check", "Check HomePod Audio", "Why it crackles: memory, heat · 홈팟 지지직 점검", "stethoscope",
+        command("audio.check", "Check HomePod Audio", "Why it crackles, the last 30 minutes, which app to reopen · 홈팟 끊김 점검", "stethoscope",
                 keywords: "homepod airplay 홈팟 지지직 끊김 crackle 점검 check memory 메모리") {
             AudioRecovery.checkHomePod()
         }
@@ -1128,7 +1148,8 @@ struct QuickCommandPalette: View {
                 case .tool(let tool) where tool.takesQuery: items = toolItems(tool)
                 case .emoji: items = emojiItems()
                 case .contacts: items = contactItems()
-                case .hotkey, .hotkeyFinder, .newSnippet, .scriptArgument, .snippetArguments: items = routeItems(route)
+                case .hotkey, .hotkeyFinder, .newSnippet, .scriptArgument, .snippetArguments, .saveSearch, .availability,
+                     .clipboardDiff: items = routeItems(route)
                 // 7.3: loading, error and "Show More" rows stay while typing.
                 case .folder(let url):
                     let rows = folderItems(url)
@@ -1230,7 +1251,9 @@ struct QuickCommandPalette: View {
                 if !term.isEmpty { brew.whenIdle { if brew.searchText == term, brew.tab == .search { brew.search() } } }
             }
         case .tool, .automationCatalog, .folder, .rulePreview, .emoji, .snippets, .newSnippet, .scripts, .scriptOutput,
-             .scriptArgument, .snippetArguments, .schedule, .contacts, .sendTo, .hotkey, .themes: break
+             .scriptArgument, .snippetArguments, .schedule, .contacts, .sendTo, .hotkey, .themes, .saveSearch,
+             .clipboardCompare, .clipboardDiff: break
+        case .availability: enterAvailability()
         case .hotkeyFinder: PaletteHotkeyFinder.shared.shortcut = nil
         case .killApps: screens.watchApps(true)
         case .killProcess: screens.watchProcesses(true)
@@ -1680,6 +1703,10 @@ struct QuickCommandPalette: View {
         case .hotkey(let itemID, let title): return hotkeyItems(itemID: itemID, title: title)
         case .hotkeyFinder: return hotkeyFinderItems()
         case .themes: return themeItems()
+        case .saveSearch(let text): return saveSearchItems(text)
+        case .clipboardCompare(let id): return clipboardCompareItems(id)
+        case .clipboardDiff(let a, let b): return clipboardDiffItems(a, b)
+        case .availability: return availabilityItems()
         }
     }
 
@@ -2026,6 +2053,11 @@ struct QuickCommandPalette: View {
                 if !state.stack.contains(entry.id) { state.stack.append(entry.id) }
                 screens.show("Paste Stack · \(state.stack.count) queued")
             })
+            // 7.12 (Codex 30-app #2): two texts side by side, changes marked.
+            if entry.kind == .text || entry.kind == .link {
+                secondaries.append(PaletteAction(title: "Compare With…", symbol: "arrow.left.arrow.right.square",
+                                                 effect: .push(.clipboardCompare(entry.id))) {})
+            }
             var item = screenRow("cliphistory.\(entry.id.uuidString)", entry.title,
                            [entry.sourceName, AOMRelativeTime.string(entry.lastCopiedAt)].compactMap { $0 }.joined(separator: " · "),
                            icon: entry.kind.symbol, group: nil, section: .clipboard,
@@ -2523,6 +2555,9 @@ struct QuickCommandPalette: View {
                 case "confirm":
                     push(.killApps)
                     confirmQuitAll(PaletteKillApps.entries().filter { !$0.isProtected }, keeping: session.target?.name ?? "Finder")
+                case "clipDiff":
+                    let texts = clipboardStore.entries.filter { $0.kind == .text }
+                    if texts.count >= 2 { push(.clipboardDiff(texts[1].id, texts[0].id)) }
                 case let review where review.hasPrefix("review:"):
                     push(.uninstallApps)
                     push(.uninstallReview(URL(fileURLWithPath: String(review.dropFirst("review:".count)))))
@@ -2830,13 +2865,16 @@ struct QuickCommandPalette: View {
         case .killApps?: return "Only apps with a Dock icon are listed; Finder and AOM itself are never quit from here."
         case .killProcess?: return "Your apps, menu bar apps, helpers and command-line processes. ↩ force quits the selected one at once."
         case .uninstallApps?: return "Apps that come with macOS and All of MacOS itself aren't listed."
+        // 7.12: an empty history isn't a search with no match.
+        case .clipboard? where !isSearching && clipboardFilter == nil:
+            return "What you copy shows up here. Clipboard collecting can be paused from the AOM menu."
         default: return "esc goes back to the previous screen."
         }
     }
 
     private var emptyState: some View {
         VStack(spacing: AOMSpace.x2) {
-            Image(systemName: "magnifyingglass")
+            Image(systemName: isSearching ? "magnifyingglass" : "tray")
                 .font(AOMFont.title.weight(.regular)).imageScale(.large)
                 .foregroundStyle(AOMCraftColor.inkSecondary)
                 .padding(.bottom, AOMSpace.x1)
@@ -2845,13 +2883,25 @@ struct QuickCommandPalette: View {
             Text(emptyDetail)
                 .font(AOMFont.callout).foregroundStyle(AOMCraftColor.inkSecondary)
                 .multilineTextAlignment(.center)
-            // The empty state needs a mouse-reachable way out too.
-            Button("Clear Search") {
-                query = ""
-                isFieldFocused = true
+            // The empty state needs a mouse-reachable way out too. 7.12: the
+            // way out that fits — Clear Search only when something is typed
+            // (an empty Clipboard History offered it with an empty field).
+            if isSearching {
+                Button("Clear Search") {
+                    query = ""
+                    isFieldFocused = true
+                }
+                .buttonStyle(.borderless)
+                .padding(.top, AOMSpace.x2)
+            } else if navigation.current == .clipboard, clipboardFilter != nil {
+                Button("Show Everything") { clipboardFilter = nil; isFieldFocused = true }
+                    .buttonStyle(.borderless)
+                    .padding(.top, AOMSpace.x2)
+            } else if navigation.depth > 0 {
+                Button("Go Back") { pop() }
+                    .buttonStyle(.borderless)
+                    .padding(.top, AOMSpace.x2)
             }
-            .buttonStyle(.borderless)
-            .padding(.top, AOMSpace.x2)
         }
         .padding(AOMSpace.x6)
         .frame(maxWidth: .infinity, maxHeight: .infinity)

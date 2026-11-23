@@ -24,6 +24,8 @@ final class PaletteSchedule: ObservableObject {
         let calendar: String
         let location: String?
         let meetingLink: URL?
+        /// 7.12: shown as Free (Calendar's "Show As"): it doesn't block free-time search.
+        var isFree = false
     }
 
     @Published private(set) var events: [Event]?
@@ -94,7 +96,8 @@ final class PaletteSchedule: ObservableObject {
                 Event(id: event.eventIdentifier ?? UUID().uuidString, title: event.title ?? "Untitled",
                       start: event.startDate, end: event.endDate, isAllDay: event.isAllDay,
                       calendar: event.calendar?.title ?? "", location: event.location.flatMap { $0.isEmpty ? nil : $0 },
-                      meetingLink: meetingLink(in: [event.url?.absoluteString, event.location, event.notes]))
+                      meetingLink: meetingLink(in: [event.url?.absoluteString, event.location, event.notes]),
+                      isFree: event.availability == .free)
             }
     }
 
@@ -152,7 +155,7 @@ final class PaletteSchedule: ObservableObject {
             Event(id: "s3", title: "Algorithms lecture", start: at(1, 10), end: at(1, 11, 30), isAllDay: false,
                   calendar: "School", location: "Room 301", meetingLink: nil),
             Event(id: "s4", title: "Mom's birthday", start: at(2, 0), end: at(3, 0), isAllDay: true,
-                  calendar: "Family", location: nil, meetingLink: nil),
+                  calendar: "Family", location: nil, meetingLink: nil, isFree: true),
         ]
     }
 }

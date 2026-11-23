@@ -27,6 +27,8 @@ struct FolderRuleFileInfo: Equatable {
     var inode: UInt64 = 0
     /// 0 for items at the top level of the watched folder.
     var depth = 0
+    /// 7.12 (NEW-2): the first page's text, read only for a rule that needs it.
+    var pdf: FolderRulePDFContent?
 
     init(url: URL, name: String? = nil, isDirectory: Bool = false, isPackage: Bool = false,
          contentType: String? = nil, isScreenCapture: Bool = false, size: Int64 = 0,

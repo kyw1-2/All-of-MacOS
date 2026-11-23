@@ -259,6 +259,8 @@ struct FolderRulePreviewItem: Identifiable, Equatable {
         case earlierRule(String)
         /// The rule's conditions don't match (testing one file).
         case noMatch
+        /// 7.12 (NEW-2): the rule can't decide this PDF; it stays where it is.
+        case needsReview(String)
     }
 
     var id: String
@@ -381,6 +383,9 @@ final class FolderRulesRunner: @unchecked Sendable {
     private(set) var memory: FolderRuleMemory
     private var stability = FolderRuleStability()
     private var limiter = FolderRuleRateLimiter()
+    /// 7.12 (NEW-2): PDFs already recorded as needing review, by key, with
+    /// the version seen — recorded once per version, not once per pass.
+    private var reviewed: [String: Date] = [:]
     /// At most this many runs per pass, so one pass never holds the queue long.
     static let maxRunsPerPass = 200
 
@@ -425,14 +430,24 @@ final class FolderRulesRunner: @unchecked Sendable {
             }
             let sizes = rules.contains { $0.conditions.contains { $0.attribute == .size } }
             for entry in entries {
-                guard let info = FolderRuleFileReader.read(entry.url, depth: entry.depth, directorySizes: sizes) else { continue }
+                guard var info = FolderRuleFileReader.read(entry.url, depth: entry.depth, directorySizes: sizes) else { continue }
                 seenPaths.insert(info.url.path)
                 guard stability.isStable(info, now: now) else {
                     output.recheck(FolderRuleStability.quietPeriod + 0.5)
                     continue
                 }
+                Self.attachPDF(&info, rules: rules)
                 for rule in rules {
                     let key = FolderRuleMemory.key(rule: rule.id, info)
+                    // 7.12 (NEW-2): a PDF the rule can't decide is recorded for
+                    // review and given to no later rule in this pass.
+                    if let reason = Self.reviewReason(rule, info, now: now) {
+                        if !memory.isSettled(key, signature: rule.conditionSignature), reviewed[key] != (info.dateModified ?? .distantPast) {
+                            reviewed[key] = info.dateModified ?? .distantPast
+                            output.runs.append(Self.reviewRecord(rule, info: info, folder: folder, reason: reason))
+                        }
+                        break
+                    }
                     guard FolderRuleMatcher.matches(rule, info, now: now) else {
                         memory.forget(key)
                         continue
@@ -471,9 +486,15 @@ final class FolderRulesRunner: @unchecked Sendable {
         for request in requests {
             guard let rule = config.rules.first(where: { $0.id == request.ruleID }),
                   let folder = config.folder(request.folderID),
-                  let info = FolderRuleFileReader.read(request.info.url, depth: request.info.depth,
-                                                       directorySizes: rule.conditions.contains { $0.attribute == .size }),
-                  FolderRuleMatcher.matches(rule, info, now: now) else { output.skippedApproved += 1; continue }
+                  var info = FolderRuleFileReader.read(request.info.url, depth: request.info.depth,
+                                                       directorySizes: rule.conditions.contains { $0.attribute == .size }) else {
+                output.skippedApproved += 1; continue
+            }
+            // 7.12 (NEW-2): read again right before acting — the PDF may have changed since the preview.
+            Self.attachPDF(&info, rules: [rule])
+            guard Self.reviewReason(rule, info, now: now) == nil, FolderRuleMatcher.matches(rule, info, now: now) else {
+                output.skippedApproved += 1; continue
+            }
             // 7.2.2: the item at that path must still be the one that was
             // shown (a file replaced under the same name is left alone).
             guard Self.isSameItem(request.info, info) else { output.skippedApproved += 1; continue }
@@ -482,6 +503,35 @@ final class FolderRulesRunner: @unchecked Sendable {
             run(rule, info: info, key: key, folder: folder, now: now, into: &output)
         }
         return output
+    }
+
+    /// 7.12 (NEW-2): the first page's text, for PDFs only and only when one
+    /// of `rules` reads it; scans are recognized when such a rule asks.
+    static func attachPDF(_ info: inout FolderRuleFileInfo, rules: [FolderRule]) {
+        let readers = rules.filter(\.readsPDFText)
+        guard !readers.isEmpty, info.kinds.contains(.pdf), !info.isDirectory else { return }
+        info.pdf = FolderRulePDFText.read(info, recognizesScans: readers.contains(where: \.recognizesScans))
+    }
+
+    /// Why `rule` can't decide this item now, or nil (it can, or it isn't the rule's).
+    static func reviewReason(_ rule: FolderRule, _ info: FolderRuleFileInfo, now: Date) -> String? {
+        guard rule.readsPDFText else { return nil }
+        guard let pdf = info.pdf else {
+            // A Rename that reads a PDF, on something that isn't one.
+            let renamesFromPDF = rule.actions.contains { $0.kind == .rename && FolderRulePatterns.usesPDFTokens($0.pattern) }
+            return renamesFromPDF && FolderRuleMatcher.matches(rule, info, now: now) ? "it isn't a PDF, so its name can't come from its text" : nil
+        }
+        let concerns = pdf.state == .read ? FolderRuleMatcher.matches(rule, info, now: now)
+            : FolderRuleMatcher.matchesApartFromPDF(rule, info, now: now)
+        return concerns ? FolderRulePDFText.reviewReason(rule, pdf) : nil
+    }
+
+    static func reviewRecord(_ rule: FolderRule, info: FolderRuleFileInfo, folder: FolderRuleFolder, reason: String) -> FolderRuleRunRecord {
+        let step = FolderRuleStepRecord(action: rule.actions.first?.kind ?? .notify, result: .skipped,
+                                        summary: "Needs review: \(reason). Left where it is.")
+        return FolderRuleRunRecord(ruleID: rule.id, ruleName: rule.name, folderID: folder.id, folderName: folder.name,
+                                   fileName: info.name, originalPath: info.url.path,
+                                   outcome: FolderRuleRunOutcome(steps: [step], finalURL: info.url))
     }
 
     /// Pure: whether a re-read item is the one that was shown (same volume
@@ -572,10 +622,12 @@ final class FolderRulesRunner: @unchecked Sendable {
         let sizes = rule.conditions.contains { $0.attribute == .size }
         for entry in entries {
             if FolderRuleFileReader.isInProgressName(entry.url.lastPathComponent) { inProgress += 1; continue }
-            guard let info = FolderRuleFileReader.read(entry.url, depth: entry.depth, directorySizes: sizes),
-                  FolderRuleMatcher.matches(rule, info, now: now) else { continue }
+            guard var info = FolderRuleFileReader.read(entry.url, depth: entry.depth, directorySizes: sizes) else { continue }
+            Self.attachPDF(&info, rules: ordered)
+            let review = Self.reviewReason(rule, info, now: now)
+            guard review != nil || FolderRuleMatcher.matches(rule, info, now: now) else { continue }
             let key = FolderRuleMemory.key(rule: rule.id, info)
-            var state = FolderRulePreviewItem.State.willRun
+            var state = review.map { FolderRulePreviewItem.State.needsReview($0) } ?? .willRun
             for earlier in ordered.prefix(while: { $0.id != rule.id }) where earlier.problems.isEmpty {
                 let earlierKey = FolderRuleMemory.key(rule: earlier.id, info)
                 if FolderRuleMatcher.matches(earlier, info, now: now),
@@ -603,12 +655,14 @@ final class FolderRulesRunner: @unchecked Sendable {
     /// One file against one rule (the inspector's "Test a file").
     func test(_ rule: FolderRule, file: URL) -> FolderRulePreviewItem? {
         let now = environment.now()
-        guard let info = FolderRuleFileReader.read(file, directorySizes: rule.conditions.contains { $0.attribute == .size }) else {
+        guard var info = FolderRuleFileReader.read(file, directorySizes: rule.conditions.contains { $0.attribute == .size }) else {
             return nil
         }
-        let matches = FolderRuleMatcher.matches(rule, info, now: now)
+        Self.attachPDF(&info, rules: [rule])
+        let review = Self.reviewReason(rule, info, now: now)
+        let matches = review == nil && FolderRuleMatcher.matches(rule, info, now: now)
         return FolderRulePreviewItem(id: FolderRuleMemory.key(rule: rule.id, info), info: info,
-                                     state: matches ? .willRun : .noMatch,
+                                     state: review.map { .needsReview($0) } ?? (matches ? .willRun : .noMatch),
                                      steps: matches ? FolderRulePlanDescriber.describe(rule, info: info, now: now,
                                                                                       counter: memory.counter(for: rule.id)) : [],
                                      conditionResults: FolderRuleMatcher.evaluate(rule, info, now: now))

@@ -53,6 +53,27 @@ enum FolderRuleMatcher {
             let tags = Set(info.tags.map { normalized($0).lowercased() })
             let hit = wanted.contains { tags.contains($0) }
             return condition.comparison.isNegative ? !hit : hit
+        case .pdfText:
+            // Not a PDF, or its text couldn't be read: no verdict either way
+            // (the runner holds a readable-but-unread PDF for review).
+            guard let pdf = info.pdf, pdf.state == .read else { return false }
+            let text = FolderRulePDFText.searchable(pdf.text)
+            let values = condition.cleanValues.map(FolderRulePDFText.searchable)
+            guard !values.isEmpty else { return false }
+            let hit = values.contains { text.range(of: $0, options: [.caseInsensitive]) != nil }
+            return condition.comparison.isNegative ? !hit : hit
+        }
+    }
+
+    /// 7.12 (NEW-2): the rule would match if its PDF Text conditions could be
+    /// read — the item is the rule's to review, not a later rule's.
+    static func matchesApartFromPDF(_ rule: FolderRule, _ info: FolderRuleFileInfo, now: Date) -> Bool {
+        guard rule.includeSubfolders || info.depth == 0, !rule.conditions.isEmpty else { return false }
+        let results = rule.conditions.map { $0.attribute == .pdfText ? (rule.match != .none) : matches($0, info, now: now) }
+        switch rule.match {
+        case .all: return results.allSatisfy { $0 }
+        case .any: return results.contains(true)
+        case .none: return !results.contains(true)
         }
     }
 
@@ -112,7 +133,10 @@ enum FolderRulePatterns {
     /// Tokens for subfolder patterns ("{year}-{month}", "{kind}").
     static let folderTokens: Set<String> = ["year", "month", "day", "kind", "ext"]
     /// Tokens for Rename and Show Notification.
-    static let nameTokens: Set<String> = ["name", "ext", "date", "counter", "year", "month", "day", "kind"]
+    static let nameTokens: Set<String> = ["name", "ext", "date", "counter", "year", "month", "day", "kind", "after", "pdfdate"]
+
+    /// 7.12 (NEW-2): {after:공급자} and {pdfdate} read the PDF's first page.
+    static func usesPDFTokens(_ pattern: String) -> Bool { tokens(in: pattern).contains { ["after", "pdfdate"].contains($0.name) } }
 
     struct Context {
         var info: FolderRuleFileInfo
@@ -181,6 +205,18 @@ enum FolderRulePatterns {
             let format = token.argument?.trimmingCharacters(in: .whitespaces) ?? ""
             formatter.dateFormat = format.isEmpty ? "yyyy-MM-dd" : format
             return formatter.string(from: context.date)
+        case "after":
+            guard let label = token.argument, let text = context.info.pdf?.readText else { return nil }
+            return FolderRulePDFText.value(after: label, in: text)
+        case "pdfdate":
+            guard let text = context.info.pdf?.readText, let date = FolderRulePDFText.singleDate(in: text) else { return nil }
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.calendar = context.calendar
+            formatter.timeZone = context.calendar.timeZone
+            let format = token.argument?.trimmingCharacters(in: .whitespaces) ?? ""
+            formatter.dateFormat = format.isEmpty ? "yyyy-MM-dd" : format
+            return formatter.string(from: date)
         case "counter":
             let width = token.argument.flatMap { Int($0.trimmingCharacters(in: .whitespaces)) }.map { min(9, max(1, $0)) } ?? 1
             let digits = String(max(0, context.counter))

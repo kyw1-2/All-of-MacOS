@@ -206,6 +206,12 @@ struct FolderRulesRuleEditor: View {
                                                engine.update(saved)
                                            }
                                        }))
+            // 7.12 (Codex NEW-2): only rules that read a PDF's text show this.
+            if (model.draft ?? rule).readsPDFText {
+                AOMToggleRow("Recognize scanned PDFs",
+                             detail: "When a PDF's first page has no text, that one page is read on this Mac (Korean and English). Nothing is written into the PDF. Off: such PDFs wait for review.",
+                             isOn: model.binding(\.recognizesScans, fallback: rule.recognizesScans))
+            }
             AOMSettingRow("Handled items", detail: "The rule leaves items it already handled alone, like Hazel. This lets it look at them again.") {
                 Button("Check Them Again") {
                     engine.forgetHandledItems(of: rule.id)
@@ -354,6 +360,7 @@ struct FolderRulesPreviewRow: View {
         case .handled: return ("Already handled", .neutral)
         case .earlierRule(let name): return ("Goes to “\(name)”", .neutral)
         case .noMatch: return ("Doesn't match", .neutral)
+        case .needsReview(let reason): return ("Needs review — \(reason)", .warning)
         }
     }
 }
@@ -447,6 +454,8 @@ struct FolderRuleConditionValue: View {
                           })
         case .tags:
             AOMTokenField(tokens: $condition.values, placeholder: "Add a tag")
+        case .pdfText:
+            AOMTokenField(tokens: $condition.values, placeholder: "Add words on the page, such as 청구서")
         }
     }
 }
@@ -495,11 +504,11 @@ struct FolderRuleActionValue: View {
                 TextField("New name, such as {name} {date:yyyy-MM-dd}", text: $action.pattern)
                     .textFieldStyle(.roundedBorder)
                     .accessibilityLabel("Name pattern")
-                FolderRulesTokenMenu(tokens: ["{name}", "{ext}", "{date:yyyy-MM-dd}", "{counter}", "{counter:3}", "{kind}"]) {
+                FolderRulesTokenMenu(tokens: ["{name}", "{ext}", "{date:yyyy-MM-dd}", "{counter}", "{counter:3}", "{kind}", "{after:공급자}", "{pdfdate}"]) {
                     action.pattern += $0
                 }
             }
-            .help("Without {ext} the file keeps its extension. {counter} counts up each time the rule renames a file.")
+            .help("Without {ext} the file keeps its extension. {counter} counts up each time the rule renames a file. For PDFs, {after:공급자} is the text after “공급자” on its line and {pdfdate} the one date on the first page — a PDF without them waits for review.")
         case .addTags:
             AOMTokenField(tokens: $action.tags, placeholder: "Add a tag")
         case .setColorLabel:

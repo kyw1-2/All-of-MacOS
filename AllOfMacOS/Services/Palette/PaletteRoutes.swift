@@ -67,6 +67,14 @@ enum PaletteRoute: Hashable {
     case hotkeyFinder
     /// 7.8: the launcher's own look (theme, opacity, material).
     case themes
+    /// 7.12 (Codex 30-app #1): naming Search Files' conditions.
+    case saveSearch(String)
+    /// 7.12 (#2): pick the clipboard text to compare `UUID` with.
+    case clipboardCompare(UUID)
+    /// 7.12 (#2): the older text against the newer one.
+    case clipboardDiff(UUID, UUID)
+    /// 7.12 (#3): free times in your calendars, copied as text.
+    case availability
 
     var title: String {
         switch self {
@@ -103,6 +111,10 @@ enum PaletteRoute: Hashable {
         case .hotkey: return "Set Hotkey"
         case .hotkeyFinder: return "Find a Shortcut"
         case .themes: return "Launcher Theme"
+        case .saveSearch: return "Save Search"
+        case .clipboardCompare: return "Compare With…"
+        case .clipboardDiff: return "Compare Clipboard Texts"
+        case .availability: return "Copy Free Times"
         }
     }
 
@@ -141,6 +153,10 @@ enum PaletteRoute: Hashable {
         case .hotkey: return "Press the new shortcut (esc cancels)"
         case .hotkeyFinder: return "Press a shortcut to see what uses it (esc goes back)"
         case .themes: return "↑↓ tries a theme on the launcher, ↩ keeps it"
+        case .saveSearch: return "Name this search, such as 이번 주 견적서"
+        case .clipboardCompare: return "Search the text to compare with…"
+        case .clipboardDiff: return "↑↓ goes from change to change"
+        case .availability: return "Type 30, 45, 60 or 90 for the meeting's minutes…"
         }
     }
 
@@ -173,6 +189,9 @@ enum PaletteRoute: Hashable {
         case .sendTo: return "paperplane"
         case .hotkey, .hotkeyFinder: return "keyboard"
         case .themes: return "paintpalette"
+        case .saveSearch: return "magnifyingglass.circle"
+        case .clipboardCompare, .clipboardDiff: return "arrow.left.arrow.right.square"
+        case .availability: return "calendar.badge.clock"
         }
     }
 
@@ -188,7 +207,8 @@ enum PaletteRoute: Hashable {
     /// changes the Mac (the root, Emoji, Snippets, Clipboard, files, models).
     var allowsQuickRun: Bool {
         switch self {
-        case .emoji, .snippets, .clipboard, .folder, .aiModels, .windowLayouts, .soundDevices, .sendTo, .contacts, .schedule:
+        case .emoji, .snippets, .clipboard, .folder, .aiModels, .windowLayouts, .soundDevices, .sendTo, .contacts, .schedule,
+             .clipboardCompare:
             return true
         case .tool(let tool):
             if case .files = tool { return true }

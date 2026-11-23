@@ -16,6 +16,10 @@ final class FilesShelfViewModel: ObservableObject {
     }
 
     @Published var selection: Set<UUID> = []
+    /// 7.12 (NEW-1): each shelf keeps its own selection while another is shown.
+    var selections: [UUID: Set<UUID>] = [:]
+    /// The shelf `selection` belongs to.
+    var selectionShelf: UUID?
     @Published var isTargeted = false
     @Published var progress: String?
     @Published var message: Message?
@@ -66,6 +70,7 @@ final class FilesShelfPanelController: NSObject {
             .sink { [weak self] items in
                 MainActor.assumeIsolated {
                     guard let self else { return }
+                    self.followActiveShelf()
                     let ids = Set(items.map(\.id))
                     if !self.model.selection.isSubset(of: ids) { self.model.selection.formIntersection(ids) }
                     self.resize()
@@ -81,6 +86,95 @@ final class FilesShelfPanelController: NSObject {
     }
 
     var isVisible: Bool { panel?.isVisible == true }
+
+    /// 7.12 (preview only): three shelves, the pinned one with a missing file.
+    static func previewSample() {
+        guard PresetManager.isUIPreview else { return }
+        let store = FilesShelfStore.shared
+        let folder = FilesStorage.directory.appendingPathComponent("Sample", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        func file(_ name: String) -> URL {
+            let url = folder.appendingPathComponent(name)
+            if !FileManager.default.fileExists(atPath: url.path) { FileManager.default.createFile(atPath: url.path, contents: Data("AOM".utf8)) }
+            return url
+        }
+        let talk = store.createShelf(named: "발표 준비")
+        store.add([file("발표 슬라이드 v3.key"), file("데모 영상.mov")], to: talk.id)
+        let submit = store.createShelf(named: "제출 자료")
+        let missing = folder.appendingPathComponent("견적.pdf")
+        store.add([file("제안서 최종.pdf"), file("첨부1 예산표.xlsx"), missing, file("회사 소개서.pdf")], to: submit.id)
+        store.togglePinned(submit.id)
+        shared.show(shelf: submit.id)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { shared.compress() }
+    }
+
+    /// The active shelf changed: its own selection comes back (7.12, NEW-1).
+    private func followActiveShelf() {
+        let active = store.activeID
+        guard model.selectionShelf != active else { return }
+        if let previous = model.selectionShelf { model.selections[previous] = model.selection }
+        model.selectionShelf = active
+        model.selection = model.selections[active] ?? []
+        model.quickLookURL = nil
+    }
+
+    /// Opens a shelf by id (the launcher's shelf rows).
+    func show(shelf id: UUID) {
+        store.activate(id)
+        followActiveShelf()
+        show()
+    }
+
+    func switchTo(_ id: UUID) {
+        guard id != store.activeID else { return }
+        store.activate(id)
+        followActiveShelf()
+    }
+
+    func createShelf(named name: String) {
+        if let previous = model.selectionShelf { model.selections[previous] = model.selection }
+        let shelf = store.createShelf(named: name)
+        model.selectionShelf = shelf.id
+        model.selection = []
+        model.show("Made the shelf “\(shelf.name)”")
+    }
+
+    /// Deletes a shelf. Received files only it names go to the Trash;
+    /// files of yours stay where they are. Undo brings both back.
+    func deleteShelf(_ id: UUID) {
+        guard let shelf = store.shelf(id) else { return }
+        let received = Self.receivedToTrash(store.receivedOnlyIn(id), receivedFolder: FilesStorage.receivedFolder)
+        guard let entry = store.deleteShelf(id) else {
+            model.show("The last shelf can't be deleted — Clear Shelf empties it", tone: .neutral)
+            return
+        }
+        model.selections[id] = nil
+        followActiveShelf()
+        let text = received.isEmpty ? "Deleted “\(shelf.name)”"
+            : "Deleted “\(shelf.name)” and moved \(Self.count(received.count)) AOM received to the Trash"
+        guard !received.isEmpty else {
+            model.show(text, undoTitle: "Undo") { [weak self] in self?.store.restoreShelf(entry); self?.followActiveShelf() }
+            return
+        }
+        Task {
+            let trash = await FilesFileActions.trash(received)
+            model.show(text, undoTitle: "Undo") { [weak self] in
+                Task {
+                    _ = await FilesFileActions.moveBack(trash.trashed)
+                    self?.store.restoreShelf(entry)
+                    self?.followActiveShelf()
+                }
+            }
+        }
+    }
+
+    /// "Also Add to": the selection (or the whole shelf) on another shelf too.
+    func addSelection(to target: UUID) {
+        let ids = model.selection.isEmpty ? Set(store.items.map(\.id)) : model.selection
+        let added = store.copy(ids, to: target)
+        guard let name = store.shelf(target)?.name, !added.isEmpty else { return }
+        model.show("Added \(Self.count(added.count)) to “\(name)”")
+    }
 
     /// Opens the shelf beside `point` (screen coordinates), or beside the
     /// pointer. It appears without taking focus.
@@ -179,6 +273,8 @@ final class FilesShelfPanelController: NSObject {
     /// files (an image from Safari) are written into the module's Received
     /// folder first.
     private func receive(urls: [URL], promises: [NSFilePromiseReceiver]) -> Bool {
+        // 7.12 (NEW-1): files that arrive late belong to the shelf they were dropped on.
+        let shelfID = store.activeID
         let added = store.add(urls)
         if !added.isEmpty { model.selection = Set(added.map(\.id)) }
         guard !promises.isEmpty else { return !added.isEmpty }
@@ -205,7 +301,7 @@ final class FilesShelfPanelController: NSObject {
                         if let error {
                             batch.failures.append(.init(url: url, reason: FilesFileActions.reason(error)))
                         } else {
-                            batch.received.append(contentsOf: controller.store.add([url], received: true).map(\.id))
+                            batch.received.append(contentsOf: controller.store.add([url], received: true, to: shelfID).map(\.id))
                         }
                         batch.finished += 1
                         guard batch.finished >= batch.total else {
@@ -213,13 +309,17 @@ final class FilesShelfPanelController: NSObject {
                             return
                         }
                         controller.model.progress = nil
-                        controller.model.selection = Set(batch.alreadyAdded + batch.received)
+                        if controller.store.activeID == shelfID {
+                            controller.model.selection = Set(batch.alreadyAdded + batch.received)
+                        } else {
+                            controller.model.selections[shelfID] = Set(batch.alreadyAdded + batch.received)
+                        }
                         if let failure = batch.failures.first {
                             let others = batch.failures.count > 1 ? " (and \(batch.failures.count - 1) more)" : ""
                             controller.model.show("Received \(batch.received.count) of \(batch.total). Couldn't receive “\(failure.url.lastPathComponent)”\(others) because \(failure.reason)", tone: .danger)
                         }
                         FilesActivityLog.shared.record("Received \(batch.received.count) of \(batch.total) promised files", tool: "Drop Shelf",
-                                                       files: controller.store.items(Set(batch.received)).map(\.url), failures: batch.failures)
+                                                       files: controller.store.items(Set(batch.received), in: shelfID).map(\.url), failures: batch.failures)
                     }
                 }
             }
@@ -229,10 +329,16 @@ final class FilesShelfPanelController: NSObject {
 
     // MARK: Actions (on the selection, or every item when nothing is selected)
 
-    var targetItems: [FilesShelfItem] {
+    /// 7.12 (Codex FIX-2): what an action asked for, missing files included,
+    /// taken when the action starts. The selection, or every item when
+    /// nothing is selected.
+    var requestedItems: [FilesShelfItem] {
         let selected = store.items(model.selection)
-        return (selected.isEmpty ? store.items : selected).filter(\.exists)
+        return selected.isEmpty ? store.items : selected
     }
+
+    /// The requested items whose files are still there.
+    var targetItems: [FilesShelfItem] { requestedItems.filter(\.exists) }
 
     var targetURLs: [URL] { targetItems.map(\.url) }
 
@@ -262,8 +368,12 @@ final class FilesShelfPanelController: NSObject {
     func copyTo() { transfer(move: false) }
 
     private func transfer(move: Bool) {
-        let items = targetItems
+        let items = requestedItems
         guard !items.isEmpty else { return }
+        guard items.contains(where: \.exists) else {
+            model.show(Self.allMissingMessage(items, verb: move ? "move" : "copy"), tone: .danger)
+            return
+        }
         guard !PresetManager.isUIPreview else { return }
         let open = NSOpenPanel()
         open.canChooseFiles = false
@@ -288,13 +398,14 @@ final class FilesShelfPanelController: NSObject {
 
     func runTransfer(_ items: [FilesShelfItem], to folder: URL, move: Bool) {
         model.progress = move ? "Moving…" : "Copying…"
+        let shelfID = store.activeID
         Task {
             let result = await FilesFileActions.transfer(items.map(\.url), to: folder, move: move)
             model.progress = nil
             let folderName = FileManager.default.displayName(atPath: folder.path)
             guard move else {
-                let copies = store.add(result.done.map(\.to))
-                model.selection = Set(copies.map(\.id))
+                let copies = store.add(result.done.map(\.to), to: shelfID)
+                if store.activeID == shelfID { model.selection = Set(copies.map(\.id)) }
                 let (text, tone) = Self.transferMessage(result, move: false, total: items.count, folderName: folderName)
                 model.show(text, tone: tone)
                 FilesActivityLog.shared.record(text, tool: "Drop Shelf", files: result.done.map(\.to), failures: result.failures)
@@ -340,6 +451,19 @@ final class FilesShelfPanelController: NSObject {
         return ("\(past) \(result.done.count) of \(count(total)) to \(folderName). \(why)", .danger)
     }
 
+    /// 7.12 (FIX-2): every requested file is gone, so nothing is made.
+    static func allMissingMessage(_ items: [FilesShelfItem], verb: String) -> String {
+        guard items.count > 1 else { return "Couldn't \(verb) “\(items.first?.name ?? "")” because it's no longer where the shelf saw it" }
+        return "Couldn't \(verb) — none of the \(items.count) files are where the shelf saw them"
+    }
+
+    /// 7.12 (FIX-2): "“견적.pdf” is missing — 1 of 4" (it fits the 320 pt panel).
+    static func missingMessage(_ missing: [FilesShelfItem], of total: Int) -> String {
+        guard let first = missing.first else { return "" }
+        let others = missing.count > 1 ? " +\(missing.count - 1)" : ""
+        return "“\(first.name)”\(others) missing — \(missing.count) of \(total)"
+    }
+
     private func undoMove(_ moves: [ShelfMove]) {
         Task {
             let result = await FilesFileActions.moveBack(moves.map(\.move))
@@ -362,8 +486,28 @@ final class FilesShelfPanelController: NSObject {
     }
 
     func compress() {
-        let urls = targetURLs
+        let requested = requestedItems
+        guard !requested.isEmpty, compressHandle == nil else { return }
+        let present = requested.filter(\.exists)
+        guard !present.isEmpty else {
+            model.show(Self.allMissingMessage(requested, verb: "compress"), tone: .danger)
+            return
+        }
+        let missing = requested.filter { !$0.exists }
+        guard missing.isEmpty else {
+            // Asked first: the ZIP would silently hold fewer files than chosen.
+            model.show(Self.missingMessage(missing, of: requested.count), tone: .danger,
+                       undoTitle: "Zip the Other \(present.count)") { [weak self] in
+                self?.compress(present.map(\.url))
+            }
+            return
+        }
+        compress(present.map(\.url))
+    }
+
+    func compress(_ urls: [URL]) {
         guard !urls.isEmpty, compressHandle == nil else { return }
+        let shelfID = store.activeID
         let handle = FilesProcess.Handle()
         compressHandle = handle
         model.progress = "Compressing \(Self.count(urls.count))…"
@@ -376,8 +520,8 @@ final class FilesShelfPanelController: NSObject {
             }
             do {
                 let archive = try await FilesFileActions.compress(urls, handle: handle)
-                let added = store.add([archive])
-                model.selection = Set(added.map(\.id))
+                let added = store.add([archive], to: shelfID)
+                if store.activeID == shelfID { model.selection = Set(added.map(\.id)) }
                 model.show("Compressed \(Self.count(urls.count)) into \(archive.lastPathComponent)")
             } catch {
                 if handle.isCancelled { model.show("Compressing stopped", tone: .neutral); return }
@@ -396,10 +540,13 @@ final class FilesShelfPanelController: NSObject {
         // 7.3 (Codex probe): only a received file still in the Received
         // folder goes to the Trash. One moved to a folder of yours — or a
         // different file that took its name there — stays where it is.
-        let received = Self.receivedToTrash(removed.map(\.item), receivedFolder: FilesStorage.receivedFolder)
+        // 7.12 (NEW-1): a received file another shelf still names stays.
+        let shelfID = store.activeID
+        let received = Self.receivedToTrash(removed.map(\.item).filter { !store.isReferenced($0.path, outside: shelfID) },
+                                            receivedFolder: FilesStorage.receivedFolder)
         let text = removed.count == store.items.count + removed.count && removed.count > 1 ? "Cleared the shelf" : "Removed \(Self.count(removed.count))"
         guard !received.isEmpty else {
-            model.show(text, undoTitle: "Undo") { [weak self] in self?.store.restore(removed) }
+            model.show(text, undoTitle: "Undo") { [weak self] in self?.store.restore(removed, to: shelfID) }
             return
         }
         Task {
@@ -407,7 +554,7 @@ final class FilesShelfPanelController: NSObject {
             model.show(text, undoTitle: "Undo") {
                 Task {
                     let back = await FilesFileActions.moveBack(trash.trashed)
-                    self.store.restore(Self.itemsToRestore(removed, trashed: trash.trashed, putBack: back))
+                    self.store.restore(Self.itemsToRestore(removed, trashed: trash.trashed, putBack: back), to: shelfID)
                     if let failure = back.failures.first {
                         let others = back.failures.count > 1 ? " (and \(back.failures.count - 1) more)" : ""
                         self.model.show("Couldn't put “\(failure.url.lastPathComponent)”\(others) back because \(failure.reason)", tone: .danger)
@@ -491,7 +638,9 @@ final class FilesShelfPanelController: NSObject {
         case 51, 117: remove(); return true                                       // Delete, Forward Delete
         case 0 where flags == .command: selectAll(); return true                 // ⌘A
         case 8 where flags == .command: FilesFileActions.copyFiles(targetURLs); return true // ⌘C
-        case 6 where flags == .command: model.undo?(); model.message = nil; return true   // ⌘Z
+        case 6 where flags == .command:                                           // ⌘Z
+            guard model.message?.undoTitle == "Undo" else { return true }
+            model.undo?(); model.message = nil; return true
         case 13 where flags == .command: hide(); return true                     // ⌘W
         default: return false
         }
@@ -619,7 +768,7 @@ struct FilesShelfView: View {
             .help(store.items.isEmpty ? "Drop files on the shelf" : "Drag all items out")
             .accessibilityLabel(store.items.isEmpty ? "Empty shelf" : "Drag all \(FilesShelfPanelController.count(store.items.count))")
             VStack(alignment: .leading, spacing: 0) {
-                Text("Drop Shelf").font(AOMFont.headline).foregroundStyle(AOMColor.text)
+                shelfMenu
                 Text(subtitle).font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary).lineLimit(1)
             }
             Spacer(minLength: AOMSpace.x1)
@@ -628,6 +777,52 @@ struct FilesShelfView: View {
         .padding(.leading, AOMSpace.x3)
         .padding(.trailing, AOMSpace.x2)
         .frame(height: 48)
+    }
+
+    /// 7.12 (Codex NEW-1, Dropover's shelf list): the shelf's name opens
+    /// switch, New Shelf, Rename, Pin and Delete.
+    private var shelfMenu: some View {
+        let active = store.activeShelf
+        return Menu {
+            Section("Shelves") {
+                ForEach(store.shelves) { shelf in
+                    Button {
+                        controller.switchTo(shelf.id)
+                    } label: {
+                        let mark = shelf.id == active.id ? "checkmark" : (shelf.pinned ? "pin" : "tray")
+                        Label("\(shelf.name) · \(shelf.items.count)", systemImage: mark)
+                    }
+                }
+            }
+            Divider()
+            Button("New Shelf…") { FilesShelfNaming.ask(title: "New Shelf", prompt: "Name the shelf", value: "") { controller.createShelf(named: $0) } }
+            Button("Rename “\(active.name)”…") {
+                FilesShelfNaming.ask(title: "Rename Shelf", prompt: "Name the shelf", value: active.name) { store.rename(active.id, to: $0) }
+            }
+            Button(active.pinned ? "Unpin “\(active.name)”" : "Pin “\(active.name)”") { store.togglePinned(active.id) }
+            if store.shelves.count > 1 {
+                Menu("Also Add \(model.selection.isEmpty ? "All" : "Selected") To") {
+                    ForEach(store.shelves.filter { $0.id != active.id }) { shelf in
+                        Button(shelf.name) { controller.addSelection(to: shelf.id) }
+                    }
+                }
+                .disabled(store.items.isEmpty)
+                Divider()
+                Button("Delete “\(active.name)”…") { controller.deleteShelf(active.id) }
+            }
+        } label: {
+            // One Text with inline symbols: a borderless menu's label draws a
+            // single image, so a separate chevron after a pin was dropped.
+            let name = store.shelves.count > 1 || active.name != FilesShelfLibrary.defaultName ? active.name : "Drop Shelf"
+            (active.pinned ? Text("\(Image(systemName: "pin.fill")) ").font(AOMFont.caption).foregroundColor(AOMColor.textSecondary) : Text(""))
+                + Text(name).font(AOMFont.headline).foregroundColor(AOMColor.text)
+                + Text(" \(Image(systemName: "chevron.down"))").font(.system(size: 10, weight: .semibold)).foregroundColor(AOMColor.textSecondary)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Switch, make, rename, pin or delete shelves")
+        .accessibilityLabel("Shelf: \(active.name)")
     }
 
     private var subtitle: String {
@@ -827,6 +1022,30 @@ struct FilesShelfView: View {
         }
         .padding(.horizontal, AOMSpace.x2)
         .frame(height: 52)
+    }
+}
+
+/// The name sheet for New Shelf and Rename (an alert with a text field,
+/// shown with AOM brought forward so it can take typing).
+@MainActor
+enum FilesShelfNaming {
+    static func ask(title: String, prompt: String, value: String, done: @escaping (String) -> Void) {
+        guard !PresetManager.isUIPreview else { return }
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = prompt
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        field.stringValue = value
+        field.placeholderString = "제출 자료"
+        alert.accessoryView = field
+        alert.addButton(withTitle: title == "New Shelf" ? "Make" : "Rename")
+        alert.addButton(withTitle: "Cancel")
+        AOMOverlayActivation.activateForOverlay()
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty || title == "New Shelf" else { return }
+        done(name)
     }
 }
 

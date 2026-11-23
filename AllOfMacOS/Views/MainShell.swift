@@ -694,7 +694,9 @@ private struct AOMWorkspaceSidebarBadge: View {
                     .help(missing == 1 ? "1 permission needs your attention" : "\(missing) permissions need your attention")
             }
         }
-        .task {
+        // 7.12: only while the window is on screen. A hidden main window kept
+        // asking tccd twice every 5 s for as long as AOM ran.
+        .aomVisibleTask {
             while !Task.isCancelled {
                 let count = AOMPermission.required.filter { [.denied, .notDetermined].contains(AOMPermissionCache.status($0)) }.count
                 if count != missing { missing = count }

@@ -22,7 +22,11 @@ final class PaletteLauncherData: ObservableObject {
 
     @Published private(set) var files: [PaletteFileHit] = []
     @Published private(set) var fileStatus: FileStatus = .idle
-    enum FileStatus: Equatable { case idle, searching, done(total: Int), failed }
+    /// 7.12: `unavailable` — the search's folder is gone or can't be read,
+    /// told apart from "nothing found".
+    enum FileStatus: Equatable { case idle, searching, done(total: Int), failed, unavailable(String) }
+    /// 7.12 (saved searches): the conditions of the search shown.
+    @Published private(set) var fileQuery = PaletteFileQuery()
 
     private var metadataQuery: NSMetadataQuery?
     private var metadataObserver: NSObjectProtocol?
@@ -39,14 +43,29 @@ final class PaletteLauncherData: ObservableObject {
         fileTicket &+= 1
         let ticket = fileTicket
         files = []
-        guard !text.isEmpty else { fileStatus = .idle; return }
+        let parsed = PaletteFileQuery.parse(text)
+        fileQuery = parsed
+        guard !parsed.isEmpty else { fileStatus = .idle; return }
         if PresetManager.isUIPreview { files = Self.sampleFiles(); fileStatus = .done(total: files.count); return }
+        // 7.12: a folder that's gone or closed to AOM says so instead of "no file".
+        if let folder = parsed.folderURL {
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: folder.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+                fileStatus = .unavailable("\((folder.path as NSString).abbreviatingWithTildeInPath) isn't there any more")
+                return
+            }
+            guard FileManager.default.isReadableFile(atPath: folder.path),
+                  (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) != nil else {
+                fileStatus = .unavailable("All of MacOS isn't allowed to read \((folder.path as NSString).abbreviatingWithTildeInPath)")
+                return
+            }
+        }
         fileStatus = .searching
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { [weak self] in
             guard let self, self.fileTicket == ticket else { return }
             let query = NSMetadataQuery()
-            query.searchScopes = [NSMetadataQueryUserHomeScope]
-            query.predicate = NSPredicate(format: "%K CONTAINS[cd] %@", NSMetadataItemFSNameKey, text)
+            query.searchScopes = parsed.folderURL.map { [$0] } ?? [NSMetadataQueryUserHomeScope]
+            query.predicate = parsed.predicate()
             query.sortDescriptors = [NSSortDescriptor(key: NSMetadataItemFSContentChangeDateKey, ascending: false)]
             self.metadataQuery = query
             self.metadataObserver = NotificationCenter.default.addObserver(forName: .NSMetadataQueryDidFinishGathering,
@@ -82,6 +101,7 @@ final class PaletteLauncherData: ObservableObject {
         stopFileSearch()
         files = []
         fileTerm = ""
+        fileQuery = PaletteFileQuery()
         fileStatus = .idle
     }
 
