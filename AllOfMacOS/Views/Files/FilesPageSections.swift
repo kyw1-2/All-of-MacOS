@@ -132,7 +132,9 @@ struct FilesShelfSection: View {
     }
 
     private var itemsCard: some View {
-        AOMSection("On the shelf", detail: shelf.items.isEmpty ? nil : "\(shelf.items.count)") {
+        // 7.12 (NEW-1): which shelf this is when there are several.
+        AOMSection(shelf.shelves.count > 1 ? "On “\(shelf.activeShelf.name)”" : "On the shelf",
+                   detail: shelf.shelves.count > 1 ? "\(shelf.items.count) · \(shelf.shelves.count) shelves" : (shelf.items.isEmpty ? nil : "\(shelf.items.count)")) {
             if shelf.items.isEmpty {
                 AOMInlineEmpty(symbol: "tray", message: "Empty. Drop files here, or shake while dragging.",
                                actionTitle: "Show Drop Shelf") { FilesModule.showShelf() }

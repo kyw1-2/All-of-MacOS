@@ -1,3 +1,36 @@
+## [7.12.0] - 2026-11-23
+
+Codex's two specs of 2026-11-23 (`AOM-7.11-개선-및-신규기능-명세서`, `AOM-상용앱-30종-기능확장-명세서`), the HomePod dropouts measured today, and bugs found in AOM's own log. Details and what is still open: `docs/design-7.12.md`.
+
+### HomePod dropouts
+- **Measured**: 7 dropouts in 6 minutes, each a HAL cycle that came 5–12 ms late at the HomePod's fixed 2.7 ms cycle, all with memory warning and 7.2–7.6 GB swapped (8 GB Mac). The HAL logged them in AOM's process only, not in coreaudiod; AirPlay's sender reported no transmit errors, so Wi-Fi was fine. One app (Ulanzi Studio, up 44 h) held 2.3 GB.
+- **AOM's audio code stays in memory while a HomePod plays** (its buffers already did): about 30 MB of AOM's code and constants are wired for the stream's life and released after. `defaults write com.kyw.allofmacos AOMAudioWireCode -bool NO` turns it off. Not yet confirmed by listening.
+- **⌘K › Check HomePod Audio** now counts the last 30 minutes' dropouts with the memory state each one was recorded under, names the three apps using the most memory, and offers **Quit and Reopen** for one that has grown far past normal (browsers excluded — they're usually what's playing).
+- A burst of dropouts (3 in 10 minutes) while memory is short posts **one notice an hour** naming the biggest apps (`AOMAudioGlitchNotice` = NO turns it off).
+- **Balance showed “100% R” on a HomePod**: the per-channel volume reads failed and their status was ignored. A device without left/right volume now shows “—”.
+- A helper process that quit no longer logs “no object with given ID” when its listener is removed.
+
+### Drop Shelf (Codex FIX-1, FIX-2, NEW-1)
+- **Named shelves** (Dropover): click the shelf's name for the shelf list, New Shelf…, Rename, Pin, Also Add To, Delete. Each shelf keeps its own selection; files that arrive late, copies and ZIPs land on the shelf they started on. Type a shelf's name in the launcher to open it, pinned shelves first. Two shelves can hold the same file; a move made by AOM updates both; deleting a shelf trashes only received files no other shelf holds (Undo brings it back). The old shelf.json becomes the Default Shelf (ids, order, paths kept; read back before the old file is set aside).
+- **A stopped ZIP leaves nothing**: ditto writes a hidden working file and only a finished archive gets its name (never replacing one that took the name); Stop is honoured between copied files too.
+- **Missing files are counted**: Copy To / Move To ask for every chosen file and say “Copied 2 of 3 items… Couldn't copy “견적.pdf” because it no longer exists”; Compress says which file is missing and offers **Zip the Other N**; when all are missing nothing is made.
+
+### Folder Rules read PDFs (Codex NEW-2, Hazel)
+- Condition **PDF Text (first page)** contains / does not contain. Rename tokens **{after:공급자}** (the text after a label on its line) and **{pdfdate}** (the page's one date, any of 2026-11-03, 2026년 11월 3일, Nov 3, 2026).
+- **Recognize scanned PDFs** per rule: a first page without text is read on this Mac (Korean and English); text PDFs never are. Nothing is written into the PDF, and the text isn't stored.
+- A PDF the rule can't decide — locked, no text, label missing, no date or two dates — is recorded once as **Needs review**, stays where it is and isn't handed to a later rule. Only PDFs are opened, only for rules that need them, one version once; Approve reads it again before acting.
+
+### Launcher
+- **Snippets go back** (Codex UX-1): Previous Question or ⌘[ from the second question on; the earlier answer comes back to edit and the later question's draft is kept.
+- **Saved searches** (HoudahSpot): Search Files takes `in:~/Documents kind:pdf modified:7d` (also 폴더:, 종류:, 수정:), and **Save This Search…** keeps the conditions by name; the last-7-days part is counted again each time. A folder that's gone or closed says so instead of “no file”.
+- **Compare clipboard texts** (Kaleidoscope): ⌘K › Compare With… on a text in Clipboard History; − older, + newer, ± changed with the changed part in [brackets] (readable without colour, never splitting a Korean syllable or an emoji).
+- **Copy Free Times** (Fantastical): weekdays 09–18 in your calendars, 30/45/60/90 minutes, pick up to three, copied as “월요일 11/24 10:30–11:30 또는 …”; busy all-day events block the day, Free events don't; checked again right before copying. Nothing is created or sent.
+
+### Fixes
+- An empty Clipboard History offered **Clear Search** with nothing typed; empty screens now offer what fits (Clear Search, Show Everything, Go Back).
+- The sidebar's permission badge read tccd twice every 5 s for as long as AOM ran, window hidden or not; it now reads only while the window is on screen.
+- The Files page names the active shelf when there are several.
+
 ## [7.11.0] - 2026-11-22
 
 Kill Process, weather that shows what you pick in °C or °F, menus on the AOM panel's features, and the AOM icon that closes on the second click. The battery limit below 80 % could not be done without SMC on this Mac (macOS offers 80–100 % only). Details: `docs/design-7.11.md`.

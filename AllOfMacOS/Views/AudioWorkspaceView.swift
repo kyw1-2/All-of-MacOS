@@ -505,8 +505,9 @@ private struct OutputEffectsPanel: View {
                 }
                 .frame(width: AOMRowControlMetrics.sliderWidth)
                 .disabled(!canAdjustBalance)
-                RowValue(text: AudioBalance.shortLabel(balance))
+                RowValue(text: canAdjustBalance ? AudioBalance.shortLabel(balance) : "—")
                     .accessibilityHidden(true)
+                    .help(canAdjustBalance ? "" : "This output has no left and right volume (HomePod and AirPlay have one)")
                 Button("Center") { balance = 0; AudioOutputService.setBalance(0) }
                     .controlSize(.small).disabled(!canAdjustBalance || balance == 0)
                 Spacer(minLength: 0)

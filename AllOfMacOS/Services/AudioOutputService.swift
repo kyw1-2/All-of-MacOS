@@ -644,10 +644,14 @@ extension AudioOutputService {
         var propRight = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyVolumeScalar,
                                                    mScope: kAudioDevicePropertyScopeOutput,
                                                    mElement: 2)
-        var left: Float32 = 1, right: Float32 = 1
-        var size: UInt32 = 4
-        _ = AudioObjectGetPropertyData(device, &propLeft, 0, nil, &size, &left)
-        _ = AudioObjectGetPropertyData(device, &propRight, 0, nil, &size, &right)
+        // 7.12: a device without per-channel volume (a HomePod, AirPlay)
+        // fails both reads. 7.11 ignored the status and reused `size`, which
+        // the failed first read had changed, so the HomePod showed "100% R".
+        var left: Float32 = 0, right: Float32 = 0
+        var leftSize = UInt32(MemoryLayout<Float32>.size), rightSize = leftSize
+        guard AudioObjectGetPropertyData(device, &propLeft, 0, nil, &leftSize, &left) == noErr,
+              AudioObjectGetPropertyData(device, &propRight, 0, nil, &rightSize, &right) == noErr,
+              left.isFinite, right.isFinite else { return 0 }
         let peak = max(left, right)
         guard peak > 0.001 else { return 0 }
         return (right - left) / peak
