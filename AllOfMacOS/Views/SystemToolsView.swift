@@ -46,7 +46,9 @@ struct SystemToolsView: View {
 
     var body: some View {
         AOMPage {
-            AOMPageHeader("System Tools", subtitle: subtitle)
+            // 7.15 (M01): the last result, or an invitation — not the page's name.
+            AOMPageHeader(model.lastResult.map { $0.succeeded ? "Last task finished" : "Last task needs a look" } ?? "Maintenance and quick fixes",
+                          subtitle: subtitle)
                 .help(model.lastResult?.message ?? "")
             HStack {
                 // 6.1: categories as view tabs (Linear, iStat Menus' module

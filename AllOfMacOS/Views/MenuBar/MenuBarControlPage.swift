@@ -44,26 +44,55 @@ struct MenuBarControlPage: View {
     @State private var setup = false
 
     private var tab: MenuBarSettingsTab { MenuBarSettingsTab(rawValue: tabRaw) ?? .layout }
+    @State private var pageWidth: CGFloat = 1000
+
+    @ViewBuilder
+    private var pane: some View {
+        switch tab {
+        case .general: MenuBarGeneralPane()
+        case .layout:
+            AOMSection(padding: 16) { MenuBarLayoutEditor() }
+        case .items:
+            AOMSection("Menu Bar Items", detail: "What each app's icons do", padding: 14) { MenuBarItemSettingsList() }
+        case .bar: MenuBarBarPane()
+        case .hotkeys: MenuBarHotkeysPane()
+        case .advanced: MenuBarAdvancedPane()
+        case .weather: MenuBarWeatherPane()
+        case .aomMenu: MenuBarAOMMenuPane()
+        }
+    }
 
     var body: some View {
         AOMPage {
-            AOMPageHeader("Menu Bar", subtitle: summary) {
+            // 7.15 (M01): a state, not the page's name again.
+            AOMPageHeader(headline, subtitle: summary, active: modules.isOn(.menuBarHider) || layout.isSample) {
                 Button { setup = true } label: { Label("Setup Guide", systemImage: "questionmark.circle") }
                     .controlSize(.small)
             }
-            MenuBarTabStrip(selection: Binding(get: { tab }, set: { tabRaw = $0.rawValue }))
-            switch tab {
-            case .general: MenuBarGeneralPane()
-            case .layout:
-                AOMSection(padding: 16) { MenuBarLayoutEditor() }
-            case .items:
-                AOMSection("Menu Bar Items", detail: "What each app's icons do", padding: 14) { MenuBarItemSettingsList() }
-            case .bar: MenuBarBarPane()
-            case .hotkeys: MenuBarHotkeysPane()
-            case .advanced: MenuBarAdvancedPane()
-            case .weather: MenuBarWeatherPane()
-            case .aomMenu: MenuBarAOMMenuPane()
+            // 7.15 (50refs §1, Bartender 7 / Ice preferences): the eight
+            // panes as a list beside the pane when the page is wide, a
+            // pop-up above it when narrow — not eight squeezed icon tabs.
+            let selection = Binding(get: { tab }, set: { tabRaw = $0.rawValue })
+            Group {
+                if pageWidth >= MenuBarPaneNavigation.sideBySideWidth {
+                    HStack(alignment: .top, spacing: AOMSpace.x4) {
+                        MenuBarPaneNavigation(selection: selection)
+                            .frame(width: MenuBarPaneNavigation.width)
+                        VStack(alignment: .leading, spacing: AOMSpace.sectionGap) { pane }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                } else {
+                    VStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
+                        MenuBarPaneNavigation.Compact(selection: selection)
+                        pane
+                    }
+                }
             }
+            .background(GeometryReader { geometry in
+                Color.clear
+                    .onAppear { pageWidth = geometry.size.width }
+                    .onChange(of: geometry.size.width) { _, width in pageWidth = width }
+            })
         }
         .aomPage("Menu Bar")
         .sheet(isPresented: $setup) { MenuBarSetupGuide { setup = false } }
@@ -78,6 +107,13 @@ struct MenuBarControlPage: View {
     }
 
     /// One line under the title: is hiding on, and how many apps are where.
+    private var headline: String {
+        guard modules.isOn(.menuBarHider) || layout.isSample else { return "Menu bar hiding is off" }
+        let lanes = layout.lanes
+        let hidden = Set(((lanes[.hidden] ?? []) + (lanes[.alwaysHidden] ?? [])).map(\.item.ownerBundleID)).count
+        return hidden == 0 ? "Nothing is hidden" : (hidden == 1 ? "1 app is hidden" : "\(hidden) apps are hidden")
+    }
+
     private var summary: String {
         guard modules.isOn(.menuBarHider) || layout.isSample else { return "Hiding is off — turn it on in General, or follow the Setup Guide." }
         let lanes = layout.lanes
@@ -101,39 +137,6 @@ enum MenuBarPreviewFlags {
     static var setup: Bool { PresetManager.isUIPreview && ProcessInfo.processInfo.arguments.contains("--aom-preview-menubar-setup") }
 }
 
-/// The pane switcher: Bartender's sidebar as a row of icon tabs.
-struct MenuBarTabStrip: View {
-    @Binding var selection: MenuBarSettingsTab
-    @State private var hovered: MenuBarSettingsTab?
-
-    var body: some View {
-        HStack(spacing: 4) {
-            ForEach(MenuBarSettingsTab.allCases) { tab in
-                let selected = tab == selection
-                Button { selection = tab } label: {
-                    VStack(spacing: 3) {
-                        Image(systemName: tab.symbol).font(.system(size: 15, weight: selected ? .semibold : .regular))
-                        Text(tab.title).font(.system(size: 11, weight: selected ? .semibold : .regular))
-                            .lineLimit(1).minimumScaleFactor(0.75)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 7)
-                    .foregroundStyle(selected ? AOMColor.accent : AOMColor.textSecondary)
-                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(selected ? AOMColor.accent.opacity(0.13) : (hovered == tab ? AOMColor.surfaceHover : .clear)))
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .onHover { hovered = $0 ? tab : (hovered == tab ? nil : hovered) }
-                .accessibilityLabel(tab.title)
-                .accessibilityAddTraits(selected ? .isSelected : [])
-            }
-        }
-        .padding(4)
-        .background(AOMColor.sunken, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-    }
-}
-
 /// Common entry point for status-item context menus and other in-app controls.
 @MainActor
 enum MenuBarNavigation {
@@ -148,4 +151,75 @@ enum MenuBarNavigation {
 
 extension Notification.Name {
     static let aomMenuBarSetup = Notification.Name("AOMMenuBarOpenSetup")
+}
+
+/// 7.15: the Menu Bar page's panes as a vertical list (Bartender 7's and
+/// Ice's preference panes), with ↑/↓ moving between them.
+struct MenuBarPaneNavigation: View {
+    @Binding var selection: MenuBarSettingsTab
+    @State private var hovered: MenuBarSettingsTab?
+    static let width: CGFloat = 184
+    /// Below this page width the list becomes a pop-up above the pane.
+    static let sideBySideWidth: CGFloat = 860
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(MenuBarSettingsTab.allCases) { tab in
+                let selected = tab == selection
+                Button { selection = tab } label: {
+                    HStack(spacing: AOMSpace.x2) {
+                        Image(systemName: tab.symbol)
+                            .font(.system(size: 13, weight: .medium))
+                            .frame(width: 18)
+                            .foregroundStyle(selected ? AOMColor.accent : AOMColor.textSecondary)
+                        Text(tab.title)
+                            .font(AOMFont.body.weight(selected ? .semibold : .regular))
+                            .foregroundStyle(AOMColor.text)
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, AOMSpace.x2)
+                    .frame(height: 32)
+                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(selected ? AOMColor.accent.opacity(0.13) : (hovered == tab ? AOMColor.surfaceHover : .clear)))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .onHover { hovered = $0 ? tab : (hovered == tab ? nil : hovered) }
+                .accessibilityLabel(tab.title)
+                .accessibilityAddTraits(selected ? .isSelected : [])
+            }
+        }
+        .padding(AOMSpace.x1)
+        .background(AOMColor.surface, in: RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous))
+        .focusable()
+        .onKeyPress(.downArrow) { step(1) }
+        .onKeyPress(.upArrow) { step(-1) }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Menu Bar settings")
+    }
+
+    private func step(_ offset: Int) -> KeyPress.Result {
+        let all = MenuBarSettingsTab.allCases
+        guard let index = all.firstIndex(of: selection) else { return .ignored }
+        let next = min(max(index + offset, 0), all.count - 1)
+        selection = all[next]
+        return .handled
+    }
+
+    /// The narrow form: one pop-up naming the pane.
+    struct Compact: View {
+        @Binding var selection: MenuBarSettingsTab
+
+        var body: some View {
+            Picker("Show", selection: $selection) {
+                ForEach(MenuBarSettingsTab.allCases) { tab in
+                    Label(tab.title, systemImage: tab.symbol).tag(tab)
+                }
+            }
+            .pickerStyle(.menu)
+            .fixedSize()
+            .padding(.horizontal, AOMSpace.rowInset)
+        }
+    }
 }

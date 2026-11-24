@@ -67,6 +67,7 @@ struct AOMMainShell<Content: View>: View {
                         .font(AOMFont.body)
                         // 6.0: page buttons without a style of their own are soft.
                         .aomButtonDefaults()
+                        .environment(\.aomOpaqueContent, true)
                     if drawerOpen && sideBySide {
                         AOMDivider(axis: .vertical)
                         DiagnosticDrawerView(showLog: $showLog, showTouchVisualizer: $showTouchVisualizer)
@@ -89,7 +90,7 @@ struct AOMMainShell<Content: View>: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(AOMWorkspaceBackground())
-            // 5.0: the Raycast-style action bar under every page.
+            // 7.15: only a selection's actions under the page (M03).
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 AOMActionBar(appState: appState,
                              paletteKeys: AOMPaletteShortcut.current(appState.currentPreset).displayString,
@@ -104,9 +105,13 @@ struct AOMMainShell<Content: View>: View {
                 ToolbarItemGroup(placement: .navigation) {
                     AOMHistoryButtons(appState: appState)
                 }
-                // Search Everything lives in the sidebar and in the action
-                // bar under every page (5.0), so it stays one click away
-                // with the sidebar hidden, without a third toolbar copy.
+                // 7.15 (M03): Actions and Search in the toolbar, so both
+                // stay one click away with the sidebar hidden.
+                ToolbarItem(placement: .primaryAction) {
+                    AOMToolbarActions(appState: appState,
+                                      paletteKeys: AOMPaletteShortcut.current(appState.currentPreset).displayString,
+                                      showingCommandPalette: $showingCommandPalette)
+                }
                 ToolbarItem(placement: .automatic) {
                     Menu {
                         Toggle("Diagnostics Console", isOn: $showLog)

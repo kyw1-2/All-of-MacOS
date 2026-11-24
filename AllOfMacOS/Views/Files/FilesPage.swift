@@ -30,8 +30,8 @@ struct FilesPage: View {
 
     var body: some View {
         AOMPage {
-            AOMPageHeader("Files", subtitle: AOMMainTab.files.subtitle,
-                          status: isOn ? AOMStatus("On", tone: .success) : AOMStatus("Off", tone: .neutral),
+            // 7.15 (M01): the toolbar says "Files"; the header says its state.
+            AOMPageHeader(isOn ? "Files is on" : "Files is off", subtitle: AOMMainTab.files.subtitle,
                           help: "Files puts folders one click away in every Open and Save dialog, holds dragged files on a shelf while you switch apps, and lists the newest downloads and screenshots.",
                           active: isOn) {
                 Button {

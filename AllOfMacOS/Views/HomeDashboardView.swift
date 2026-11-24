@@ -104,8 +104,10 @@ struct AOMHomeView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
                 // Status and anything that asks for you span the page.
-                WorkspaceBanner(engineOn: appState.globalEnabled,
-                                automations: triggers.filter(\.isEnabled).count) {
+                // 7.15 (50refs §1, M01): one status — the snapshot's, which
+                // knows paused and missing permissions — said once.
+                WorkspaceBanner(state: snapshot.hero) {
+                    heroAction(snapshot.hero)
                     Picker("Workspace view", selection: $showsOverview) {
                         Text("Now").tag(true)
                         Text("All Tools").tag(false)
@@ -116,9 +118,11 @@ struct AOMHomeView: View {
                 // The banner and the sidebar switch already say "running";
                 // the status card returns when something needs you (paused,
                 // a permission, a recording) or in My Workspace.
-                if showsOverview || recording.isRecording || !snapshot.hero.isRunning {
-                    hero(snapshot)
+                if snapshot.chips.contains(where: { $0.1 == .denied || $0.1 == .notDetermined }) {
+                    WorkspacePermissionChips(chips: snapshot.chips)
+                        .padding(.leading, AOMSpace.rowInset + AOMIcon.heroMark + AOMSpace.x3)
                 }
+                if recording.isRecording { recordingStrip }
                 if showsOverview {
                     runningNow
                 }
@@ -430,15 +434,6 @@ struct AOMHomeView: View {
     }
 
     // MARK: Hero
-
-    @ViewBuilder
-    private func hero(_ snapshot: WorkspaceSnapshot) -> some View {
-        WorkspaceHero(state: snapshot.hero, chips: snapshot.chips) {
-            heroAction(snapshot.hero)
-        } strip: {
-            if recording.isRecording { recordingStrip }
-        }
-    }
 
     // Small buttons like the rest of the page: the hero is a status line,
     // not a billboard.
@@ -1217,34 +1212,41 @@ struct AOMHomeView: View {
 /// left-aligned like Things' and Linear's view titles. The 5.0 banner (a
 /// brand-gradient wash and a time-of-day greeting) read as decoration.
 private struct WorkspaceBanner<Trailing: View>: View {
-    let engineOn: Bool
-    let automations: Int
+    let state: WorkspaceHeroState
     @ViewBuilder var trailing: Trailing
 
-    /// 7.14 (mock-up M01): the toolbar already says "Workspace", so the
-    /// header says how things are — "Ready to work" or "Paused" — with the
-    /// one control that changes it.
+    /// 7.15: the toolbar already says "Workspace"; the header says how AOM
+    /// is — "Ready to work", "AOM is paused", "AOM needs 2 permissions" —
+    /// from the same snapshot the rest of the page uses, with its one action.
     var body: some View {
-        AOMHeroBand(identity: AOMMainTab.home.identity, active: engineOn) {
-            VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
-                Text(engineOn ? "Ready to work" : "AOM is paused")
-                    .font(AOMFont.heroTitle)
-                    .foregroundStyle(AOMColor.text)
-                    .accessibilityAddTraits(.isHeader)
-                HStack(spacing: AOMSpace.x1 + AOMSpace.x0_5) {
-                    Circle().fill(engineOn ? AOMColor.success : AOMColor.paused)
-                        .frame(width: AOMIcon.dot, height: AOMIcon.dot)
-                    Text(engineOn ? "All systems running" : "Gestures, shortcuts and snapping are off")
-                    Text("·").foregroundStyle(AOMColor.textTertiary)
-                    Text(automations == 1 ? "1 automation enabled" : "\(automations) automations enabled")
+        AOMHeroBand(identity: AOMMainTab.home.identity, active: state.tone != .neutral) {
+            AOMPageTimeline(every: 30) { context in
+                VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
+                    HStack(spacing: AOMSpace.x2) {
+                        Text(state.isRunning ? "Ready to work" : state.sentence)
+                            .font(AOMFont.heroTitle)
+                            .foregroundStyle(AOMColor.text)
+                            .lineLimit(1)
+                            .accessibilityAddTraits(.isHeader)
+                        if state.tone != .success {
+                            AOMStatusPill(state.tone == .warning ? "Action Needed" : "Paused", tone: state.tone)
+                        }
+                    }
+                    HStack(spacing: AOMSpace.x1 + AOMSpace.x0_5) {
+                        Circle().fill(state.tone.color)
+                            .frame(width: AOMIcon.dot, height: AOMIcon.dot)
+                        Text(state.detail(now: context.date))
+                    }
+                    .font(AOMFont.callout)
+                    .foregroundStyle(AOMColor.textSecondary)
+                    .lineLimit(2)
                 }
-                .font(AOMFont.callout)
-                .foregroundStyle(AOMColor.textSecondary)
-                .lineLimit(1)
             }
-            Spacer(minLength: AOMSpace.x3)
-            trailing
+            .frame(minWidth: 220, maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: AOMSpace.x2) { trailing }.fixedSize()
         }
+        .aomAnimation(.standard, value: state)
+        .accessibilityLabel("Status: \(state.sentence)")
     }
 }
 
@@ -1340,85 +1342,6 @@ enum WorkspaceHeroState: Equatable {
                 ? "Gestures, shortcuts and window actions can't run until Accessibility is allowed."
                 : "Keyboard shortcuts can't be detected until Input Monitoring is allowed."
         }
-    }
-}
-
-// MARK: - Hero view
-
-/// The status header (design-3.3.6 b.12): a 40 pt squircle in the state's
-/// tone, the sentence in Title 2, the detail in Body, the permission chips,
-/// and the one action at the trailing edge. Plain on the canvas while AOM is
-/// running; a light tinted card when it is paused or needs a permission
-/// (HIG Boxes: a box only when it says something).
-private struct WorkspaceHero<Action: View, Strip: View>: View {
-    let state: WorkspaceHeroState
-    let chips: [(AOMPermission, AOMPermissionStatus)]
-    @ViewBuilder var action: Action
-    @ViewBuilder var strip: Strip
-
-    init(state: WorkspaceHeroState, chips: [(AOMPermission, AOMPermissionStatus)],
-         @ViewBuilder action: () -> Action, @ViewBuilder strip: () -> Strip) {
-        self.state = state
-        self.chips = chips
-        self.action = action()
-        self.strip = strip()
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: AOMSpace.x3) {
-            HStack(alignment: .center, spacing: AOMSpace.x3) {
-                AOMPageTimeline(every: 30) { context in
-                    VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
-                        HStack(alignment: .center, spacing: Self.dotGap) {
-                            statusDot
-                            Text(state.sentence)
-                                .font(AOMFont.pageTitle)
-                                .foregroundStyle(AOMColor.text)
-                                .lineLimit(1)
-                                .accessibilityAddTraits(.isHeader)
-                            // Running needs no pill; only a state that asks for something gets one.
-                            if state.tone != .success {
-                                AOMStatusPill(state.tone == .warning ? "Action Needed" : "Standby", tone: state.tone)
-                            }
-                        }
-                        Text(state.detail(now: context.date))
-                            .font(AOMFont.callout)
-                            .foregroundStyle(AOMColor.textSecondary)
-                            .lineLimit(2)
-                            .fixedSize(horizontal: false, vertical: true)
-                            // Under the sentence, not the dot: the dot and its gap.
-                            .padding(.leading, Self.dotSize + Self.dotGap)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                action
-                    .fixedSize()
-            }
-            if chips.contains(where: { $0.1 == .denied || $0.1 == .notDetermined }) {
-                WorkspacePermissionChips(chips: chips)
-            }
-            strip
-        }
-        // A pane like the others: its content inset by the pane padding, so
-        // the dot and chips start on the same line as the setup card's text.
-        .padding(AOMSpace.cardPadding)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .aomGlassPanel()
-        .aomAnimation(.standard, value: state)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Status: \(state.sentence)")
-    }
-
-    /// The state as one dot before the sentence (green running, grey
-    /// paused, orange when something needs you); the words carry the meaning.
-    private static var dotSize: CGFloat { AOMSpace.x2 }
-    private static var dotGap: CGFloat { AOMSpace.x2 }
-
-    private var statusDot: some View {
-        Circle()
-            .fill(state.tone.color)
-            .frame(width: Self.dotSize, height: Self.dotSize)
-            .accessibilityHidden(true)
     }
 }
 

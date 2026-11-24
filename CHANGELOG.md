@@ -1,3 +1,17 @@
+## [7.15.0] - 2026-11-24
+
+First structural pass of the Native Workbench redesign (`~/Downloads/AOM-7.14-Claude-UIUX-구현프롬프트-2026-11-24.md`, `AOM-7.14-Native-Workbench-50refs-2026-11-24.md`, mock-up M01–M36). Status of every ticket: `docs/design-7.15.md`; this release does not complete the redesign.
+
+### Main window shell
+- **No bar under every page** (M03): Actions (⋯, the same action panel) and Search (the same ⌘K palette) are in the toolbar, reachable with the sidebar hidden. A slim bar appears under the page only while a selection offers actions; their keyboard shortcuts are unchanged.
+- **Solid, flat content** (M04): cards in the main window no longer take the glass rim and drop shadow; the window background still follows Settings › Appearance › Translucent Window, and the launcher, HUDs and floating panels keep their glass.
+- **Page headers adapt**: when a header's controls don't fit beside its sentence (narrow window, long text), they move under it. Workspace tool rows are compact again (40 pt).
+
+### Pages
+- **Workspace** (M01, M06): one status from the same snapshot the page uses — "Ready to work", "AOM is paused" or "AOM needs 2 permissions" with its one action and the permission chips — instead of a header that only knew the master switch plus a second status card.
+- **Files, Menu Bar, System Tools** headers state something ("Files is off", "Menu bar hiding is off", "Maintenance and quick fixes") instead of repeating the page name in the toolbar.
+- **Menu Bar**: the eight panes are a list beside the pane (Bartender 7 / Ice preferences), a pop-up below 860 pt; ↑/↓ move between them.
+
 ## [7.14.0] - 2026-11-24
 
 Codex's review of 7.13.0 (`~/Documents/Codex/2026-11-24/x20/outputs/AOM-7.13.0-패치-검수-보고서-2026-11-24.pdf`), a new main window look, and the Mute Mic tile removed from the menu bar panel. Details: `docs/design-7.14.md`.

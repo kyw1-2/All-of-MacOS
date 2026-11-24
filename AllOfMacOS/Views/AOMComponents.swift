@@ -129,27 +129,47 @@ struct AOMPageHeader<Trailing: View>: View {
     }
 
     var body: some View {
-        // 7.14: a page's own header is its hero band; sub-headers stay compact.
+        // 7.14: a page's own header is its mark and status sentence;
+        // sub-headers stay compact. 7.15 (50refs §1): when the controls and
+        // the sentence don't fit side by side (a narrow window, a long
+        // translated string), the controls move under the sentence instead
+        // of squeezing it.
         if identity, let pageTab {
-            AOMHeroBand(identity: pageTab.identity, active: active) {
-                VStack(alignment: .leading, spacing: AOMSpace.x1) {
-                    HStack(spacing: AOMSpace.x2) {
-                        Text(title).font(AOMFont.heroTitle).foregroundStyle(AOMColor.text)
-                            .lineLimit(2)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .accessibilityAddTraits(.isHeader).help(help ?? "")
-                        if let status { AOMStatusPill(status.text, tone: status.tone, symbol: status.symbol) }
+            ViewThatFits(in: .horizontal) {
+                AOMHeroBand(identity: pageTab.identity, active: active) {
+                    headerText.frame(minWidth: 200, idealWidth: 300, maxWidth: .infinity, alignment: .leading)
+                    trailingControls
+                }
+                VStack(alignment: .leading, spacing: AOMSpace.x2) {
+                    AOMHeroBand(identity: pageTab.identity, active: active) {
+                        headerText.frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    if let subtitle, !subtitle.isEmpty {
-                        Text(subtitle).font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }.frame(maxWidth: .infinity, alignment: .leading)
-                HStack(spacing: AOMSpace.x2) { trailing }.controlSize(.regular).fixedSize()
+                    trailingControls.padding(.leading, AOMSpace.rowInset + AOMIcon.heroMark + AOMSpace.x3)
+                }
             }
         } else {
             compact
         }
+    }
+
+    private var headerText: some View {
+        VStack(alignment: .leading, spacing: AOMSpace.x1) {
+            HStack(spacing: AOMSpace.x2) {
+                Text(title).font(AOMFont.heroTitle).foregroundStyle(AOMColor.text)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityAddTraits(.isHeader).help(help ?? "")
+                if let status { AOMStatusPill(status.text, tone: status.tone, symbol: status.symbol) }
+            }
+            if let subtitle, !subtitle.isEmpty {
+                Text(subtitle).font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var trailingControls: some View {
+        HStack(spacing: AOMSpace.x2) { trailing }.controlSize(.regular).fixedSize()
     }
 
     private var compact: some View {

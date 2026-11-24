@@ -114,7 +114,8 @@ enum AOMSize {
     static let tileMin: CGFloat = 240
     static let tileMax: CGFloat = 420
     /// A Workspace module row: name over status beside the figure and switch.
-    static let moduleRowHeight: CGFloat = 46
+    /// 7.15: compact again (36–40 pt rows, 50refs §1); the 28 pt mark fits.
+    static let moduleRowHeight: CGFloat = 40
     /// The control slot at a module row's trailing edge: wide enough for a
     /// small bordered "Create…" or "Set Up…", so switches, buttons and
     /// chevrons end on one vertical line down every column of rows.
@@ -594,7 +595,7 @@ enum AOMIcon {
     /// 7.14: the sidebar's solid squircles (System Settings, Bartender 7, Ice).
     static let sidebarMark: CGFloat = 20
     /// 7.14: a Workspace module row's mark.
-    static let tileMark: CGFloat = 28
+    static let tileMark: CGFloat = 24
 }
 
 // MARK: - Dynamic colours

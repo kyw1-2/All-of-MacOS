@@ -23,6 +23,15 @@ enum WhatsNew {
     /// Highlights of the current version, bundled so the panel works offline.
     /// Items that alter defaults people already use say so with a note.
     static let items: [Item] = [
+        Item(symbol: "macwindow", title: "Actions and Search Moved to the Toolbar",
+             detail: "The bar under every page is gone: Actions (⋯) and Search sit in the window's toolbar, even with the sidebar hidden. When you select something that has actions, a slim bar with them appears under the page.",
+             note: "New"),
+        Item(symbol: "rectangle.split.2x1", title: "Menu Bar Settings as a List",
+             detail: "The Menu Bar page lists its eight panes down the side, like Bartender's settings, and becomes a pop-up in a narrow window; ↑ and ↓ move between them.",
+             note: "New"),
+        Item(symbol: "checkmark.circle", title: "One Status on Workspace",
+             detail: "Workspace's header says what is true — ready, paused or missing a permission — with the one action that fixes it, instead of a second status card underneath. Cards in the main window are solid and flat.",
+             note: "New"),
         Item(symbol: "sparkles.rectangle.stack", title: "A New Look for the Main Window",
              detail: "The sidebar shows each tool as a colour icon like System Settings, and you can pin up to six pages under Favorites (right-click a page). Page headers say how the tool is doing beside its icon, Workspace's tool rows carry the same icons, and counts sit in small capsules.",
              note: "New"),

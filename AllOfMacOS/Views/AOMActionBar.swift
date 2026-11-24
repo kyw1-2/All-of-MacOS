@@ -148,8 +148,49 @@ enum AOMActionBarModel {
     }
 }
 
-/// The bar under every page: where you are and what you can do now.
+/// 7.15 (mock-up M03, Nova/Linear, HIG Toolbars): the page's Actions and
+/// Search live in the window toolbar; this bar appears under the page only
+/// while a selection offers actions (up to three, with their keys), so no
+/// page repeats its own title, tagline, Actions and Search at the bottom.
 struct AOMActionBar: View {
+    let appState: AppState
+    let paletteKeys: String
+    @Binding var showingCommandPalette: Bool
+    @ObservedObject private var navigation = AOMNavigation.shared
+    @ObservedObject private var contexts = AOMBarContexts.shared
+
+    var body: some View {
+        let tab = navigation.selected
+        if let context = contexts.contexts[tab], !context.actions.isEmpty {
+            HStack(spacing: AOMSpace.x2) {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(AOMColor.accent)
+                    .accessibilityHidden(true)
+                Text(context.title ?? "Selection")
+                    .font(AOMFont.callout.weight(.semibold))
+                    .foregroundStyle(AOMColor.text)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer(minLength: AOMSpace.x3)
+                ForEach(Array(context.actions.prefix(3).enumerated()), id: \.element.id) { index, action in
+                    AOMBarButton(title: action.title, keys: action.keysText, primary: index == 0,
+                                 key: action.key, run: action.run)
+                }
+            }
+            .padding(.horizontal, AOMSpace.x3)
+            .frame(height: AOMSize.actionBarHeight)
+            .background(.bar)
+            .overlay(alignment: .top) { AOMDivider() }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("\(context.title ?? tab.title) actions")
+        }
+    }
+}
+
+/// 7.15: Search and Actions in the toolbar — the same command palette and
+/// the same action panel the bottom bar used to open, reachable with the
+/// sidebar hidden.
+struct AOMToolbarActions: View {
     let appState: AppState
     let paletteKeys: String
     @Binding var showingCommandPalette: Bool
@@ -161,55 +202,17 @@ struct AOMActionBar: View {
     var body: some View {
         let tab = navigation.selected
         let context = contexts.contexts[tab]
-        HStack(spacing: AOMSpace.x2) {
-            AOMAppIcon(tab, size: AOMIcon.identityBar)
-            Text(tab.title)
-                .font(AOMFont.callout.weight(.semibold))
-                .foregroundStyle(AOMColor.text)
-                .lineLimit(1)
-                .fixedSize()
-            if let title = context?.title, !title.isEmpty {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(AOMColor.textTertiary)
-                Text(title)
-                    .font(AOMFont.callout)
-                    .foregroundStyle(AOMColor.textSecondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            } else {
-                Text(tab.tagline)
-                    .font(AOMFont.callout)
-                    .foregroundStyle(AOMColor.textTertiary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
-            Spacer(minLength: AOMSpace.x3)
-            if let actions = context?.actions, !actions.isEmpty {
-                ForEach(Array(actions.prefix(3).enumerated()), id: \.element.id) { index, action in
-                    AOMBarButton(title: action.title, keys: action.keysText, primary: index == 0,
-                                 key: action.key, run: action.run)
+        HStack(spacing: AOMSpace.x1) {
+            Button { showsActions.toggle() } label: { Label("Actions", systemImage: "ellipsis.circle") }
+                .help("Every action for \(tab.title)")
+                .popover(isPresented: $showsActions, arrowEdge: .bottom) {
+                    AOMActionPanel(title: context?.title ?? tab.title,
+                                   sections: panelSections(tab: tab, context: context),
+                                   dismiss: { showsActions = false })
                 }
-                AOMDivider(axis: .vertical).frame(height: AOMSpace.x4).padding(.horizontal, AOMSpace.x0_5)
-            }
-            AOMBarButton(title: "Actions", keys: nil, primary: false, chevron: true, highlighted: showsActions) {
-                showsActions.toggle()
-            }
-            .help("Every action for \(tab.title)")
-            .popover(isPresented: $showsActions, arrowEdge: .top) {
-                AOMActionPanel(title: context?.title ?? tab.title,
-                               sections: panelSections(tab: tab, context: context),
-                               dismiss: { showsActions = false })
-            }
-            AOMBarButton(title: "Search", keys: paletteKeys, primary: false) { showingCommandPalette = true }
-                .help("Search all tools, settings and commands")
+            Button { showingCommandPalette = true } label: { Label("Search", systemImage: "magnifyingglass") }
+                .help("Search all tools, settings and commands (\(paletteKeys))")
         }
-        .padding(.horizontal, AOMSpace.x3)
-        .frame(height: AOMSize.actionBarHeight)
-        .background(.bar)
-        .overlay(alignment: .top) { AOMDivider() }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(tab.title) actions")
         .onAppear {
             // Isolated previews can open the panel for review (`--aom-preview-actions`).
             if PresetManager.isUIPreview, ProcessInfo.processInfo.arguments.contains("--aom-preview-actions") {

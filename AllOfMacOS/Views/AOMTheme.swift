@@ -108,6 +108,7 @@ struct AOMCardSurface: ViewModifier {
     var hovering = false
     var pressed = false
     @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.aomOpaqueContent) private var opaqueContent
     @Environment(\.accessibilityShowBorders) private var showBorders
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorScheme) private var colorScheme
@@ -128,7 +129,9 @@ struct AOMCardSurface: ViewModifier {
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
         switch style {
         case .paper:
-            let glass = translucent && !reduceTransparency && contrast != .increased
+            // 7.15 (mock-up M04): main-window content is opaque and flat;
+            // floating panels keep their glass.
+            let glass = translucent && !opaqueContent && !reduceTransparency && contrast != .increased
             let level = AOMTranslucency.Level(rawValue: levelName) ?? .balanced
             content
                 .padding(padding ?? 0)
@@ -358,5 +361,22 @@ struct AOMKeycap: View {
                                    lineWidth: contrast == .increased ? 1 : 0.5)
             }
             .accessibilityLabel(text)
+    }
+}
+
+// MARK: - Main-window content role (7.15)
+
+private struct AOMOpaqueContentKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    /// True inside the main window's pages (mock-up M04): cards there are an
+    /// opaque surface with no rim or shadow, whatever Translucent Window says
+    /// about the window itself. HUDs, the launcher and floating panels keep
+    /// the default (false) and their glass.
+    var aomOpaqueContent: Bool {
+        get { self[AOMOpaqueContentKey.self] }
+        set { self[AOMOpaqueContentKey.self] = newValue }
     }
 }
