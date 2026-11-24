@@ -65,7 +65,9 @@ enum FolderRulePDFText {
         // Folder Rules stopped while this page was read: it isn't kept.
         guard started == cacheGeneration else { lock.unlock(); return content }
         if let old = cache[key] { cachedBytes -= old.content.text.utf8.count; order.removeAll { $0 == key } }
-        cache[key] = (content, now)
+        // Timestamp at insertion, under the lock: concurrent OCR reads may finish out of order.
+        let insertedAt = ProcessInfo.processInfo.systemUptime
+        cache[key] = (content, insertedAt)
         cachedBytes += content.text.utf8.count
         order.append(key)
         while !order.isEmpty, order.count > cacheLimit.entries || cachedBytes > cacheLimit.bytes {
