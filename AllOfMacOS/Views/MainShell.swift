@@ -319,8 +319,9 @@ struct AOMSidebar: View, Equatable {
         } icon: {
             // 5.0: the tool's identity mark (System Settings, Loop), so a
             // destination is found by colour and shape before its name.
-            AOMAppIcon(tab, size: AOMIcon.sidebarGlyph,
-                       active: tab == .gestures ? engineOn : true, style: .glyph)
+            // 7.14: solid squircles, as System Settings, Bartender 7 and Ice draw them.
+            AOMAppIcon(tab, size: AOMIcon.sidebarMark,
+                       active: tab == .gestures ? engineOn : true, style: .solid)
         }
         .tag(tab)
         .help(tab.shortcutKey.map { "\(tab.title) — ⌘\($0.character)" } ?? tab.title)
@@ -668,13 +669,19 @@ private struct AOMSidebarStatusBadge: View {
         let onSelection = prominence == .increased
         let colour: Color = onSelection ? .white
             : (tone == .warning || tone == .recording || tone == .danger ? tone.textColor : AOMColor.textSecondary)
+        // 7.14: a capsule, as Mail's counts and Bartender 7's badges.
+        let fill: Color = onSelection ? Color.white.opacity(0.22)
+            : (tone == .neutral ? AOMColor.sunken : colour.opacity(0.14))
         HStack(spacing: AOMSpace.x0_5) {
             if let symbol { Image(systemName: symbol).imageScale(.small) }
             Text(text).monospacedDigit()
         }
-        .font(AOMFont.caption.weight(.medium))
+        .font(AOMFont.caption.weight(.semibold))
         .foregroundStyle(colour)
         .lineLimit(1)
+        .padding(.horizontal, AOMSpace.x1 + AOMSpace.x0_5)
+        .padding(.vertical, 1)
+        .background(fill, in: Capsule())
         .fixedSize()
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(text)

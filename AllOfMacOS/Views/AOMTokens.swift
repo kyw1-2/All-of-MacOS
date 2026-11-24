@@ -114,7 +114,7 @@ enum AOMSize {
     static let tileMin: CGFloat = 240
     static let tileMax: CGFloat = 420
     /// A Workspace module row: name over status beside the figure and switch.
-    static let moduleRowHeight: CGFloat = 38
+    static let moduleRowHeight: CGFloat = 46
     /// The control slot at a module row's trailing edge: wide enough for a
     /// small bordered "Create…" or "Set Up…", so switches, buttons and
     /// chevrons end on one vertical line down every column of rows.
@@ -171,6 +171,8 @@ enum AOMSize {
 /// sentence is below 11 pt.
 enum AOMFont {
     static let workspaceTitle = Font.title.weight(.semibold)
+    /// 7.14: the title in a page's hero band.
+    static let heroTitle = Font.title.weight(.bold)
     /// Title (22) semibold: large glyphs only (empty-state and thumbnail placeholders).
     static let hero = Font.title.weight(.semibold)
     /// Body (13) semibold: compact status sentences.
@@ -587,6 +589,12 @@ enum AOMIcon {
     static let identityHeader: CGFloat = 32
     /// Empty states and the Workspace banner.
     static let identityHero: CGFloat = 44
+    /// 7.14: a page's hero mark (System Settings 26, Stats, Bartender 7 panes).
+    static let heroMark: CGFloat = 52
+    /// 7.14: the sidebar's solid squircles (System Settings, Bartender 7, Ice).
+    static let sidebarMark: CGFloat = 20
+    /// 7.14: a Workspace module row's mark.
+    static let tileMark: CGFloat = 28
 }
 
 // MARK: - Dynamic colours

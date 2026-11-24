@@ -86,6 +86,23 @@ final class PaletteSchedule: ObservableObject {
         return await Task.detached(priority: .userInitiated) { Self.read(store, from: start, to: end) }.value
     }
 
+    /// 7.14 (Codex 7.13): Free Times reads only when events are, as its
+    /// screen says — start, end, all-day and free/busy; never a title,
+    /// place, note or link. nil: no access.
+    func busyTimes(from start: Date, to end: Date) async -> [PaletteFreeSlots.Busy]? {
+        if PresetManager.isUIPreview {
+            return Self.samples(now: Date()).filter { $0.end > start && $0.start < end }
+                .map { PaletteFreeSlots.Busy(start: $0.start, end: $0.end, isAllDay: $0.isAllDay, isFree: $0.isFree) }
+        }
+        guard access == .granted else { return nil }
+        let store = self.store
+        return await Task.detached(priority: .userInitiated) {
+            store.events(matching: store.predicateForEvents(withStart: start, end: end, calendars: nil))
+                .filter { $0.status != .canceled }
+                .map { PaletteFreeSlots.Busy(start: $0.startDate, end: $0.endDate, isAllDay: $0.isAllDay, isFree: $0.availability == .free) }
+        }.value
+    }
+
     /// Sorted by start, canceled events left out.
     nonisolated private static func read(_ store: EKEventStore, from start: Date, to end: Date) -> [Event] {
         let predicate = store.predicateForEvents(withStart: start, end: end, calendars: nil)

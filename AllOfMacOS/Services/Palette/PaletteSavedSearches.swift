@@ -127,7 +127,7 @@ struct PaletteFileQuery: Equatable, Codable {
         var parts: [NSPredicate] = []
         if !name.isEmpty { parts.append(NSPredicate(format: "%K CONTAINS[cd] %@", NSMetadataItemFSNameKey, name)) }
         if let kind { parts.append(NSPredicate(format: "%K == %@", "kMDItemContentTypeTree", kind.contentType)) }
-        if let within { parts.append(NSPredicate(format: "%K >= %@", NSMetadataItemFSContentChangeDateKey, now.addingTimeInterval(-within) as NSDate)) }
+        if let within { parts.append(NSPredicate(format: "%K >= %@", NSMetadataItemFSContentChangeDateKey, now.addingTimeInterval(-min(within.isFinite ? within : Self.maxDuration, Self.maxDuration)) as NSDate)) }
         return parts.count == 1 ? parts[0] : NSCompoundPredicate(andPredicateWithSubpredicates: parts)
     }
 
@@ -161,12 +161,19 @@ struct PaletteFileQuery: Equatable, Codable {
         let lowered = text.lowercased()
         for (unit, seconds) in units where lowered.hasSuffix(unit) {
             guard let amount = Double(lowered.dropLast(unit.count)), amount > 0, amount.isFinite else { return nil }
-            return amount * seconds
+            // 7.14 (Codex 7.13 S3): "1e308y" overflowed and crashed the summary's Int().
+            let total = amount * seconds
+            return total.isFinite && total <= maxDuration ? total : nil
         }
         return nil
     }
 
+    /// The longest "modified:" a search takes: 100 years.
+    static let maxDuration: TimeInterval = 100 * 31_536_000
+
     static func durationText(_ seconds: TimeInterval) -> String {
+        // A value saved before 7.14 may be out of range: shown at the limit.
+        let seconds = seconds.isFinite ? min(max(seconds, 3600), maxDuration) : maxDuration
         for (unit, size) in [("y", 31_536_000.0), ("m", 2_592_000.0), ("w", 604_800.0), ("d", 86_400.0)] where seconds >= size && seconds.truncatingRemainder(dividingBy: size) == 0 {
             return "\(Int(seconds / size))\(unit)"
         }

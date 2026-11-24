@@ -268,10 +268,11 @@ struct AOMEmptyState<Actions: View>: View {
         VStack(spacing: AOMSpace.x2) {
             if let pageTab {
                 // 5.0: the empty page shows whose page it is, in its hue.
-                AOMAppIcon(AOMIdentity(symbol: systemImage,
-                                       color: pageTab.identity.isBrand ? AOMBrand.start : pageTab.identity.color),
-                           size: AOMIcon.identityHero)
-                    .padding(.bottom, AOMSpace.x0_5)
+                // 7.14: the solid squircle of the page's hero band, lifted.
+                let hue = pageTab.identity.isBrand ? AOMBrand.start : pageTab.identity.color
+                AOMAppIcon(AOMIdentity(symbol: systemImage, color: hue), size: AOMIcon.heroMark, style: .solid)
+                    .shadow(color: hue.opacity(0.3), radius: 12, y: 5)
+                    .padding(.bottom, AOMSpace.x1)
             } else {
                 Image(systemName: systemImage)
                     .font(.system(size: AOMIcon.empty, weight: .regular))

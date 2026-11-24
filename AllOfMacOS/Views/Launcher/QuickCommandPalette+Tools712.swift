@@ -38,12 +38,12 @@ final class PaletteAvailability: ObservableObject {
         let calendar = Calendar.current
         let start = calendar.startOfDay(for: now)
         let end = calendar.date(byAdding: .day, value: 8, to: start) ?? now.addingTimeInterval(8 * 86_400)
-        guard let events = await PaletteSchedule.shared.events(from: start, to: end) else {
+        guard let events = await PaletteSchedule.shared.busyTimes(from: start, to: end) else {
             readFailed = true
             return
         }
         readFailed = false
-        busy = events.map { PaletteFreeSlots.Busy(start: $0.start, end: $0.end, isAllDay: $0.isAllDay, isFree: $0.isFree) }
+        busy = events
         loadedAt = Date()
     }
 
@@ -149,7 +149,10 @@ extension QuickCommandPalette {
         let swap = PaletteAction(title: "Swap Sides", symbol: "arrow.left.arrow.right", effect: .stay) {
             pop(); push(.clipboardDiff(new.0.id, old.0.id))
         }
-        let changes = PaletteTextDiff.cachedChanges(old.1, new.1)
+        guard let changes = PaletteDiffJob.shared.changes(old.1, new.1, ready: { sourcesChanged() }) else {
+            return [screenRow("clipdiff.working", "Comparing…", header, icon: "hourglass", group: nil,
+                              primary: PaletteAction(title: "Waiting", effect: .stay) {}, secondaries: [swap], dimmed: true)]
+        }
         guard !changes.isEmpty else {
             return [screenRow("clipdiff.same", "The two texts are the same", header, icon: "equal.circle", group: nil,
                               primary: PaletteAction(title: "Back", effect: .stay) { pop() })]

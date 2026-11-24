@@ -129,10 +129,30 @@ struct AOMPageHeader<Trailing: View>: View {
     }
 
     var body: some View {
-        HStack(alignment: .center, spacing: AOMSpace.x3) {
-            if identity, let pageTab {
-                AOMAppIcon(pageTab, size: AOMIcon.identityHeader, active: active)
+        // 7.14: a page's own header is its hero band; sub-headers stay compact.
+        if identity, let pageTab {
+            AOMHeroBand(identity: pageTab.identity, active: active) {
+                VStack(alignment: .leading, spacing: AOMSpace.x1) {
+                    HStack(spacing: AOMSpace.x2) {
+                        Text(title).font(AOMFont.heroTitle).foregroundStyle(AOMColor.text)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityAddTraits(.isHeader).help(help ?? "")
+                        if let status { AOMStatusPill(status.text, tone: status.tone, symbol: status.symbol) }
+                    }
+                    if let subtitle, !subtitle.isEmpty {
+                        Text(subtitle).font(AOMFont.body).foregroundStyle(AOMColor.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }.frame(maxWidth: .infinity, alignment: .leading)
+                HStack(spacing: AOMSpace.x2) { trailing }.controlSize(.regular).fixedSize()
             }
+        } else {
+            compact
+        }
+    }
+
+    private var compact: some View {
+        HStack(alignment: .center, spacing: AOMSpace.x3) {
             VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
                 HStack(spacing: AOMSpace.x2) {
                     Text(title).font(AOMFont.pageTitle).foregroundStyle(AOMColor.text)
@@ -184,11 +204,16 @@ struct AOMSectionTitle<Accessory: View>: View {
                 .accessibilityAddTraits(.isHeader)
                 .help(help ?? "")
             if let detail, !detail.isEmpty {
+                // 7.14: a bare count is a capsule, like the sidebar's badges.
+                let isCount = detail.allSatisfy(\.isNumber)
                 Text(detail)
-                    .font(AOMFont.caption)
+                    .font(isCount ? AOMFont.caption.weight(.semibold) : AOMFont.caption)
                     .foregroundStyle(AOMColor.textSecondary)
                     .monospacedDigit()
                     .lineLimit(1)
+                    .padding(.horizontal, isCount ? AOMSpace.x1 + AOMSpace.x0_5 : 0)
+                    .padding(.vertical, isCount ? 1 : 0)
+                    .background(isCount ? AOMColor.sunken : .clear, in: Capsule())
             }
             Spacer(minLength: AOMSpace.x2)
             accessory
@@ -634,11 +659,10 @@ struct AOMModuleTile<Control: View, MenuItems: View>: View {
             .help("\(module.title): \(status)")
 
             HStack(spacing: AOMSpace.x2) {
-                Image(systemName: module.symbol)
-                    .font(AOMFont.callout)
-                    .foregroundStyle(active ? AOMColor.text : AOMColor.textTertiary)
+                // 7.14: the tool's solid squircle (One Switch, Control Center).
+                AOMAppIcon(AOMIdentity(symbol: module.symbol, color: module.hue), size: AOMIcon.tileMark,
+                           active: active, style: .solid)
                     .symbolEffect(.pulse, options: .repeating, isActive: running && !reduceMotion)
-                    .frame(width: AOMIcon.row)
                     .allowsHitTesting(false)
                 lines
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -993,5 +1017,58 @@ struct AOMToolCard: View {
         .help("\(title) — \(detail)")
         .accessibilityLabel(title)
         .accessibilityValue(detail)
+    }
+}
+
+// MARK: - Hero band (7.14)
+
+/// A page's hero (7.14, after System Settings 26's pane headers, Stats' and
+/// Pearcleaner's module headers and Bartender 7's panes): the tool's solid
+/// squircle large, beside its title, on a wash of the tool's own colour that
+/// fades toward the page. Off tools lose the colour. Reduce Transparency and
+/// Increase Contrast get an opaque surface with an edge.
+struct AOMHeroBand<Content: View>: View {
+    let identity: AOMIdentity
+    var active = true
+    @ViewBuilder var content: Content
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    init(identity: AOMIdentity, active: Bool = true, @ViewBuilder content: () -> Content) {
+        self.identity = identity
+        self.active = active
+        self.content = content()
+    }
+
+    private var hue: Color {
+        guard active else { return AOMColor.textTertiary }
+        return identity.isBrand ? AOMBrand.start : identity.color
+    }
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: AOMRadius.card + 4, style: .continuous)
+        let dark = scheme == .dark
+        HStack(alignment: .center, spacing: AOMSpace.x4) {
+            // The mark keeps the tool's colour when it is off (the title says
+            // off); the band turns neutral.
+            AOMAppIcon(identity, size: AOMIcon.heroMark, active: true, style: .solid)
+                .opacity(active ? 1 : 0.7)
+                .shadow(color: hue.opacity(active ? (dark ? 0.45 : 0.3) : 0), radius: 10, y: 4)
+            content
+        }
+        .padding(.horizontal, AOMSpace.x4)
+        .padding(.vertical, AOMSpace.x4)
+        .background {
+            if reduceTransparency || contrast == .increased {
+                shape.fill(AOMColor.surface)
+                shape.strokeBorder(AOMColor.strongLine, lineWidth: 1)
+            } else {
+                shape.fill(LinearGradient(colors: [hue.opacity(dark ? 0.26 : 0.16), hue.opacity(dark ? 0.08 : 0.04), AOMColor.surface.opacity(dark ? 0.35 : 0.6)],
+                                          startPoint: .topLeading, endPoint: .bottomTrailing))
+                shape.strokeBorder(hue.opacity(dark ? 0.28 : 0.18), lineWidth: 0.75)
+            }
+        }
+        .accessibilityElement(children: .contain)
     }
 }

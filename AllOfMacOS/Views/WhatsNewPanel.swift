@@ -23,20 +23,20 @@ enum WhatsNew {
     /// Highlights of the current version, bundled so the panel works offline.
     /// Items that alter defaults people already use say so with a note.
     static let items: [Item] = [
-        Item(symbol: "plusminus.circle", title: "Compare Copies, Properly",
-             detail: "Compare With… now finds the real changes in long texts (two equal 2,000-line copies used to show every line changed), Swap Sides really swaps, and the header counts what changed, was added and was removed.",
+        Item(symbol: "sparkles.rectangle.stack", title: "A New Look for the Main Window",
+             detail: "Every page opens with a header in its tool's colour, the sidebar shows each tool as a colour icon like System Settings, Workspace's tool rows carry the same icons, and counts sit in small capsules.",
+             note: "New"),
+        Item(symbol: "menubar.rectangle", title: "Simpler Menu Bar Panel",
+             detail: "The Mute Mic tile is gone from the panel. A mute you start elsewhere still shows at the top with Unmute.",
+             note: "New default"),
+        Item(symbol: "plusminus.circle", title: "Big Comparisons Don't Freeze",
+             detail: "Comparing two long clipboard texts happens in the background with “Comparing…”, and nothing of either copy stays in memory after you close the screen.",
              note: "Fixed"),
-        Item(symbol: "calendar.badge.clock", title: "Free Times You Can Trust",
-             detail: "Set your working hours in Settings › Shortcut Recorder › Free times. If your calendars can't be read, nothing is copied — before, that looked like a free week — and a time that has already started drops out.",
-             note: "Fixed"),
-        Item(symbol: "tray.full", title: "Steadier Drop Shelf",
-             detail: "Showing the shelf while it fades out no longer leaves it closed, a file the Trash refuses is named, and files an app never delivers stop blocking the shelf after two minutes.",
+        Item(symbol: "tray.full", title: "Drop Shelf Undo and Drops",
+             detail: "Undoing Delete Shelf points at the file in the Trash when its old place was taken by another file, and two drops arriving at once each keep their progress.",
              module: .files, note: "Fixed"),
-        Item(symbol: "menubar.rectangle", title: "Menu Bar and Switcher",
-             detail: "A menu bar request macOS never answers shows everything again after 5 seconds instead of leaving the state unknown. The window switcher keeps your selection when another card goes away.",
-             note: "Fixed"),
-        Item(symbol: "doc.text.magnifyingglass", title: "Folder Rules Keep PDF Text Briefly",
-             detail: "A rule without “Recognize scanned PDFs” no longer acts on text another rule recognized. Page text stays in memory for at most 10 minutes and 4 MB, and is dropped when Folder Rules is turned off.",
+        Item(symbol: "calendar.badge.clock", title: "Free Times Reads Less",
+             detail: "Free Times now reads only when events start and end and whether they block time — no titles, places or notes. A saved search with an impossible time range no longer quits AOM.",
              note: "Fixed"),
     ]
 

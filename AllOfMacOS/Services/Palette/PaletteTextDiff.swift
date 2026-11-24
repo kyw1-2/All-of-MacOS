@@ -125,21 +125,6 @@ enum PaletteTextDiff {
         return ops
     }
 
-    /// 7.13 (GPT F05): the last comparison, kept while the screen is open —
-    /// the launcher rebuilds its rows on every key and must not diff again.
-    @MainActor private static var memo: (key: Int, result: [LineChange])?
-
-    @MainActor
-    static func cachedChanges(_ old: String, _ new: String) -> [LineChange] {
-        var hasher = Hasher()
-        hasher.combine(old); hasher.combine(new)
-        let key = hasher.finalize()
-        if let memo, memo.key == key { return memo.result }
-        let result = changes(old, new)
-        memo = (key, result)
-        return result
-    }
-
     /// The differing middle of two lines, in characters: the common prefix
     /// and suffix are cut ("결제액 120,000원" / "결제액 125,000원" → "0"/"5").
     static func span(_ old: String, _ new: String) -> (Range<Int>, Range<Int>) {
@@ -159,5 +144,57 @@ enum PaletteTextDiff {
         let middle = String(characters[span])
         let after = String(characters[span.upperBound...])
         return middle.isEmpty ? "\(before)‸\(after)" : "\(before)[\(middle)]\(after)"
+    }
+}
+
+/// 7.14 (Codex 7.13 S2): the comparison screen's one job. A big pair is
+/// compared off the main thread (≈ 0.3 s for two 1 MB texts on an M1) while
+/// the screen says "Comparing…"; a small one at once. The result — which
+/// holds lines of both copies — belongs to the open screen and is dropped
+/// when it closes.
+@MainActor
+final class PaletteDiffJob {
+    static let shared = PaletteDiffJob()
+    /// Below this many UTF-8 bytes in all, comparing on the spot is quicker than a hop.
+    static let inlineLimit = 64 * 1024
+
+    private var key: Int?
+    private var result: [PaletteTextDiff.LineChange]?
+    private var task: Task<Void, Never>?
+
+    /// The changes, or nil while they are being worked out (`ready` runs once they are).
+    func changes(_ old: String, _ new: String, ready: @escaping @MainActor () -> Void) -> [PaletteTextDiff.LineChange]? {
+        var hasher = Hasher()
+        hasher.combine(old); hasher.combine(new)
+        let key = hasher.finalize()
+        if key == self.key {
+            if let result { return result }
+            if task != nil { return nil }
+        }
+        task?.cancel()
+        self.key = key
+        result = nil
+        if old.utf8.count + new.utf8.count <= Self.inlineLimit {
+            let changes = PaletteTextDiff.changes(old, new)
+            result = changes
+            task = nil
+            return changes
+        }
+        task = Task { [weak self] in
+            let changes = await Task.detached(priority: .userInitiated) { PaletteTextDiff.changes(old, new) }.value
+            guard let self, !Task.isCancelled, self.key == key else { return }
+            self.result = changes
+            self.task = nil
+            ready()
+        }
+        return nil
+    }
+
+    /// The screen closed: nothing of either copy stays.
+    func clear() {
+        task?.cancel()
+        task = nil
+        key = nil
+        result = nil
     }
 }

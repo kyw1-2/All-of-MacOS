@@ -1287,6 +1287,8 @@ struct QuickCommandPalette: View {
             screens.clearSound()
         case .confirm:
             confirmation = nil
+        case .clipboardDiff:
+            PaletteDiffJob.shared.clear()
         case .themes:
             // A theme only tried on goes back to the saved one.
             AOMLauncherAppearance.shared.preview(nil)
@@ -2395,6 +2397,7 @@ struct QuickCommandPalette: View {
             recentFiles.stop()
             screens.end()
             end72()
+            PaletteDiffJob.shared.clear()
         }
         .onExitCommand {
             // Esc goes back one level: the Actions panel, the screen (6.7),

@@ -54,6 +54,18 @@ final class FilesShelfPanelController: NSObject {
     static let shared = FilesShelfPanelController()
 
     static let width: CGFloat = 320
+    /// 7.14 (Codex 7.13): every drop still receiving promised files. The
+    /// status row sums them, so one drop timing out or finishing doesn't
+    /// clear "Receiving…" while another is still coming in.
+    private var receiving: [FilesReceiveBatch] = []
+
+    fileprivate func showReceiveProgress() {
+        receiving.removeAll { $0.gaveUp || $0.finished >= $0.total }
+        guard !receiving.isEmpty else { model.progress = nil; return }
+        let total = receiving.reduce(0) { $0 + $1.total }
+        let finished = receiving.reduce(0) { $0 + $1.finished }
+        model.progress = total == 1 ? "Receiving…" : "Receiving \(finished) of \(total)…"
+    }
     /// One queue for promised files, a few at a time.
     private static let promiseQueue: OperationQueue = {
         let queue = OperationQueue()
@@ -173,9 +185,25 @@ final class FilesShelfPanelController: NSObject {
                                           success: "Deleted “\(shelf.name)” and moved \(Self.count(trash.trashed.count)) AOM received to the Trash")
             model.show(shown.text, tone: shown.tone, undoTitle: "Undo") { [weak self] in
                 Task {
-                    _ = await FilesFileActions.moveBack(trash.trashed)
-                    self?.store.restoreShelf(entry)
-                    self?.followActiveShelf()
+                    let back = await FilesFileActions.moveBack(trash.trashed)
+                    guard let self else { return }
+                    // 7.14 (Codex 7.13 S1): a file that couldn't go back (its old
+                    // place is taken) is pointed at where it really is — the
+                    // Trash — as Remove's Undo does; a row whose file is gone is dropped.
+                    var restored = entry
+                    let kept = Self.itemsToRestore(entry.shelf.items.enumerated().map { ($0.offset, $0.element) },
+                                                   trashed: trash.trashed, putBack: back)
+                    restored.shelf.items = kept.map(\.item)
+                    self.store.restoreShelf(restored)
+                    self.followActiveShelf()
+                    let dropped = entry.shelf.items.count - kept.count
+                    if let failure = back.failures.first {
+                        let others = back.failures.count > 1 ? " (and \(back.failures.count - 1) more)" : ""
+                        self.model.show("Restored “\(entry.shelf.name)”. “\(failure.url.lastPathComponent)”\(others) stayed in the Trash because \(failure.reason)"
+                                        + (dropped > 0 ? "; \(Self.count(dropped)) no longer exist" : ""), tone: .danger)
+                    } else if dropped > 0 {
+                        self.model.show("Restored “\(entry.shelf.name)” without \(Self.count(dropped)) that no longer exist", tone: .neutral)
+                    }
                 }
             }
         }
@@ -315,8 +343,9 @@ final class FilesShelfPanelController: NSObject {
         // only its file. The row now counts them in, and when the last one is
         // done every file of the drop is selected and failures are summed up.
         let total = promises.reduce(0) { $0 + max(1, $1.fileNames.count) }
-        model.progress = total == 1 ? "Receiving…" : "Receiving 0 of \(total)…"
         let batch = FilesReceiveBatch(total: total, alreadyAdded: added.map(\.id))
+        receiving.append(batch)
+        showReceiveProgress()
         let queue = Self.promiseQueue
         // 7.13 (Gemini 7.12.1 #13): an app that never delivers can't leave
         // "Receiving…" up for good (it blocks Compress and the auto-hide).
@@ -325,7 +354,7 @@ final class FilesShelfPanelController: NSObject {
             MainActor.assumeIsolated {
                 guard let self, batch.finished < batch.total, !batch.gaveUp else { return }
                 batch.gaveUp = true
-                self.model.progress = nil
+                self.showReceiveProgress()
                 self.model.show("Received \(batch.received.count) of \(batch.total) — the app that sent the rest hasn't delivered them", tone: .danger)
             }
         }
@@ -341,11 +370,8 @@ final class FilesShelfPanelController: NSObject {
                         }
                         batch.finished += 1
                         guard !batch.gaveUp else { return }
-                        guard batch.finished >= batch.total else {
-                            controller.model.progress = "Receiving \(batch.finished) of \(batch.total)…"
-                            return
-                        }
-                        controller.model.progress = nil
+                        controller.showReceiveProgress()
+                        guard batch.finished >= batch.total else { return }
                         if controller.store.activeID == shelfID {
                             controller.model.selection = Set(batch.alreadyAdded + batch.received)
                         } else {

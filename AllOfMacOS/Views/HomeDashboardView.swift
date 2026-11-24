@@ -1222,10 +1222,11 @@ private struct WorkspaceBanner<Trailing: View>: View {
     @ViewBuilder var trailing: Trailing
 
     var body: some View {
-        HStack(alignment: .center, spacing: AOMSpace.x4) {
-            VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
+        // 7.14: the same hero band as every page, in AOM's own colours.
+        AOMHeroBand(identity: AOMMainTab.home.identity, active: engineOn) {
+            VStack(alignment: .leading, spacing: AOMSpace.x1) {
                 Text("Workspace")
-                    .font(AOMFont.workspaceTitle)
+                    .font(AOMFont.heroTitle)
                     .foregroundStyle(AOMColor.text)
                     .accessibilityAddTraits(.isHeader)
                 HStack(spacing: AOMSpace.x1 + AOMSpace.x0_5) {
@@ -1242,8 +1243,6 @@ private struct WorkspaceBanner<Trailing: View>: View {
             Spacer(minLength: AOMSpace.x3)
             trailing
         }
-        .padding(.horizontal, AOMSpace.rowInset)
-        .accessibilityElement(children: .contain)
     }
 }
 

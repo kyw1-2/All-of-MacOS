@@ -1173,7 +1173,8 @@ private struct AutomationInputCard: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: AOMSpace.x3) {
-                AOMRowIcon(symbol: symbol, size: AOMIcon.identityCard - 4)
+                // 7.14: each input kind as a tinted squircle (BTT's input tabs, Shortcuts' gallery).
+                AOMAppIcon(AOMIdentity(symbol: symbol, color: AOMModule.automation.hue), size: AOMIcon.tileMark + 4)
                 VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
                     Text(title).font(AOMFont.headline).foregroundStyle(AOMColor.text)
                     Text(detail).font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)

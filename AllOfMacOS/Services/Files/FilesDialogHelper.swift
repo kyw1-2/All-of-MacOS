@@ -185,6 +185,7 @@ final class FilesDialogHelper {
         model.showsClipboard = settings.showsClipboardPath
         model.finder = []
         model.recents = []
+        rawRecents = nil
         model.finderState = settings.showsFinderWindows ? .loading : .off
         loadClipboard()
         let wantsFinder = settings.showsFinderWindows
@@ -229,6 +230,8 @@ final class FilesDialogHelper {
                 FilesFolderEntry(path: path, source: .finder, date: nil, detail: index == 0 ? "Front Finder window" : nil)
             }
             model.finderState = .ready
+            // 7.14 (Codex 7.13): recents that arrived first are de-duplicated again.
+            if let raw = rawRecents { applyRecents(jumps: raw.jumps, newest: raw.newest) }
         case .failure(.permission(.notAsked)): model.finderState = .needsPermission(denied: false)
         case .failure(.permission(.denied)): model.finderState = .needsPermission(denied: true)
         case .failure(.permission(.finderNotRunning)): model.finderState = .notRunning
@@ -238,7 +241,12 @@ final class FilesDialogHelper {
         }
     }
 
+    /// The recents as read, kept so a Finder list arriving later can take
+    /// its folders out of them (either may finish first).
+    private var rawRecents: (jumps: [FilesRecentJump], newest: [FilesNewestFile])?
+
     private func applyRecents(jumps: [FilesRecentJump], newest: [FilesNewestFile]) {
+        rawRecents = (jumps, newest)
         let shown = Set(model.favorites.map(\.path) + model.finder.map(\.path))
         model.recents = FilesFolderLists.recents(jumps: jumps, newestFiles: newest, excluding: shown)
     }

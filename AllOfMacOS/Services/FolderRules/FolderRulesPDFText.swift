@@ -55,27 +55,66 @@ enum FolderRulePDFText {
         let key = "\(info.device):\(info.inode):\(info.dateModified?.timeIntervalSince1970 ?? 0):\(info.size):\(recognizesScans)"
         let now = ProcessInfo.processInfo.systemUptime
         lock.lock()
-        if let cached = cache[key], now - cached.at < cacheLimit.seconds { lock.unlock(); return cached.content }
+        // 7.14 (Codex 7.13): expired pages go on every read, not only when evicted.
+        evictExpired(now: now)
+        if let cached = cache[key] { lock.unlock(); return cached.content }
+        let started = cacheGeneration
         lock.unlock()
         let content = readUncached(info.url, recognizesScans: recognizesScans)
         lock.lock()
+        // Folder Rules stopped while this page was read: it isn't kept.
+        guard started == cacheGeneration else { lock.unlock(); return content }
         if let old = cache[key] { cachedBytes -= old.content.text.utf8.count; order.removeAll { $0 == key } }
         cache[key] = (content, now)
         cachedBytes += content.text.utf8.count
         order.append(key)
-        while !order.isEmpty, order.count > cacheLimit.entries || cachedBytes > cacheLimit.bytes
-                || now - (cache[order[0]]?.at ?? 0) >= cacheLimit.seconds {
+        while !order.isEmpty, order.count > cacheLimit.entries || cachedBytes > cacheLimit.bytes {
             let oldest = order.removeFirst()
             cachedBytes -= cache.removeValue(forKey: oldest)?.content.text.utf8.count ?? 0
         }
         lock.unlock()
+        // Nothing read for 10 minutes: the last pages go then too.
+        scheduleExpiry()
         return content
+    }
+
+    /// Call with `lock` held. `order` is oldest first, so expired pages lead.
+    private static func evictExpired(now: TimeInterval) {
+        while let oldest = order.first, now - (cache[oldest]?.at ?? 0) >= cacheLimit.seconds {
+            order.removeFirst()
+            cachedBytes -= cache.removeValue(forKey: oldest)?.content.text.utf8.count ?? 0
+        }
+    }
+
+    nonisolated(unsafe) private static var cacheGeneration = 0
+    nonisolated(unsafe) private static var expiryScheduled = false
+
+    private static func scheduleExpiry() {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !expiryScheduled, !cache.isEmpty else { return }
+        expiryScheduled = true
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + cacheLimit.seconds + 1) {
+            lock.lock()
+            expiryScheduled = false
+            evictExpired(now: ProcessInfo.processInfo.systemUptime)
+            let more = !cache.isEmpty
+            lock.unlock()
+            if more { scheduleExpiry() }
+        }
+    }
+
+    /// Entries held now (tests).
+    static var cachedCount: Int {
+        lock.lock(); defer { lock.unlock() }
+        return cache.count
     }
 
     /// Forgets every page read (a rule turned off, the module stopped).
     static func clearCache() {
         lock.lock()
         cache = [:]; order = []; cachedBytes = 0
+        cacheGeneration &+= 1
         lock.unlock()
     }
 

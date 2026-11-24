@@ -33,13 +33,17 @@ void AOMMenuBarNativeActivate(NSArray<NSNumber *> *allowedSystemItems,
     // A request macOS hasn't answered in 5 s fails open; an assertion that
     // arrives after that (or a second answer) is invalidated, never kept.
     __block BOOL done = NO; // read and written on the main queue only
+    // 7.14 (Codex 7.13): the assertion handed over; the same one arriving
+    // again is the caller's now and must not be invalidated.
+    __block __weak id delivered = nil;
     void (^finish)(id, NSError *) = ^(id assertion, NSError *error) {
         dispatch_async(dispatch_get_main_queue(), ^{
             if (done) {
-                if (assertion) { AOMMenuBarNativeInvalidate(assertion); }
+                if (assertion && assertion != delivered) { AOMMenuBarNativeInvalidate(assertion); }
                 return;
             }
             done = YES;
+            delivered = assertion;
             completion(assertion, error);
         });
     };

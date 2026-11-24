@@ -201,9 +201,8 @@ struct AOMMenuBarPanel: View {
                   menu: AOMFeatureMenus.keepAwake(), menuNote: model.keepAwake ? (model.keepAwakeMinutesLeft.map { "\($0) min left" } ?? "Until turned off") : nil),
             .init(id: "hud", title: "Gesture HUD", subtitle: model.hud ? "On" : "Off", symbol: "rectangle.on.rectangle",
                   tint: AOMModule.automation.hue, isOn: model.hud, onToggle: model.toggleHUD),
-            .init(id: "mic", title: "Mute Mic", subtitle: model.micMuted ? "Muted" : "Live",
-                  symbol: model.micMuted ? "mic.slash.fill" : "mic", tint: AOMColor.recording, isOn: model.micMuted,
-                  onToggle: model.toggleMic),
+            // 7.14: no Mute Mic tile (the user's request); a mute started
+            // elsewhere still shows as a live session with Unmute.
         ]
         return tiles
     }
