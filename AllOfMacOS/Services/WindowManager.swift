@@ -208,12 +208,13 @@ final class WindowManager: ObservableObject {
         guard !layoutBusy, !name.isEmpty, name.count <= 128 else { return false }
         let windows = visibleWindows().filter { onlyPID == nil || $0.0.pid == onlyPID }.map { $0.1 }
         guard !windows.isEmpty else { lastLayoutResult = "No accessible normal windows to save."; return false }
+        let previousLayouts = layouts
         if let index = layouts.firstIndex(where: { $0.name == name }) { layouts[index].windows = windows }
         else {
             guard layouts.count < 20 else { lastLayoutResult = "Up to 20 layouts can be saved."; return false }
             layouts.append(SavedWindowLayout(name: name, windows: windows))
         }
-        guard persistLayouts() else { lastLayoutResult = "The layout is kept for now but could not be saved."; return false }
+        guard persistLayouts() else { layouts = previousLayouts; lastLayoutResult = "Could not save the layout; previous layouts kept."; return false }
         lastLayoutResult = "Saved \(windows.count) windows."; return true
     }
     func removeLayout(_ id: UUID) { guard !layoutBusy else { return }; layouts.removeAll { $0.id == id }; persistLayouts() }
@@ -229,10 +230,17 @@ final class WindowManager: ObservableObject {
         let displays = screens()
         let ids = NSScreen.screens.map { DisplayTopology.identifier($0) ?? "" }
         var changes: [Saved] = []; var skipped = 0
+        let candidates = live.map { $0.1 }
+        var matched = Set<Int>()
         for placement in layout.windows {
-            guard let match = SavedWindowPlacement.uniqueMatch(placement, in: live.map({ $0.1 })),
-                  let screen = ids.firstIndex(of: placement.displayID) else { skipped += 1; continue }
+            guard let match = SavedWindowPlacement.uniqueMatch(placement, in: candidates),
+                  !matched.contains(match), let screen = ids.firstIndex(of: placement.displayID),
+                  displays.indices.contains(screen) else { skipped += 1; continue }
             let visible = displays[screen].visible
+            let frame = placement.normalizedFrame
+            guard [frame.minX, frame.minY, frame.width, frame.height, visible.width, visible.height].allSatisfy(\.isFinite),
+                  frame.width > 0, frame.height > 0, visible.width > 0, visible.height > 0 else { skipped += 1; continue }
+            matched.insert(match)
             var rect = WindowGeometry.snapFrame(normalized: placement.normalizedFrame, visible: visible)
             rect.size.width = min(rect.width, visible.width); rect.size.height = min(rect.height, visible.height)
             rect.origin.x = max(visible.minX, min(rect.minX, visible.maxX-rect.width))
