@@ -118,7 +118,7 @@ struct AOMHomeView: View {
                 // The banner and the sidebar switch already say "running";
                 // the status card returns when something needs you (paused,
                 // a permission, a recording) or in My Workspace.
-                if snapshot.chips.contains(where: { $0.1 == .denied || $0.1 == .notDetermined }) {
+                if snapshot.chips.contains(where: { $0.1 != .granted }) {
                     WorkspacePermissionChips(chips: snapshot.chips)
                         .padding(.leading, AOMSpace.rowInset + AOMIcon.heroMark + AOMSpace.x3)
                 }
@@ -1509,8 +1509,7 @@ private struct WorkspacePermissionChips: View {
     let chips: [(AOMPermission, AOMPermissionStatus)]
 
     var body: some View {
-        let missing = chips.filter { $0.1 == .denied || $0.1 == .notDetermined }
-        if missing.isEmpty {
+        if !chips.isEmpty && chips.allSatisfy({ $0.1 == .granted }) {
             AOMStatusPill("All permissions allowed", tone: .success, symbol: "checkmark.circle.fill")
         } else {
             WorkspaceFlowRow(spacing: AOMSpace.x2) {
