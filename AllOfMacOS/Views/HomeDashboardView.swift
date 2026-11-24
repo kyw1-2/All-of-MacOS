@@ -1225,7 +1225,9 @@ private struct WorkspaceBanner<Trailing: View>: View {
                     Text(state.isRunning ? "Ready to work" : state.sentence)
                         .font(AOMFont.heroTitle)
                         .foregroundStyle(AOMColor.text)
-                        .lineLimit(1)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .layoutPriority(1)
                         .accessibilityAddTraits(.isHeader)
                     if state.tone != .success {
                         AOMStatusPill(state.tone == .warning ? "Action Needed" : "Paused", tone: state.tone)
@@ -1255,8 +1257,10 @@ private struct WorkspaceBanner<Trailing: View>: View {
                 AOMHeroBand(identity: AOMMainTab.home.identity, active: state.tone != .neutral) {
                     status.frame(maxWidth: .infinity, alignment: .leading)
                 }
-                HStack(spacing: AOMSpace.x2) { trailing }.fixedSize()
-                    .padding(.leading, AOMSpace.rowInset + AOMIcon.heroMark + AOMSpace.x3)
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: AOMSpace.x2) { trailing }.fixedSize()
+                    VStack(alignment: .leading, spacing: AOMSpace.x2) { trailing }
+                }
             }
         }
         .aomAnimation(.standard, value: state)
