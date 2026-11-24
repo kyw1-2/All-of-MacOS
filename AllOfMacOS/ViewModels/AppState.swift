@@ -24,7 +24,6 @@ class AppState: ObservableObject {
     @Published var currentPreset: Preset
     @Published var selectedAppTarget: AppTarget
     @Published var selectedActivationGroupID: UUID?
-    @Published var triggerSearch = ""
     @Published var selectedTriggerCategory: TriggerCategory = .all
     @Published var selectedTrigger: Trigger?
     @Published var selectedAction: TriggerAction?

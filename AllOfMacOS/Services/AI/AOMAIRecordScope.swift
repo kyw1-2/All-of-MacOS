@@ -178,7 +178,6 @@ struct AOMAIRecordScope: Equatable, Codable {
     static let none = AOMAIRecordScope()
 
     var isEmpty: Bool { sources.subtracting(AOMAIRecordSource.attachments).isEmpty && folders.isEmpty }
-    var attachesClipboard: Bool { sources.contains(.clip) }
     /// @clip, @screen, @window in that order.
     var attachments: [AOMAIRecordSource] { ordered.filter(\.isAttachment) }
     var attachesAnything: Bool { !attachments.isEmpty }

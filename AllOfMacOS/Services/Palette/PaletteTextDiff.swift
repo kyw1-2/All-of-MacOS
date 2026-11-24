@@ -47,20 +47,44 @@ enum PaletteTextDiff {
         lines(old, new).filter { if case .same = $0 { return false }; return true }
     }
 
+    /// What a trailing newline reads as in a row.
+    static let newlineAtEnd = "⏎ (newline at end)"
+
     /// Lines with the trailing newline kept apart: "a\n" and "a" differ in
     /// their last line, which the diff reports as "(no newline at end)".
+    /// 7.13 (GPT F06): the marker line ends in a newline character, which no
+    /// real line can contain, so a text that literally says "⏎ (newline at
+    /// end)" never compares equal to a trailing newline. CRLF is read as LF.
     static func split(_ text: String) -> [String] {
+        let text = text.replacingOccurrences(of: "\r\n", with: "\n")
         var lines = text.components(separatedBy: "\n")
-        if text.hasSuffix("\n") { lines.removeLast(); lines.append("⏎ (newline at end)") }
+        if text.hasSuffix("\n") { lines.removeLast(); lines.append(newlineAtEnd + "\n") }
         return lines
     }
 
-    /// The shortest edit script (LCS), capped so a huge pair stays quick.
+    /// The row text of a line (the trailing-newline marker without its own newline).
+    static func display(_ line: String) -> String {
+        line.hasSuffix("\n") ? String(line.dropLast()) : line
+    }
+
+    /// The shortest edit script. 7.13 (GPT F05): the lines both texts start
+    /// and end with are taken off first, so equal texts of any size compare
+    /// in one pass and a one-line edit in a long text stays exact; only the
+    /// differing middle runs the LCS, and Swift's Myers difference takes a
+    /// middle too big for the table.
     private static func script(_ a: [String], _ b: [String]) -> [LineChange] {
+        var head = 0
+        while head < a.count, head < b.count, a[head] == b[head] { head += 1 }
+        var tail = 0
+        while tail < a.count - head, tail < b.count - head, a[a.count - 1 - tail] == b[b.count - 1 - tail] { tail += 1 }
+        let middle = middleScript(Array(a[head..<(a.count - tail)]), Array(b[head..<(b.count - tail)]))
+        return a[..<head].map { .same($0) } + middle + a[(a.count - tail)...].map { .same($0) }
+    }
+
+    private static func middleScript(_ a: [String], _ b: [String]) -> [LineChange] {
         let n = a.count, m = b.count
-        guard n * m <= 4_000_000 else {
-            return a.map { .removed($0) } + b.map { .added($0) }
-        }
+        if n == 0 || m == 0 { return a.map { .removed($0) } + b.map { .added($0) } }
+        guard n * m <= 4_000_000 else { return myers(a, b) }
         var table = [[Int]](repeating: [Int](repeating: 0, count: m + 1), count: n + 1)
         for i in stride(from: n - 1, through: 0, by: -1) {
             for j in stride(from: m - 1, through: 0, by: -1) {
@@ -77,6 +101,43 @@ enum PaletteTextDiff {
         while i < n { ops.append(.removed(a[i])); i += 1 }
         while j < m { ops.append(.added(b[j])); j += 1 }
         return ops
+    }
+
+    /// Swift's own Myers difference, for middles too big for the LCS table.
+    private static func myers(_ a: [String], _ b: [String]) -> [LineChange] {
+        let difference = b.difference(from: a)
+        var removed = Set<Int>(), inserted = Set<Int>()
+        for change in difference {
+            switch change {
+            case .remove(let offset, _, _): removed.insert(offset)
+            case .insert(let offset, _, _): inserted.insert(offset)
+            }
+        }
+        var ops: [LineChange] = []
+        var i = 0, j = 0
+        while i < a.count || j < b.count {
+            if i < a.count, removed.contains(i) { ops.append(.removed(a[i])); i += 1 }
+            else if j < b.count, inserted.contains(j) { ops.append(.added(b[j])); j += 1 }
+            else if i < a.count, j < b.count { ops.append(.same(a[i])); i += 1; j += 1 }
+            else if i < a.count { ops.append(.removed(a[i])); i += 1 }
+            else { ops.append(.added(b[j])); j += 1 }
+        }
+        return ops
+    }
+
+    /// 7.13 (GPT F05): the last comparison, kept while the screen is open —
+    /// the launcher rebuilds its rows on every key and must not diff again.
+    @MainActor private static var memo: (key: Int, result: [LineChange])?
+
+    @MainActor
+    static func cachedChanges(_ old: String, _ new: String) -> [LineChange] {
+        var hasher = Hasher()
+        hasher.combine(old); hasher.combine(new)
+        let key = hasher.finalize()
+        if let memo, memo.key == key { return memo.result }
+        let result = changes(old, new)
+        memo = (key, result)
+        return result
     }
 
     /// The differing middle of two lines, in characters: the common prefix

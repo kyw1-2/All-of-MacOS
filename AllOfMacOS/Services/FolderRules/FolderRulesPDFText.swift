@@ -4,7 +4,10 @@ import Vision
 
 /// 7.12 (Codex NEW-2, Hazel's content conditions): what a PDF's first page
 /// says, for a rule that asks. Read on the Folder Rules queue, one document
-/// at a time; the text is never stored (history keeps only the verdict).
+/// at a time; the text is never written to disk or logged (history keeps
+/// only the verdict). 7.13 (GPT F10): it is kept in memory only briefly —
+/// at most 64 pages, 4 MB and 10 minutes — so change notices for the same
+/// file read it once.
 struct FolderRulePDFContent: Equatable {
     enum State: String, Equatable {
         /// The page's text is in `text` (from its text layer, or recognized).
@@ -43,21 +46,37 @@ enum FolderRulePDFText {
     private static let lock = NSLock()
     /// One entry per file version (volume, inode, modification, size, OCR):
     /// three change notices for the same file read it once.
-    nonisolated(unsafe) private static var cache: [String: FolderRulePDFContent] = [:]
+    nonisolated(unsafe) private static var cache: [String: (content: FolderRulePDFContent, at: TimeInterval)] = [:]
     nonisolated(unsafe) private static var order: [String] = []
+    nonisolated(unsafe) private static var cachedBytes = 0
+    static let cacheLimit = (entries: 64, bytes: 4 << 20, seconds: 600.0)
 
     static func read(_ info: FolderRuleFileInfo, recognizesScans: Bool) -> FolderRulePDFContent {
         let key = "\(info.device):\(info.inode):\(info.dateModified?.timeIntervalSince1970 ?? 0):\(info.size):\(recognizesScans)"
+        let now = ProcessInfo.processInfo.systemUptime
         lock.lock()
-        if let cached = cache[key] { lock.unlock(); return cached }
+        if let cached = cache[key], now - cached.at < cacheLimit.seconds { lock.unlock(); return cached.content }
         lock.unlock()
         let content = readUncached(info.url, recognizesScans: recognizesScans)
         lock.lock()
-        cache[key] = content
+        if let old = cache[key] { cachedBytes -= old.content.text.utf8.count; order.removeAll { $0 == key } }
+        cache[key] = (content, now)
+        cachedBytes += content.text.utf8.count
         order.append(key)
-        if order.count > 64 { cache[order.removeFirst()] = nil }
+        while !order.isEmpty, order.count > cacheLimit.entries || cachedBytes > cacheLimit.bytes
+                || now - (cache[order[0]]?.at ?? 0) >= cacheLimit.seconds {
+            let oldest = order.removeFirst()
+            cachedBytes -= cache.removeValue(forKey: oldest)?.content.text.utf8.count ?? 0
+        }
         lock.unlock()
         return content
+    }
+
+    /// Forgets every page read (a rule turned off, the module stopped).
+    static func clearCache() {
+        lock.lock()
+        cache = [:]; order = []; cachedBytes = 0
+        lock.unlock()
     }
 
     static func readUncached(_ url: URL, recognizesScans: Bool) -> FolderRulePDFContent {

@@ -517,6 +517,7 @@ final class FolderRulesRunner: @unchecked Sendable {
     /// Why `rule` can't decide this item now, or nil (it can, or it isn't the rule's).
     static func reviewReason(_ rule: FolderRule, _ info: FolderRuleFileInfo, now: Date) -> String? {
         guard rule.readsPDFText else { return nil }
+        let info = info.seen(by: rule)
         guard let pdf = info.pdf else {
             // A Rename that reads a PDF, on something that isn't one.
             let renamesFromPDF = rule.actions.contains { $0.kind == .rename && FolderRulePatterns.usesPDFTokens($0.pattern) }

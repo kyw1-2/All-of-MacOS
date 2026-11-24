@@ -56,10 +56,12 @@ enum PaletteFreeSlots {
     }
 
     /// The slots still free in `busy` (checked again right before copying).
-    static func stillFree(_ chosen: [Slot], busy: [Busy], calendar: Calendar = .current) -> [Slot] {
+    /// 7.13 (GPT F08): a time that has already started is no longer offered.
+    static func stillFree(_ chosen: [Slot], busy: [Busy], now: Date? = nil, calendar: Calendar = .current) -> [Slot] {
         let blocking = busy.filter { !$0.isFree }
         return chosen.filter { slot in
-            !blocking.contains { event in
+            if let now, slot.start < now || slot.end <= slot.start { return false }
+            return !blocking.contains { event in
                 if event.isAllDay {
                     let day = calendar.startOfDay(for: slot.start)
                     guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { return false }

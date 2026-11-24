@@ -159,15 +159,4 @@ extension AudioRecovery {
         // 7.12: the last 30 minutes' overloads, the apps using the most memory, and a fix.
         AudioGlitchAdvisor.check()
     }
-
-    /// The 7.11 check (kept for the tests and the HUD wording).
-    static func checkHomePodLoadOnly() {
-        let causes = AudioSystemLoad.current()
-        if let line = AudioSystemLoad.summary(causes) {
-            GestureHUD.shared.show(title: line, detail: AudioSystemLoad.detail(causes))
-        } else {
-            GestureHUD.shared.show(title: "No load problem found",
-                                   detail: "Memory and temperature are fine. If it still crackles, try Reconnect App Audio.")
-        }
-    }
 }

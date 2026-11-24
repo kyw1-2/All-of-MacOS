@@ -338,3 +338,16 @@ enum FolderRuleFileReader {
         return false
     }
 }
+
+extension FolderRuleFileInfo {
+    /// 7.13 (GPT F11): one read serves every rule of a pass, recognizing a
+    /// scan when any rule asks. A rule that doesn't recognize scans must not
+    /// decide on recognized text, so for it a recognized page reads as a
+    /// page without text — as if it had read the PDF alone.
+    func seen(by rule: FolderRule) -> FolderRuleFileInfo {
+        guard let pdf, pdf.recognized, !rule.recognizesScans else { return self }
+        var copy = self
+        copy.pdf = FolderRulePDFContent(state: .noText)
+        return copy
+    }
+}

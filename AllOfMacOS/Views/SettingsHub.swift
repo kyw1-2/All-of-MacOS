@@ -935,7 +935,7 @@ struct SettingsHubView: View {
                     }
                 }
             }
-            .aomCard(padding: 0, elevated: false)
+            .aomCard(padding: 0)
         }
     }
 

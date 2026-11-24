@@ -901,6 +901,7 @@ final class PaletteRouteModels: ObservableObject {
         loadProcesses()
         // Fresh while the screen is open; reading ~500 processes takes a few ms.
         let timer = Timer(timeInterval: 3, repeats: true) { _ in MainActor.assumeIsolated { [weak self] in self?.loadProcesses() } }
+        timer.tolerance = 0.5
         RunLoop.main.add(timer, forMode: .common)
         processTimer = timer
     }

@@ -7,7 +7,7 @@ enum FolderRuleMatcher {
     /// Items below the top level only count when the rule includes subfolders.
     static func matches(_ rule: FolderRule, _ info: FolderRuleFileInfo, now: Date) -> Bool {
         guard rule.includeSubfolders || info.depth == 0, !rule.conditions.isEmpty else { return false }
-        let results = evaluate(rule, info, now: now)
+        let results = evaluate(rule, info.seen(by: rule), now: now)
         switch rule.match {
         case .all: return results.allSatisfy { $0 }
         case .any: return results.contains(true)
@@ -17,7 +17,8 @@ enum FolderRuleMatcher {
 
     /// One verdict per condition, in order (the inspector's ✓ and ✗).
     static func evaluate(_ rule: FolderRule, _ info: FolderRuleFileInfo, now: Date) -> [Bool] {
-        rule.conditions.map { matches($0, info, now: now) }
+        let info = info.seen(by: rule)
+        return rule.conditions.map { matches($0, info, now: now) }
     }
 
     static func matches(_ condition: FolderRuleCondition, _ info: FolderRuleFileInfo, now: Date) -> Bool {
@@ -69,6 +70,7 @@ enum FolderRuleMatcher {
     /// read — the item is the rule's to review, not a later rule's.
     static func matchesApartFromPDF(_ rule: FolderRule, _ info: FolderRuleFileInfo, now: Date) -> Bool {
         guard rule.includeSubfolders || info.depth == 0, !rule.conditions.isEmpty else { return false }
+        let info = info.seen(by: rule)
         let results = rule.conditions.map { $0.attribute == .pdfText ? (rule.match != .none) : matches($0, info, now: now) }
         switch rule.match {
         case .all: return results.allSatisfy { $0 }

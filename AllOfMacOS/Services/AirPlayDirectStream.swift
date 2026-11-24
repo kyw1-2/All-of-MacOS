@@ -379,8 +379,7 @@ final class AirPlayDirectStream: AppAudioActivitySource {
         procID = created
         addListeners(onReconfigure: onReconfigure)
         // 7.12: the code the IO thread runs stays resident while a HomePod plays.
-        AudioRealtimeMemory.retainCode()
-        retainsCode = true
+        retainsCode = AudioRealtimeMemory.retainCode()
     }
 
     deinit { releaseBuffers() }

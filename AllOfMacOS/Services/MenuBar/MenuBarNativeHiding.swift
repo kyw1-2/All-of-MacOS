@@ -213,6 +213,7 @@ final class MenuBarNativeHiding {
                 if quietTicks >= needed { native.endLift(); if !native.hiding.isEmpty { native.hide(native.hiding) } }
             }
         }
+        timer.tolerance = 0.1
         RunLoop.main.add(timer, forMode: .common)
         lift = (bundle, timer)
     }

@@ -221,6 +221,7 @@ final class ClipboardStore: ObservableObject {
                     }
                 }
             }
+            pauseTimer?.tolerance = 0.1
         } else {
             pauseRemainingSeconds = 0
             pauseTimer = nil

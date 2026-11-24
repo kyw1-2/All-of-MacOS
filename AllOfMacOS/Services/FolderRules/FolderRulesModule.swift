@@ -18,6 +18,8 @@ enum FolderRulesModule {
     /// 7.3: the module switch — no folder stream, no sweep timer, no passes.
     static func stop() {
         FolderRulesEngine.shared.moduleOn = false
+        // 7.13 (GPT F10): no PDF text outlives the module.
+        FolderRulePDFText.clearCache()
     }
 
     /// This module's items in the status menu's Productivity section.

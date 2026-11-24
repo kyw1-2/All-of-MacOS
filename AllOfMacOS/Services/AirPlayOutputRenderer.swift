@@ -951,6 +951,7 @@ final class AirPlayPCMBridge {
         result["wiredKilobytes"] = AudioRealtimeMemory.wiredBytes / 1024
         result["wireFailures"] = AudioRealtimeMemory.failures
         result["wiredCodeBytes"] = AudioRealtimeMemory.wiredCodeBytes
+        result["touchedCodeBytes"] = AudioRealtimeMemory.touchedCodeBytes
         return result
     }
     func discard() { queue.requestClear() }

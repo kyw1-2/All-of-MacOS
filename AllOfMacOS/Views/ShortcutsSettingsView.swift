@@ -299,6 +299,7 @@ struct LauncherOptionsSettings: View {
             }
         }
         .onChange(of: density) { _, value in AOMLauncherDensity.current = value }
+        FreeTimesHoursSettings()
         AOMSection("Launcher hotkeys", detail: hotkeys.bindings.isEmpty ? nil : "\(hotkeys.bindings.count)") {
             if hotkeys.bindings.isEmpty {
                 HubRowShell(icon: "keyboard", tint: .indigo, title: "No hotkeys yet",
@@ -317,5 +318,44 @@ struct LauncherOptionsSettings: View {
                 }
             }
         }
+    }
+}
+
+/// 7.13: the working hours ⌘K › Free Times offers (until now only a
+/// defaults value). Times are minutes from midnight, as the launcher reads them.
+struct FreeTimesHoursSettings: View {
+    @AppStorage("AOMFreeTimesStart") private var start = 540
+    @AppStorage("AOMFreeTimesEnd") private var end = 1080
+
+    var body: some View {
+        AOMSection("Free times", detail: "\(Self.clock(start))–\(Self.clock(end))") {
+            HubRowShell(icon: "calendar.badge.clock", tint: .indigo, title: "Working hours",
+                        subtitle: "⌘K › Free Times offers weekday times between these. Only when you're busy is read — no titles or people.") {
+                HStack(spacing: 6) {
+                    DatePicker("", selection: Self.time($start), displayedComponents: .hourAndMinute)
+                        .labelsHidden().accessibilityLabel("Working hours start")
+                    Text("–").foregroundStyle(AOMColor.textSecondary)
+                    DatePicker("", selection: Self.time($end), displayedComponents: .hourAndMinute)
+                        .labelsHidden().accessibilityLabel("Working hours end")
+                }
+            }
+        }
+        // At least half an hour between them, as the launcher needs.
+        .onChange(of: start) { _, value in if end < value + 30 { end = min(1439, value + 30) } }
+        .onChange(of: end) { _, value in if value < start + 30 { start = max(0, value - 30) } }
+    }
+
+    static func clock(_ minutes: Int) -> String {
+        String(format: "%02d:%02d", min(max(minutes, 0), 1440) / 60, min(max(minutes, 0), 1440) % 60)
+    }
+
+    /// A minutes-from-midnight value as today's time, and back.
+    private static func time(_ minutes: Binding<Int>) -> Binding<Date> {
+        Binding(get: {
+            Calendar.current.startOfDay(for: Date()).addingTimeInterval(TimeInterval(min(max(minutes.wrappedValue, 0), 1439) * 60))
+        }, set: { date in
+            let parts = Calendar.current.dateComponents([.hour, .minute], from: date)
+            minutes.wrappedValue = (parts.hour ?? 0) * 60 + (parts.minute ?? 0)
+        })
     }
 }

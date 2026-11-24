@@ -17,24 +17,32 @@ final class PaletteAvailability: ObservableObject {
     @Published var chosen: [PaletteFreeSlots.Slot] = []
     @Published private(set) var busy: [PaletteFreeSlots.Busy]?
     @Published private(set) var loadedAt: Date?
+    /// 7.13 (GPT F07): the last read failed (access taken away meanwhile) —
+    /// not the same as a calendar with nothing on it.
+    @Published private(set) var readFailed = false
 
     static let maxChosen = 3
     /// Working hours, in Settings' defaults (minutes from midnight).
     var hours: PaletteFreeSlots.Hours {
         let defaults = UserDefaults.standard
-        let start = defaults.object(forKey: "AOMFreeTimesStart") as? Int ?? 540
-        let end = defaults.object(forKey: "AOMFreeTimesEnd") as? Int ?? 1080
-        return PaletteFreeSlots.Hours(start: start, end: max(start + 30, end))
+        // 7.13 (GPT F09): a value out of the day falls back inside it.
+        let start = min(max(defaults.object(forKey: "AOMFreeTimesStart") as? Int ?? 540, 0), 1410)
+        let end = min(max(defaults.object(forKey: "AOMFreeTimesEnd") as? Int ?? 1080, start + 30), 1440)
+        return PaletteFreeSlots.Hours(start: start, end: end)
     }
 
-    func reset() { chosen = []; minutes = 60 }
+    func reset() { chosen = []; minutes = 60; readFailed = false }
 
     /// Reads the next seven days of your calendars (titles are not kept).
     func load(now: Date = Date()) async {
         let calendar = Calendar.current
         let start = calendar.startOfDay(for: now)
         let end = calendar.date(byAdding: .day, value: 8, to: start) ?? now.addingTimeInterval(8 * 86_400)
-        let events = await PaletteSchedule.shared.events(from: start, to: end) ?? []
+        guard let events = await PaletteSchedule.shared.events(from: start, to: end) else {
+            readFailed = true
+            return
+        }
+        readFailed = false
         busy = events.map { PaletteFreeSlots.Busy(start: $0.start, end: $0.end, isAllDay: $0.isAllDay, isFree: $0.isFree) }
         loadedAt = Date()
     }
@@ -115,10 +123,13 @@ extension QuickCommandPalette {
         let others = clipboardStore.entries.lazy.filter { $0.id != id && self.clipText($0) != nil }
             .filter { search?.matches($0, boards: boards) ?? true }.prefix(200)
         return others.map { entry in
-            screenRow("clipcompare.\(entry.id.uuidString)", entry.title,
+            // 7.13 (GPT F04): the older copy goes on the left once, here;
+            // the route keeps that order so Swap Sides really swaps.
+            let pair = first.lastCopiedAt <= entry.lastCopiedAt ? (id, entry.id) : (entry.id, id)
+            return screenRow("clipcompare.\(entry.id.uuidString)", entry.title,
                       [entry.sourceName, AOMRelativeTime.string(entry.lastCopiedAt)].compactMap { $0 }.joined(separator: " · "),
                       icon: entry.kind.symbol, group: "Compare “\(first.title.prefix(40))” with", section: .clipboard,
-                      primary: PaletteAction(title: "Compare", symbol: "arrow.left.arrow.right.square", effect: .push(.clipboardDiff(id, entry.id))) {})
+                      primary: PaletteAction(title: "Compare", symbol: "arrow.left.arrow.right.square", effect: .push(.clipboardDiff(pair.0, pair.1))) {})
         }
     }
 
@@ -128,8 +139,9 @@ extension QuickCommandPalette {
             return [screenRow("clipdiff.gone", "One of the two copies isn't in the history any more", "Go back with esc",
                               icon: "exclamationmark.triangle", group: nil, primary: PaletteAction(title: "Back", effect: .stay) { pop() }, dimmed: true)]
         }
-        // The older one on the left (−), the newer on the right (+).
-        let (old, new) = one.lastCopiedAt <= two.lastCopiedAt ? ((one, oneText), (two, twoText)) : ((two, twoText), (one, oneText))
+        // The route's first copy on the left (−), its second on the right (+):
+        // the older one first when the screen opens, either way after Swap Sides.
+        let (old, new) = ((one, oneText), (two, twoText))
         let label = { (entry: ClipboardEntry) in
             [entry.sourceName, entry.lastCopiedAt.formatted(date: .abbreviated, time: .shortened)].compactMap { $0 }.joined(separator: " · ")
         }
@@ -137,35 +149,48 @@ extension QuickCommandPalette {
         let swap = PaletteAction(title: "Swap Sides", symbol: "arrow.left.arrow.right", effect: .stay) {
             pop(); push(.clipboardDiff(new.0.id, old.0.id))
         }
-        let changes = PaletteTextDiff.changes(old.1, new.1)
+        let changes = PaletteTextDiff.cachedChanges(old.1, new.1)
         guard !changes.isEmpty else {
             return [screenRow("clipdiff.same", "The two texts are the same", header, icon: "equal.circle", group: nil,
                               primary: PaletteAction(title: "Back", effect: .stay) { pop() })]
         }
         let total = changes.count
+        // 7.13 (GPT UX-06): how much differs, in the header of every row.
+        var counts = (changed: 0, added: 0, removed: 0)
+        for change in changes {
+            switch change {
+            case .changed: counts.changed += 1
+            case .added: counts.added += 1
+            case .removed: counts.removed += 1
+            case .same: break
+            }
+        }
+        let tally = [counts.changed > 0 ? "\(counts.changed) changed" : nil, counts.added > 0 ? "\(counts.added) added" : nil,
+                     counts.removed > 0 ? "\(counts.removed) removed" : nil].compactMap { $0 }.joined(separator: ", ")
+        let groupHeader = header + "   ·   " + tally
         return changes.enumerated().map { index, change in
             let number = "\(index + 1) of \(total)"
             let title: String, subtitle: String, icon: String, copy: String
             switch change {
             case .changed(let before, let after, let oldSpan, let newSpan):
-                title = "± " + PaletteTextDiff.marked(after, newSpan)
-                subtitle = "was: " + PaletteTextDiff.marked(before, oldSpan)
+                title = "± " + PaletteTextDiff.display(PaletteTextDiff.marked(after, newSpan))
+                subtitle = "was: " + PaletteTextDiff.display(PaletteTextDiff.marked(before, oldSpan))
                 icon = "plusminus.circle"
-                copy = after
+                copy = PaletteTextDiff.display(after)
             case .added(let line):
-                title = "+ " + (line.isEmpty ? "(empty line)" : line)
-                subtitle = "only in the newer copy"
+                title = "+ " + (line.isEmpty ? "(empty line)" : PaletteTextDiff.display(line))
+                subtitle = "only on the right (+)"
                 icon = "plus.circle"
-                copy = line
+                copy = PaletteTextDiff.display(line)
             case .removed(let line):
-                title = "− " + (line.isEmpty ? "(empty line)" : line)
-                subtitle = "only in the older copy"
+                title = "− " + (line.isEmpty ? "(empty line)" : PaletteTextDiff.display(line))
+                subtitle = "only on the left (−)"
                 icon = "minus.circle"
-                copy = line
+                copy = PaletteTextDiff.display(line)
             case .same(let line):
                 title = line; subtitle = ""; icon = "equal.circle"; copy = line
             }
-            var row = screenRow("clipdiff.\(index)", title, subtitle, icon: icon, group: header, section: .clipboard,
+            var row = screenRow("clipdiff.\(index)", title, subtitle, icon: icon, group: groupHeader, section: .clipboard,
                                 primary: PaletteAction(title: "Copy This Line", symbol: "doc.on.doc", effect: .stay) {
                                     copyToClipboard(copy, announce: String(copy.prefix(60)))
                                 }, secondaries: [swap])
@@ -205,6 +230,13 @@ extension QuickCommandPalette {
         if let typed = Int(trimmed), [15, 30, 45, 60, 90, 120].contains(typed), typed != availability.minutes {
             DispatchQueue.main.async { availability.minutes = typed; availability.chosen = []; query = ""; sourcesChanged() }
         }
+        if availability.readFailed {
+            return [screenRow("free.failed", "Couldn't read your calendars", "Nothing is copied until they can be read · ↩ tries again",
+                              icon: "exclamationmark.triangle", group: nil,
+                              primary: PaletteAction(title: "Try Again", effect: .stay) {
+                                  Task { @MainActor in await availability.load(); sourcesChanged() }
+                              })]
+        }
         guard let busy = availability.busy else {
             return [screenRow("free.loading", "Reading your calendars…", "Only when you're busy — titles, people and places stay out",
                               icon: "hourglass", group: nil, primary: PaletteAction(title: "Waiting", effect: .stay) {}, dimmed: true)]
@@ -222,7 +254,13 @@ extension QuickCommandPalette {
                                      Task { @MainActor in
                                          // Checked again right before copying: a meeting booked meanwhile drops out.
                                          await availability.load()
-                                         let free = PaletteFreeSlots.stillFree(chosen, busy: availability.busy ?? [])
+                                         // 7.13 (GPT F07): a failed read is not an empty calendar.
+                                         guard !availability.readFailed, let fresh = availability.busy else {
+                                             GestureHUD.shared.show(title: "Not Copied", detail: "Your calendars couldn't be read, so AOM can't tell whether those times are free.")
+                                             sourcesChanged()
+                                             return
+                                         }
+                                         let free = PaletteFreeSlots.stillFree(chosen, busy: fresh, now: Date())
                                          guard !free.isEmpty else {
                                              GestureHUD.shared.show(title: "Not Copied", detail: "Those times aren't free any more.")
                                              return
@@ -236,6 +274,18 @@ extension QuickCommandPalette {
         }
         let hours = availability.hours
         let window = String(format: "%02d:%02d–%02d:%02d", hours.start / 60, hours.start % 60, hours.end / 60, hours.end % 60)
+        // 7.13 (GPT UX-07): what the list is built from — length, hours and
+        // how fresh the calendars are — as the last row, so ↩ still picks the
+        // first time; typing a number changes the length.
+        let fresh = availability.loadedAt.map { "read \(AOMRelativeTime.string($0))" } ?? ""
+        var summary = screenRow("free.summary", "\(availability.minutes)-minute meetings · weekdays \(window)",
+                                ["Type 30, 45, 60 or 90 to change the length", "hours in Settings › Shortcuts › Free times", fresh]
+                                    .filter { !$0.isEmpty }.joined(separator: " · "),
+                                icon: "slider.horizontal.3", group: nil,
+                                primary: PaletteAction(title: "Read Again", symbol: "arrow.clockwise", effect: .stay) {
+                                    Task { @MainActor in await availability.load(); sourcesChanged() }
+                                })
+        summary.placement = .fallback
         guard !slots.isEmpty else {
             rows.append(screenRow("free.none", "No free \(availability.minutes)-minute time in the next 7 days", "Weekdays \(window) · type 30 for a shorter meeting",
                                   icon: "calendar.badge.exclamationmark", group: nil,
@@ -256,6 +306,7 @@ extension QuickCommandPalette {
             row.accessory = picked ? "✓" : nil
             rows.append(row)
         }
+        rows.append(summary)
         return rows
     }
 }

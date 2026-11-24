@@ -79,16 +79,21 @@ enum AudioRealtimeMemory {
     /// reading one byte of each of its pages every second on a utility
     /// thread (about 1,700 reads), so a page the IO thread needs is never
     /// one the kernel has just taken back.
-    static func retainCode() {
-        guard wiresCode else { return }
+    ///
+    /// 7.13 (GPT F02): returns whether this call took a reference. Only a
+    /// caller that got `true` may call `releaseCode`, so a stream started
+    /// with the setting off can't drop another stream's reference.
+    @discardableResult
+    static func retainCode() -> Bool {
+        guard wiresCode else { return false }
         codeLock.lock(); defer { codeLock.unlock() }
         codeUsers += 1
-        guard codeUsers == 1, codeRegions.isEmpty, toucher == nil else { return }
+        guard codeUsers == 1, codeRegions.isEmpty, toucher == nil else { return true }
         for (pointer, bytes) in mainImageSegments(["__DATA_CONST"]) where mlock(pointer, bytes) == 0 {
             codeRegions.append((pointer, bytes))
             codeBytesCounter.add(UInt64(bytes))
         }
-        guard let text = mainImageSegments(["__TEXT"]).first else { return }
+        guard let text = mainImageSegments(["__TEXT"]).first else { return true }
         let page = Int(getpagesize())
         let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
         timer.schedule(deadline: .now(), repeating: 1.0, leeway: .milliseconds(250))
@@ -101,8 +106,9 @@ enum AudioRealtimeMemory {
         }
         timer.resume()
         toucher = timer
-        codeBytesCounter.add(UInt64(text.1))
+        // 7.13 (GPT F01): touched pages are not wired; counted on their own.
         touchedBytes = UInt64(text.1)
+        return true
     }
 
     /// One HomePod stream fewer: the last one lets the code go.
@@ -118,7 +124,6 @@ enum AudioRealtimeMemory {
         codeRegions = []
         toucher?.cancel()
         toucher = nil
-        codeBytesCounter.add(0 &- touchedBytes)
         touchedBytes = 0
     }
 
@@ -127,8 +132,16 @@ enum AudioRealtimeMemory {
     /// Keeps the touch loop's reads from being optimized away.
     private static let touchSink = AudioAtomicCounter()
 
-    /// Code bytes wired right now (audio-health.json `wiredCodeBytes`).
+    /// Code bytes really wired by `mlock` right now (__DATA_CONST only on
+    /// macOS 27; audio-health.json `wiredCodeBytes`).
     static var wiredCodeBytes: UInt64 { codeBytesCounter.load() }
+
+    /// __TEXT bytes kept warm by the page-touch loop right now — read, not
+    /// wired (audio-health.json `touchedCodeBytes`).
+    static var touchedCodeBytes: UInt64 {
+        codeLock.lock(); defer { codeLock.unlock() }
+        return touchedBytes
+    }
 
     /// The main executable's segments, page aligned.
     private static func mainImageSegments(_ names: [String]) -> [(UnsafeMutableRawPointer, Int)] {

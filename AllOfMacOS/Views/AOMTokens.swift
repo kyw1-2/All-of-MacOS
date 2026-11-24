@@ -254,17 +254,6 @@ enum AOMColor {
     /// dark, Linear and Things) instead of 6.x's cool grey.
     static let canvas = Color.aomDynamic(light: NSColor(srgbRed: 0.969, green: 0.965, blue: 0.953, alpha: 1),
                                          dark: NSColor(srgbRed: 0.094, green: 0.094, blue: 0.102, alpha: 1))
-    /// Main-window pages (6.5, Raycast's window): the canvas tint over the
-    /// desktop seen through the window (`AOMWorkspaceBackground`), so pages
-    /// read as one glass sheet. Opaque with Reduce Transparency, Increase
-    /// Contrast or Settings › Appearance › Translucent Window off.
-    static let pageBackground = Color(nsColor: NSColor(name: nil) { appearance in
-        let dark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-        let base = dark ? NSColor(srgbRed: 0.094, green: 0.094, blue: 0.102, alpha: 1)
-                        : NSColor(srgbRed: 0.969, green: 0.965, blue: 0.953, alpha: 1)
-        guard AOMTranslucency.isOn else { return base }
-        return base.withAlphaComponent(dark ? AOMTranslucency.pageAlphaDark : AOMTranslucency.pageAlphaLight)
-    })
     /// Groups of rows and content blocks: opaque white (#FFFFFF) in light
     /// mode, #2A2A2A in dark — one clear step above the canvas, never tinted.
     static let surface = Color.aomDynamic(light: .white,

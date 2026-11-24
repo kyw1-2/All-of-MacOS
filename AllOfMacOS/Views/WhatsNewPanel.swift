@@ -23,21 +23,21 @@ enum WhatsNew {
     /// Highlights of the current version, bundled so the panel works offline.
     /// Items that alter defaults people already use say so with a note.
     static let items: [Item] = [
-        Item(symbol: "hifispeaker", title: "HomePod Dropouts: Cause and Fix",
-             detail: "⌘K › Check HomePod Audio counts the last 30 minutes' dropouts with the memory state of each, names the apps using the most memory and can quit and reopen one that has grown far past normal. A burst while memory is short posts one notice an hour. AOM's audio code now stays in memory while a HomePod plays, and the HomePod no longer shows a false “100% R” balance.",
-             module: .audio, note: "Fixed"),
-        Item(symbol: "tray.full", title: "Named Drop Shelves",
-             detail: "Click the shelf's name to make “제출 자료” and “발표 준비”, switch, pin, rename or delete them; type a shelf's name in the launcher to open it. Your old shelf is the Default Shelf. A stopped ZIP leaves nothing behind, and a missing file is counted instead of skipped.",
-             module: .files, note: "New"),
-        Item(symbol: "doc.text.magnifyingglass", title: "Folder Rules Read PDFs",
-             detail: "“PDF Text (first page)” matches words on the page, and Rename can use {after:공급자} and {pdfdate}. Scanned PDFs can be read on this Mac per rule; a PDF the rule can't decide waits for review.",
-             note: "New"),
-        Item(symbol: "magnifyingglass.circle", title: "Saved Searches, Compare, Free Times",
-             detail: "Search Files takes in:, kind: and modified: and saves them by name. Clipboard › ⌘K › Compare With… shows what changed between two copies. Copy Free Times picks up to three times from your calendars and copies them without titles or people.",
-             note: "New"),
-        Item(symbol: "text.badge.plus", title: "Snippets Go Back a Question",
-             detail: "⌘[ or Previous Question returns to the last answer to fix a typo; what you typed in the later question is kept.",
-             note: "New"),
+        Item(symbol: "plusminus.circle", title: "Compare Copies, Properly",
+             detail: "Compare With… now finds the real changes in long texts (two equal 2,000-line copies used to show every line changed), Swap Sides really swaps, and the header counts what changed, was added and was removed.",
+             note: "Fixed"),
+        Item(symbol: "calendar.badge.clock", title: "Free Times You Can Trust",
+             detail: "Set your working hours in Settings › Shortcuts › Free times. If your calendars can't be read, nothing is copied — before, that looked like a free week — and a time that has already started drops out.",
+             note: "Fixed"),
+        Item(symbol: "tray.full", title: "Steadier Drop Shelf",
+             detail: "Showing the shelf while it fades out no longer leaves it closed, a file the Trash refuses is named, and files an app never delivers stop blocking the shelf after two minutes.",
+             module: .files, note: "Fixed"),
+        Item(symbol: "menubar.rectangle", title: "Menu Bar and Switcher",
+             detail: "A menu bar request macOS never answers shows everything again after 5 seconds instead of leaving the state unknown. The window switcher keeps your selection when another card goes away.",
+             note: "Fixed"),
+        Item(symbol: "doc.text.magnifyingglass", title: "Folder Rules Keep PDF Text Briefly",
+             detail: "A rule without “Recognize scanned PDFs” no longer acts on text another rule recognized. Page text stays in memory for at most 10 minutes and 4 MB, and is dropped when Folder Rules is turned off.",
+             note: "Fixed"),
     ]
 
     /// Pure decision: show for an update, never for a first install or a re-launch.

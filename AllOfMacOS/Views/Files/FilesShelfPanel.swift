@@ -54,9 +54,19 @@ final class FilesShelfPanelController: NSObject {
     static let shared = FilesShelfPanelController()
 
     static let width: CGFloat = 320
+    /// One queue for promised files, a few at a time.
+    private static let promiseQueue: OperationQueue = {
+        let queue = OperationQueue()
+        queue.qualityOfService = .userInitiated
+        queue.maxConcurrentOperationCount = 4
+        return queue
+    }()
     let store: FilesShelfStore
     let model = FilesShelfViewModel()
     private var panel: FilesShelfWindow?
+    /// 7.13 (GPT F17): each show or hide; a fade-out that finishes after the
+    /// shelf was shown again must not take it off screen.
+    private var presentation = 0
     private var compressHandle: FilesProcess.Handle?
     private var storeChanges: AnyCancellable?
     private var modelChanges: AnyCancellable?
@@ -158,7 +168,10 @@ final class FilesShelfPanelController: NSObject {
         }
         Task {
             let trash = await FilesFileActions.trash(received)
-            model.show(text, undoTitle: "Undo") { [weak self] in
+            // 7.13 (GPT F18): the message counts what really went to the Trash.
+            let shown = Self.trashSummary(trash.failures, moved: trash.trashed.count,
+                                          success: "Deleted “\(shelf.name)” and moved \(Self.count(trash.trashed.count)) AOM received to the Trash")
+            model.show(shown.text, tone: shown.tone, undoTitle: "Undo") { [weak self] in
                 Task {
                     _ = await FilesFileActions.moveBack(trash.trashed)
                     self?.store.restoreShelf(entry)
@@ -191,6 +204,7 @@ final class FilesShelfPanelController: NSObject {
         let origin = point ?? NSEvent.mouseLocation
         let frame = FilesScreenGeometry.frame(at: origin, size: size, visibleFrames: NSScreen.screens.map(\.visibleFrame))
         panel.setFrame(frame, display: true)
+        presentation &+= 1
         if !panel.isVisible {
             panel.alphaValue = 0
             panel.orderFrontRegardless()
@@ -200,6 +214,13 @@ final class FilesShelfPanelController: NSObject {
             }
         } else {
             panel.orderFrontRegardless()
+            // Shown again while it was fading out: back to full opacity.
+            if panel.alphaValue < 1 {
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = AOMMotion.systemReduceMotion ? 0.04 : 0.1
+                    panel.animator().alphaValue = 1
+                }
+            }
         }
         NSAccessibility.post(element: panel, notification: .created)
     }
@@ -209,11 +230,16 @@ final class FilesShelfPanelController: NSObject {
     func hide() {
         guard let panel, panel.isVisible else { return }
         panel.allowsKey = false
+        presentation &+= 1
+        let ticket = presentation
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = AOMMotion.systemReduceMotion ? 0.06 : 0.12
             panel.animator().alphaValue = 0
         }, completionHandler: {
-            MainActor.assumeIsolated { panel.orderOut(nil) }
+            MainActor.assumeIsolated {
+                guard FilesShelfPanelController.shared.presentation == ticket else { return }
+                panel.orderOut(nil)
+            }
         })
     }
 
@@ -291,8 +317,18 @@ final class FilesShelfPanelController: NSObject {
         let total = promises.reduce(0) { $0 + max(1, $1.fileNames.count) }
         model.progress = total == 1 ? "Receiving…" : "Receiving 0 of \(total)…"
         let batch = FilesReceiveBatch(total: total, alreadyAdded: added.map(\.id))
-        let queue = OperationQueue()
-        queue.qualityOfService = .userInitiated
+        let queue = Self.promiseQueue
+        // 7.13 (Gemini 7.12.1 #13): an app that never delivers can't leave
+        // "Receiving…" up for good (it blocks Compress and the auto-hide).
+        // Files that still come later are added quietly.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 120) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, batch.finished < batch.total, !batch.gaveUp else { return }
+                batch.gaveUp = true
+                self.model.progress = nil
+                self.model.show("Received \(batch.received.count) of \(batch.total) — the app that sent the rest hasn't delivered them", tone: .danger)
+            }
+        }
         for promise in promises {
             promise.receivePromisedFiles(atDestination: destination, options: [:], operationQueue: queue) { url, error in
                 DispatchQueue.main.async {
@@ -304,6 +340,7 @@ final class FilesShelfPanelController: NSObject {
                             batch.received.append(contentsOf: controller.store.add([url], received: true, to: shelfID).map(\.id))
                         }
                         batch.finished += 1
+                        guard !batch.gaveUp else { return }
                         guard batch.finished >= batch.total else {
                             controller.model.progress = "Receiving \(batch.finished) of \(batch.total)…"
                             return
@@ -551,7 +588,10 @@ final class FilesShelfPanelController: NSObject {
         }
         Task {
             let trash = await FilesFileActions.trash(received)
-            model.show(text, undoTitle: "Undo") {
+            // 7.13 (Gemini 7.12.1 #14): a file the Trash refused is named, not hidden.
+            let shown = Self.trashSummary(trash.failures, moved: trash.trashed.count, success: text)
+            model.show(shown.text, tone: shown.tone, undoTitle: "Undo") { [weak self] in
+                guard let self else { return }
                 Task {
                     let back = await FilesFileActions.moveBack(trash.trashed)
                     self.store.restore(Self.itemsToRestore(removed, trashed: trash.trashed, putBack: back), to: shelfID)
@@ -562,6 +602,15 @@ final class FilesShelfPanelController: NSObject {
                 }
             }
         }
+    }
+
+    /// Pure: the message after received files went to the Trash.
+    static func trashSummary(_ failures: [FilesTransfer.Failure], moved: Int,
+                                         success: String) -> (text: String, tone: AOMTone) {
+        guard let failure = failures.first else { return (success, .success) }
+        let others = failures.count > 1 ? " (and \(failures.count - 1) more)" : ""
+        return ("\(success.components(separatedBy: " and moved").first ?? success) — moved \(count(moved)) to the Trash; couldn't move “\(failure.url.lastPathComponent)”\(others) because \(failure.reason)",
+                .danger)
     }
 
     /// Pure: the received items whose files are still inside AOM's Received folder.
@@ -639,8 +688,10 @@ final class FilesShelfPanelController: NSObject {
         case 0 where flags == .command: selectAll(); return true                 // ⌘A
         case 8 where flags == .command: FilesFileActions.copyFiles(targetURLs); return true // ⌘C
         case 6 where flags == .command:                                           // ⌘Z
-            guard model.message?.undoTitle == "Undo" else { return true }
-            model.undo?(); model.message = nil; return true
+            guard model.message?.undoTitle == "Undo", let undo = model.undo else { return true }
+            // Taken before it runs, as the button does: one ⌘Z, one undo.
+            model.undo = nil; model.message = nil
+            undo(); return true
         case 13 where flags == .command: hide(); return true                     // ⌘W
         default: return false
         }
@@ -1057,6 +1108,8 @@ final class FilesReceiveBatch {
     var finished = 0
     var received: [UUID] = []
     var failures: [FilesTransfer.Failure] = []
+    /// Waited too long; later files are added without touching the status row.
+    var gaveUp = false
 
     init(total: Int, alreadyAdded: [UUID]) {
         self.total = total

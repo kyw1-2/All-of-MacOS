@@ -585,6 +585,7 @@ final class MenuBarHider: NSObject {
         let timer = Timer(timeInterval: 0.5, repeats: true) { _ in
             MainActor.assumeIsolated { MenuBarHider.shared.tickRehide() }
         }
+        timer.tolerance = 0.1
         RunLoop.main.add(timer, forMode: .common)
         rehideTimer = timer
     }

@@ -16,7 +16,7 @@ struct MenuBarSetupGuide: View {
     @State private var axTrusted = AXIsProcessTrusted()
     @State private var screenGranted = MenuBarItemImager.hasPermission
     @State private var dontShow = true
-    private let tick = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+    private let tick = Timer.publish(every: 1, tolerance: 0.2, on: .main, in: .common).autoconnect()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -194,7 +194,7 @@ struct MenuBarSetupGuide: View {
 /// shown icons and the clock — the picture the How-to steps point at.
 struct MenuBarSetupIllustration: View {
     @State private var expanded = false
-    private let timer = Timer.publish(every: 1.6, on: .main, in: .common).autoconnect()
+    private let timer = Timer.publish(every: 1.6, tolerance: 0.3, on: .main, in: .common).autoconnect()
 
     var body: some View {
         HStack(spacing: 12) {

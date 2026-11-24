@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import ApplicationServices
 import SwiftUI
 
@@ -30,7 +31,10 @@ private struct Pref<Value: Equatable>: DynamicProperty {
     }
 }
 
-private let defaultsChanged = NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification).receive(on: RunLoop.main)
+/// 7.13 (Gemini 7.12.1 #10): every defaults write in the app posts this; a
+/// burst (statistics, a preset load) re-reads the panes once.
+private let defaultsChanged = NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
+    .debounce(for: .milliseconds(150), scheduler: RunLoop.main)
 
 // MARK: - General
 

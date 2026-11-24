@@ -153,7 +153,7 @@ struct AOMMenuBarPanel: View {
         .aomButtonDefaults()
         .onAppear { model.refresh(); battery.refreshBattery() }
         .onChange(of: model.hasActiveSessions) { _, _ in DispatchQueue.main.async { actions.resized() } }
-        .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in model.refresh() }
+        .onReceive(Timer.publish(every: 1, tolerance: 0.2, on: .main, in: .common).autoconnect()) { _ in model.refresh() }
     }
 
     private var liveSessions: [AOMMenuBarCraftPanel.LiveSession] {

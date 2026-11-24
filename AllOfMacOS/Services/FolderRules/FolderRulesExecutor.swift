@@ -155,6 +155,7 @@ struct FolderRuleExecutor {
     /// item outside it is never touched.
     func run(_ rule: FolderRule, on info: FolderRuleFileInfo, in folder: URL, counter: Int = 1,
              interactive: Bool = false) -> FolderRuleRunOutcome {
+        let info = info.seen(by: rule)
         var outcome = FolderRuleRunOutcome(finalURL: info.url)
         guard FolderRulesSafety.isInside(info.url, folder) else {
             outcome.failed = true

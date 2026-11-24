@@ -29,9 +29,25 @@ BOOL AOMMenuBarNativeIsAvailable(void) {
 void AOMMenuBarNativeActivate(NSArray<NSNumber *> *allowedSystemItems,
                               NSArray<NSString *> *allowedBundleIdentifiers,
                               void (^completion)(id _Nullable assertion, NSError * _Nullable error)) {
+    // 7.13 (Gemini 7.12.1 #3): the completion runs once, on the main queue.
+    // A request macOS hasn't answered in 5 s fails open; an assertion that
+    // arrives after that (or a second answer) is invalidated, never kept.
+    __block BOOL done = NO; // read and written on the main queue only
     void (^finish)(id, NSError *) = ^(id assertion, NSError *error) {
-        dispatch_async(dispatch_get_main_queue(), ^{ completion(assertion, error); });
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (done) {
+                if (assertion) { AOMMenuBarNativeInvalidate(assertion); }
+                return;
+            }
+            done = YES;
+            completion(assertion, error);
+        });
     };
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (done) { return; }
+        done = YES;
+        completion(nil, AOMNativeError(@"macOS didn't answer the menu bar request in 5 seconds"));
+    });
     if (!AOMMenuBarNativeIsAvailable()) { finish(nil, AOMNativeError(@"MenuBarClientCore is unavailable")); return; }
     @try {
         // NSArrays, not sets: the framework indexes into them.

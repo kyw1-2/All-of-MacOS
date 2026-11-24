@@ -1,3 +1,27 @@
+## [7.13.0] - 2026-11-24
+
+The GPT 7.12.1 spec and the Gemini 7.12.1 report, each claim checked against the code first (several of Gemini's described code that 7.10–7.12 had already changed). Details, and what was disproved or left open: `docs/design-7.13.md`.
+
+### Launcher
+- **Compare With… finds the real changes**: two equal long copies showed every line changed (a 2,000-line pair crossed the comparison's size cap); lines both texts share at the start and end are now set aside first, and a big differing middle uses a proper diff. **Swap Sides** really swaps (it always re-sorted by date), text that spells "⏎ (newline at end)" no longer equals a trailing newline, Windows line endings compare as equal, and the header counts what changed, was added and was removed.
+- **Free Times**: if your calendars can't be read, the screen says so and nothing is copied — before, a failed read looked like a free week. A time that has already started drops out when you copy. Working hours are in **Settings › Shortcuts › Free times**; a summary row at the end shows the length, hours and when the calendars were read.
+
+### Drop Shelf and Files
+- Showing the shelf while it was fading out could leave it closed; the Files dialog panel could stay on screen but invisible when a new dialog appeared during its fade.
+- Remove and Delete Shelf name a file the Trash refused instead of reporting success.
+- Files an app promises but never delivers stop blocking the shelf after two minutes; later arrivals are still added.
+- Finder windows and recent folders in the dialog panel each appear as soon as they're read.
+
+### Menu bar, switcher, folder rules, audio
+- A hide request macOS never answers fails open after 5 seconds; a late answer is discarded.
+- The window switcher keeps the selected window when another card goes away.
+- A folder rule without "Recognize scanned PDFs" no longer acts on text another rule recognized. Page text stays in memory at most 10 minutes / 4 MB and is dropped when Folder Rules is turned off.
+- HomePod: audio-health.json counts wired code (`wiredCodeBytes`) apart from page-touched code (`touchedCodeBytes`); a stream started with `AOMAudioWireCode` off can no longer release another stream's hold.
+
+### Cleanup and efficiency
+- Six unused declarations removed (an old menu bar row view, a 7.11 HomePod check wrapper, three unused properties, an unused card parameter).
+- Tolerance on the seven repeating timers that had none, so macOS can coalesce their wake-ups; the Menu Bar settings panes re-read defaults once per burst of changes.
+
 ## [7.12.1] - 2026-11-23
 
 - **The HomePod code-residency change of 7.12.0 didn't take effect**: on the installed 7.12.0 only 1.7 of AOM's 26 MB of code was resident during a HomePod stream — macOS 27 refuses `mlock` on code pages ("Operation not permitted", measured with a test program; constant data can still be wired). While a HomePod stream runs, a utility timer now reads one byte of each code page every second (about 1,700 reads), which keeps the code resident without wiring; constant data stays wired. `AOMAudioWireCode` = NO still turns both off.

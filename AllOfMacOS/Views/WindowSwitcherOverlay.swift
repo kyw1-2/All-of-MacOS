@@ -33,7 +33,14 @@ final class WindowSwitcherController: NSObject, ObservableObject {
 
     /// Every window of this opening, most recently used first. Internal for
     /// the controller tests (@testable).
-    @Published var items: [Item] = [] { didSet { clampSelection() } }
+    /// 7.13 (GPT UX3-05): the selected window is followed by its id, so a
+    /// card that goes away (a closed window) doesn't move the selection to
+    /// another app's window behind the person's back.
+    @Published var items: [Item] = [] {
+        willSet { selectedBeforeChange = selectedItem?.id }
+        didSet { followSelection() }
+    }
+    private var selectedBeforeChange: CGWindowID?
     /// Index into `visibleItems`. Internal setter for the controller tests.
     @Published var selectedIndex = 0
     /// The type-to-filter text.
@@ -208,6 +215,15 @@ final class WindowSwitcherController: NSObject, ObservableObject {
     private func clampSelection() {
         let count = visibleItems.count
         if selectedIndex >= count { selectedIndex = max(0, count - 1) }
+    }
+
+    private func followSelection() {
+        defer { selectedBeforeChange = nil }
+        if let id = selectedBeforeChange, let index = visibleItems.firstIndex(where: { $0.id == id }) {
+            if index != selectedIndex { selectedIndex = index }
+        } else {
+            clampSelection()
+        }
     }
 
     var selectedItem: Item? {

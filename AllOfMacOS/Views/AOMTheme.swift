@@ -107,8 +107,6 @@ struct AOMCardSurface: ViewModifier {
     var padding: CGFloat? = AOMSpace.cardPadding
     var hovering = false
     var pressed = false
-    /// Kept for source compatibility; cards are flat.
-    var elevated = true
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.accessibilityShowBorders) private var showBorders
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
@@ -190,16 +188,15 @@ extension View {
     /// One AOM surface in the given style.
     func aomCardStyle(_ style: AOMCardStyle = .paper, radius: CGFloat = AOMTheme.cardRadius,
                       padding: CGFloat? = AOMSpace.cardPadding,
-                      hovering: Bool = false, elevated: Bool = true) -> some View {
-        modifier(AOMCardSurface(style: style, radius: radius, padding: padding, hovering: hovering, elevated: elevated))
+                      hovering: Bool = false) -> some View {
+        modifier(AOMCardSurface(style: style, radius: radius, padding: padding, hovering: hovering))
     }
 
     /// The content layer's only card style: radius 10, `surface` fill, no
     /// outline (1 pt with Increase Contrast or Show Borders), no shadow, 12 pt
     /// padding for free content (pass 0 when the card holds rows).
-    func aomCard(radius: CGFloat = AOMTheme.cardRadius, padding: CGFloat? = AOMSpace.cardPadding,
-                 elevated: Bool = true) -> some View {
-        modifier(AOMCardSurface(style: .paper, radius: radius, padding: padding, elevated: elevated))
+    func aomCard(radius: CGFloat = AOMTheme.cardRadius, padding: CGFloat? = AOMSpace.cardPadding) -> some View {
+        modifier(AOMCardSurface(style: .paper, radius: radius, padding: padding))
     }
 
 }

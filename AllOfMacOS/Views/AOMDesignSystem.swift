@@ -25,7 +25,7 @@ struct AOMWorkspaceBackground: View {
 
     /// 6.5 (Raycast's window): the desktop seen through the window, a soft
     /// accent light from the top corner; the pages lay their canvas tint on
-    /// top (`AOMColor.pageBackground`). The opaque canvas otherwise.
+    /// top. The opaque canvas otherwise.
     var body: some View {
         Group {
             if translucent && !reduceTransparency && contrast != .increased {

@@ -34,6 +34,13 @@ final class FilesDialogPanelController {
                 context.duration = AOMMotion.systemReduceMotion ? 0.08 : 0.14
                 panel.animator().alphaValue = 1
             }
+        } else if panel.alphaValue < 1 {
+            // 7.13 (GPT UX3-14): a new dialog arrived while the panel was
+            // fading out for the old one — it would stay on screen, invisible.
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = AOMMotion.systemReduceMotion ? 0.04 : 0.1
+                panel.animator().alphaValue = 1
+            }
         }
         changes = model.objectWillChange
             .debounce(for: .milliseconds(16), scheduler: DispatchQueue.main)

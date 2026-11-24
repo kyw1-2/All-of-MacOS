@@ -191,14 +191,22 @@ final class FilesDialogHelper {
         let wantsRecents = settings.showsRecentFolders
         let wantsNewest = settings.includesNewestFiles
         let jumps = FilesRecentFolderStore.shared.jumps
+        // 7.13 (GPT UX3-11): each list shows as soon as it is ready — a
+        // Finder that takes its 2 s no longer holds back the recent folders.
+        let recents = Task { [weak self] in
+            let files = await Self.newestFiles(wanted: wantsRecents && wantsNewest)
+            guard let self, !Task.isCancelled, wantsRecents else { return }
+            self.applyRecents(jumps: jumps, newest: files)
+        }
         loadTask = Task { [weak self] in
-            async let finderResult = Self.finderFolders(wanted: wantsFinder)
-            async let newest = Self.newestFiles(wanted: wantsRecents && wantsNewest)
-            let finder = await finderResult
-            let files = await newest
-            guard let self, !Task.isCancelled else { return }
-            self.applyFinder(finder)
-            if wantsRecents { self.applyRecents(jumps: jumps, newest: files) }
+            await withTaskCancellationHandler {
+                let finder = await Self.finderFolders(wanted: wantsFinder)
+                guard let self, !Task.isCancelled else { return }
+                self.applyFinder(finder)
+                _ = await recents.value
+            } onCancel: {
+                recents.cancel()
+            }
         }
     }
 
