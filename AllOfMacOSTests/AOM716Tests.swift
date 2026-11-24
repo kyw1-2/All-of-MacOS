@@ -9,7 +9,9 @@ final class AOM716Tests: XCTestCase {
         XCTAssertEqual(AOMActionPanelSelection.step("a8", by: 1, in: ten), "a9")
         XCTAssertEqual(AOMActionPanelSelection.step("a9", by: 1, in: ten), "a9", "clamped at the end")
         let three = ["a0", "a1", "a2"]
-        XCTAssertEqual(AOMActionPanelSelection.resolve("a9", in: three), "a0", "a removed action is not run")
+        XCTAssertNil(AOMActionPanelSelection.resolve("a9", in: three), "a removed action must not select or execute a different action")
+        XCTAssertEqual(AOMActionPanelSelection.step("a9", by: 1, in: three), "a0")
+        XCTAssertEqual(AOMActionPanelSelection.resolve(nil, in: three), "a0")
         XCTAssertNil(AOMActionPanelSelection.resolve("a1", in: []))
         XCTAssertNil(AOMActionPanelSelection.step("a1", by: 1, in: []))
         XCTAssertEqual(AOMActionPanelSelection.step(nil, by: -1, in: three), "a0")
