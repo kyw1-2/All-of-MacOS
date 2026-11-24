@@ -902,6 +902,8 @@ final class ClipboardStore: ObservableObject {
         entries.removeAll { $0.pinboardIDs.isEmpty }
         pruneDigests()
         scheduleSave()
+        // 7.14 (Codex 7.13): a comparison of erased copies doesn't outlive them.
+        PaletteDiffJob.shared.clear()
     }
 
     func copyRecognizedText(entryID: UUID) throws {

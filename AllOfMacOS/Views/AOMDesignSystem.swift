@@ -270,8 +270,7 @@ struct AOMEmptyState<Actions: View>: View {
                 // 5.0: the empty page shows whose page it is, in its hue.
                 // 7.14: the solid squircle of the page's hero band, lifted.
                 let hue = pageTab.identity.isBrand ? AOMBrand.start : pageTab.identity.color
-                AOMAppIcon(AOMIdentity(symbol: systemImage, color: hue), size: AOMIcon.heroMark, style: .solid)
-                    .shadow(color: hue.opacity(0.3), radius: 12, y: 5)
+                AOMAppIcon(AOMIdentity(symbol: systemImage, color: hue), size: AOMIcon.identityHero, style: .solid)
                     .padding(.bottom, AOMSpace.x1)
             } else {
                 Image(systemName: systemImage)

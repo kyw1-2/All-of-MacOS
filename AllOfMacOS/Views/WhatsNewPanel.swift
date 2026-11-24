@@ -24,7 +24,7 @@ enum WhatsNew {
     /// Items that alter defaults people already use say so with a note.
     static let items: [Item] = [
         Item(symbol: "sparkles.rectangle.stack", title: "A New Look for the Main Window",
-             detail: "Every page opens with a header in its tool's colour, the sidebar shows each tool as a colour icon like System Settings, Workspace's tool rows carry the same icons, and counts sit in small capsules.",
+             detail: "The sidebar shows each tool as a colour icon like System Settings, and you can pin up to six pages under Favorites (right-click a page). Page headers say how the tool is doing beside its icon, Workspace's tool rows carry the same icons, and counts sit in small capsules.",
              note: "New"),
         Item(symbol: "menubar.rectangle", title: "Simpler Menu Bar Panel",
              detail: "The Mute Mic tile is gone from the panel. A mute you start elsewhere still shows at the top with Unmute.",

@@ -135,12 +135,13 @@ struct AOMPageHeader<Trailing: View>: View {
                 VStack(alignment: .leading, spacing: AOMSpace.x1) {
                     HStack(spacing: AOMSpace.x2) {
                         Text(title).font(AOMFont.heroTitle).foregroundStyle(AOMColor.text)
+                            .lineLimit(2)
                             .fixedSize(horizontal: false, vertical: true)
                             .accessibilityAddTraits(.isHeader).help(help ?? "")
                         if let status { AOMStatusPill(status.text, tone: status.tone, symbol: status.symbol) }
                     }
                     if let subtitle, !subtitle.isEmpty {
-                        Text(subtitle).font(AOMFont.body).foregroundStyle(AOMColor.textSecondary)
+                        Text(subtitle).font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading)
@@ -1022,18 +1023,15 @@ struct AOMToolCard: View {
 
 // MARK: - Hero band (7.14)
 
-/// A page's hero (7.14, after System Settings 26's pane headers, Stats' and
-/// Pearcleaner's module headers and Bartender 7's panes): the tool's solid
-/// squircle large, beside its title, on a wash of the tool's own colour that
-/// fades toward the page. Off tools lose the colour. Reduce Transparency and
-/// Increase Contrast get an opaque surface with an edge.
+/// A page's header (7.14). Follows the Native Workbench mock-up
+/// (`AOM-7.13.0-MainWindow-UIUX-…-개편명세서` §4: detail headers 16–18 pt, no
+/// arbitrary hero, shadows only on floating panels): the tool's solid
+/// squircle beside a status sentence, on the page — no band, no shadow.
+/// Off tools keep their mark's colour, dimmed; the sentence says off.
 struct AOMHeroBand<Content: View>: View {
     let identity: AOMIdentity
     var active = true
     @ViewBuilder var content: Content
-    @Environment(\.colorScheme) private var scheme
-    @Environment(\.colorSchemeContrast) private var contrast
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     init(identity: AOMIdentity, active: Bool = true, @ViewBuilder content: () -> Content) {
         self.identity = identity
@@ -1041,34 +1039,14 @@ struct AOMHeroBand<Content: View>: View {
         self.content = content()
     }
 
-    private var hue: Color {
-        guard active else { return AOMColor.textTertiary }
-        return identity.isBrand ? AOMBrand.start : identity.color
-    }
-
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: AOMRadius.card + 4, style: .continuous)
-        let dark = scheme == .dark
-        HStack(alignment: .center, spacing: AOMSpace.x4) {
-            // The mark keeps the tool's colour when it is off (the title says
-            // off); the band turns neutral.
+        HStack(alignment: .center, spacing: AOMSpace.x3) {
             AOMAppIcon(identity, size: AOMIcon.heroMark, active: true, style: .solid)
-                .opacity(active ? 1 : 0.7)
-                .shadow(color: hue.opacity(active ? (dark ? 0.45 : 0.3) : 0), radius: 10, y: 4)
+                .opacity(active ? 1 : 0.6)
             content
         }
-        .padding(.horizontal, AOMSpace.x4)
-        .padding(.vertical, AOMSpace.x4)
-        .background {
-            if reduceTransparency || contrast == .increased {
-                shape.fill(AOMColor.surface)
-                shape.strokeBorder(AOMColor.strongLine, lineWidth: 1)
-            } else {
-                shape.fill(LinearGradient(colors: [hue.opacity(dark ? 0.26 : 0.16), hue.opacity(dark ? 0.08 : 0.04), AOMColor.surface.opacity(dark ? 0.35 : 0.6)],
-                                          startPoint: .topLeading, endPoint: .bottomTrailing))
-                shape.strokeBorder(hue.opacity(dark ? 0.28 : 0.18), lineWidth: 0.75)
-            }
-        }
+        .frame(minHeight: AOMSize.rowDetail)
+        .padding(.horizontal, AOMSpace.rowInset)
         .accessibilityElement(children: .contain)
     }
 }

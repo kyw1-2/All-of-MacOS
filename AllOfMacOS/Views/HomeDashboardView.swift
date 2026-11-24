@@ -1221,20 +1221,22 @@ private struct WorkspaceBanner<Trailing: View>: View {
     let automations: Int
     @ViewBuilder var trailing: Trailing
 
+    /// 7.14 (mock-up M01): the toolbar already says "Workspace", so the
+    /// header says how things are — "Ready to work" or "Paused" — with the
+    /// one control that changes it.
     var body: some View {
-        // 7.14: the same hero band as every page, in AOM's own colours.
         AOMHeroBand(identity: AOMMainTab.home.identity, active: engineOn) {
-            VStack(alignment: .leading, spacing: AOMSpace.x1) {
-                Text("Workspace")
+            VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
+                Text(engineOn ? "Ready to work" : "AOM is paused")
                     .font(AOMFont.heroTitle)
                     .foregroundStyle(AOMColor.text)
                     .accessibilityAddTraits(.isHeader)
                 HStack(spacing: AOMSpace.x1 + AOMSpace.x0_5) {
                     Circle().fill(engineOn ? AOMColor.success : AOMColor.paused)
                         .frame(width: AOMIcon.dot, height: AOMIcon.dot)
-                    Text(engineOn ? "Running" : "Paused")
+                    Text(engineOn ? "All systems running" : "Gestures, shortcuts and snapping are off")
                     Text("·").foregroundStyle(AOMColor.textTertiary)
-                    Text(automations == 1 ? "1 automation on" : "\(automations) automations on")
+                    Text(automations == 1 ? "1 automation enabled" : "\(automations) automations enabled")
                 }
                 .font(AOMFont.callout)
                 .foregroundStyle(AOMColor.textSecondary)

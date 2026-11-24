@@ -37,4 +37,12 @@ final class AOM714Tests: XCTestCase {
         FolderRulePDFText.clearCache()
         XCTAssertEqual(FolderRulePDFText.cachedCount, 0)
     }
+
+    // Mock-up M02: Favorites keep order, skip Workspace, unknown and repeated pages, at most six.
+    func testSidebarFavoritesDecode() {
+        XCTAssertEqual(AOMSidebarFavorites.decode("Audio,Home,Nope,Audio,Files"), [.audio, .files])
+        let all = AOMMainTab.allCases.filter { $0 != .home }
+        XCTAssertEqual(AOMSidebarFavorites.decode(AOMSidebarFavorites.encode(all)).count, AOMSidebarFavorites.limit)
+        XCTAssertEqual(AOMSidebarFavorites.encode([.clipboard, .audio]), "Clipboard Memory,Audio")
+    }
 }

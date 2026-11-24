@@ -206,16 +206,29 @@ struct AOMSidebar: View, Equatable {
     /// 7.2.2 (Codex audit R09): Activity leaves the sidebar unless kept there;
     /// ⌘8, Workspace's activity link and the launcher still open it.
     @AppStorage("AOMSidebarShowsActivity") private var showsActivity = false
+    /// 7.14: the pinned pages, in order (route raw values, comma-separated).
+    @AppStorage(AOMSidebarFavorites.key) private var favoritesRaw = ""
+    private var favorites: [AOMMainTab] { AOMSidebarFavorites.decode(favoritesRaw) }
     @Environment(\.undoManager) private var undoManager
     @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         List(selection: selection) {
             navigationItem(.home)
+            // 7.14 (mock-up M02, Linear/Things): up to six pinned pages under
+            // Workspace. A pinned page leaves its group, so no page is listed
+            // (or selected) twice; ⌘1–9 and the route ids don't change.
+            let pinned = favorites
+            if !pinned.isEmpty {
+                Section("Favorites") {
+                    ForEach(pinned) { tab in navigationItem(tab) }
+                }
+            }
             ForEach(AOMFeatureGroup.allCases) { group in
-                Section(group.rawValue) {
-                    ForEach(group.tabs.filter { $0 != .insights || showsActivity || selected == .insights }) { tab in
-                        navigationItem(tab)
+                let tabs = group.tabs.filter { ($0 != .insights || showsActivity || selected == .insights) && !pinned.contains($0) }
+                if !tabs.isEmpty {
+                    Section(group.rawValue) {
+                        ForEach(tabs) { tab in navigationItem(tab) }
                     }
                 }
             }
@@ -295,6 +308,26 @@ struct AOMSidebar: View, Equatable {
             Toggle("Keep in Sidebar", isOn: $showsActivity)
         default:
             EmptyView()
+        }
+        if tab != .home {
+            Divider()
+            let pinned = favorites
+            if let index = pinned.firstIndex(of: tab) {
+                Button("Remove from Favorites") { favoritesRaw = AOMSidebarFavorites.encode(pinned.filter { $0 != tab }) }
+                if index > 0 {
+                    Button("Move Up") {
+                        var list = pinned; list.swapAt(index, index - 1); favoritesRaw = AOMSidebarFavorites.encode(list)
+                    }
+                }
+                if index < pinned.count - 1 {
+                    Button("Move Down") {
+                        var list = pinned; list.swapAt(index, index + 1); favoritesRaw = AOMSidebarFavorites.encode(list)
+                    }
+                }
+            } else {
+                Button("Add to Favorites") { favoritesRaw = AOMSidebarFavorites.encode(pinned + [tab]) }
+                    .disabled(pinned.count >= AOMSidebarFavorites.limit)
+            }
         }
         if let module = AOMModule(tab: tab) {
             let id = AOMWorkspaceLayout.tileID(module)
@@ -755,5 +788,23 @@ private struct AOMAudioSidebarBadge: View {
         else if audio.eqEnabled || audio.allAppsBoostEnabled {
             AOMSidebarStatusBadge(text: "Effects", tone: .success)
         }
+    }
+}
+
+/// 7.14 (mock-up M02): the sidebar's Favorites, stored as route raw values.
+enum AOMSidebarFavorites {
+    static let key = "AOMSidebarFavorites"
+    static let limit = 6
+
+    /// Known pages only, Workspace never, no repeats, at most six.
+    static func decode(_ raw: String) -> [AOMMainTab] {
+        var seen = Set<AOMMainTab>()
+        return raw.split(separator: ",").compactMap { AOMMainTab(rawValue: String($0)) }
+            .filter { $0 != .home && seen.insert($0).inserted }
+            .prefix(limit).map { $0 }
+    }
+
+    static func encode(_ tabs: [AOMMainTab]) -> String {
+        decode(tabs.map(\.rawValue).joined(separator: ",")).map(\.rawValue).joined(separator: ",")
     }
 }

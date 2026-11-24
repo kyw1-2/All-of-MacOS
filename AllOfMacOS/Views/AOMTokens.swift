@@ -172,7 +172,7 @@ enum AOMSize {
 enum AOMFont {
     static let workspaceTitle = Font.title.weight(.semibold)
     /// 7.14: the title in a page's hero band.
-    static let heroTitle = Font.title.weight(.bold)
+    static let heroTitle = Font.system(size: 18, weight: .semibold)
     /// Title (22) semibold: large glyphs only (empty-state and thumbnail placeholders).
     static let hero = Font.title.weight(.semibold)
     /// Body (13) semibold: compact status sentences.
@@ -590,7 +590,7 @@ enum AOMIcon {
     /// Empty states and the Workspace banner.
     static let identityHero: CGFloat = 44
     /// 7.14: a page's hero mark (System Settings 26, Stats, Bartender 7 panes).
-    static let heroMark: CGFloat = 52
+    static let heroMark: CGFloat = 36
     /// 7.14: the sidebar's solid squircles (System Settings, Bartender 7, Ice).
     static let sidebarMark: CGFloat = 20
     /// 7.14: a Workspace module row's mark.

@@ -2,8 +2,9 @@
 
 Codex's review of 7.13.0 (`~/Documents/Codex/2026-11-24/x20/outputs/AOM-7.13.0-패치-검수-보고서-2026-11-24.pdf`), a new main window look, and the Mute Mic tile removed from the menu bar panel. Details: `docs/design-7.14.md`.
 
-### Main window
-- **Every page opens with a hero header**: the tool's icon large on a wash of its colour (System Settings 26 panes, Stats and Pearcleaner module headers, Bartender 7 panes); an off tool's band turns neutral. Workspace uses the same header in AOM's own colours.
+### Main window (after the Native Workbench mock-up)
+- **Page headers** show the tool's colour icon beside a status sentence (18 pt), with no band or shadow; Workspace says "Ready to work" (or "AOM is paused") instead of repeating its name.
+- **Favorites in the sidebar**: right-click a page › Add to Favorites (up to six, Move Up/Down); it moves above the groups.
 - **Sidebar icons are solid colour squircles** (System Settings, Bartender 7, Ice); its status words ("Off", "Paused", ⚠ 2) are small capsules.
 - Workspace's tool rows show each tool's colour icon (One Switch, Control Center) in taller rows; section counts are capsules; empty pages show the tool's icon lifted; Automation's input kinds carry tinted icons.
 
@@ -12,7 +13,7 @@ Codex's review of 7.13.0 (`~/Documents/Codex/2026-11-24/x20/outputs/AOM-7.13.0-�
 
 ### Fixes from Codex's 7.13.0 review
 - **Undo of Delete Shelf** could point a row at a different file that had taken the original's name; the row now names the original in the Trash, and rows whose file is gone are left out and counted (S1).
-- **Compare With…** works out a large pair (over 64 KB) in the background with "Comparing…" instead of holding the window (≈ 0.3 s for 1 MB); the result and the texts are dropped when the screen closes (S2).
+- **Compare With…** works out a large pair (over 64 KB) in the background with "Comparing…" instead of holding the window (≈ 0.3 s for 1 MB); the result and the texts are dropped when the screen closes or the history is erased (S2).
 - **Saved searches**: an impossible "modified:" (1e308y) could quit AOM while building the summary; ranges are capped at 100 years (S3).
 - **Free Times** reads only start, end, all-day and free/busy from your calendars.
 - **Folder Rules' PDF text** expires after 10 minutes even when nothing else is read, and a read finishing after Folder Rules stopped isn't kept.
