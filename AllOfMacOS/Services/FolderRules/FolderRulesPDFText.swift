@@ -89,12 +89,16 @@ enum FolderRulePDFText {
     nonisolated(unsafe) private static var cacheGeneration = 0
     nonisolated(unsafe) private static var expiryScheduled = false
 
+    /// 7.16 (GPT V16): one pending sweep, timed for the oldest page's own
+    /// expiry (not ten minutes after the first insert), so no page outlives
+    /// its ten minutes by more than a second.
     private static func scheduleExpiry() {
         lock.lock()
-        defer { lock.unlock() }
-        guard !expiryScheduled, !cache.isEmpty else { return }
+        guard !expiryScheduled, let oldest = order.first, let at = cache[oldest]?.at else { lock.unlock(); return }
         expiryScheduled = true
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + cacheLimit.seconds + 1) {
+        let delay = max(1, at + cacheLimit.seconds - ProcessInfo.processInfo.systemUptime + 0.5)
+        lock.unlock()
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay) {
             lock.lock()
             expiryScheduled = false
             evictExpired(now: ProcessInfo.processInfo.systemUptime)

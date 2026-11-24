@@ -1,3 +1,18 @@
+## [7.16.0] - 2026-11-24
+
+Fixes from GPT's independent review of 7.15 (`~/Downloads/AOM-7.15-독립검수-75refs-2026-11-24.md`, V01–V16). Status of every item: `docs/design-7.16.md`. The per-page restructuring (Inspector, Automation, Audio, Clipboard, Capture, Window Tiling) is not in this release.
+
+- **Actions panel** (V01, V08): selection by action id, checked again when Return is pressed; a long list scrolls inside a 420 pt panel with the keyboard selection kept in view; the panel closes when the page changes.
+- **Automation and Clipboard bar buttons** (V02, V03) look the automation or clipboard item (and pinboard) up by id when pressed, so they act on the current version and do nothing for one deleted meanwhile; the clipboard bar refreshes when a pinboard is renamed or reordered.
+- **Page action contexts** (V04): a page rebuilt quickly can no longer lose its actions to the old copy's late clean-up.
+- **Workspace header** (V05) moves its action and the Now/All Tools switch under the status in a narrow window.
+- **Menu Bar page** (V06, V07): crossing the width where the pane list becomes a pop-up keeps the open pane (one layout that changes direction, 16 pt of hysteresis); the header separates "hiding is off", "AOM can't read the menu bar", "Reading the menu bar…" and "Nothing is hidden", counting each app once.
+- **Toolbar** (V09): Actions and Search are separate toolbar items.
+- **Permissions** (V10): a permission macOS doesn't report reads "check manually" instead of a green "allowed".
+- **Clipboard comparison** (V15): one comparison at a time, latest wins; a superseded or closed comparison stops partway.
+- **Folder Rules PDF text** (V16): expiry is scheduled for the oldest page's own deadline.
+- Unused action-bar properties removed (V11).
+
 ## [7.15.0] - 2026-11-24
 
 First structural pass of the Native Workbench redesign (`~/Downloads/AOM-7.14-Claude-UIUX-구현프롬프트-2026-11-24.md`, `AOM-7.14-Native-Workbench-50refs-2026-11-24.md`, mock-up M01–M36). Status of every ticket: `docs/design-7.15.md`; this release does not complete the redesign.

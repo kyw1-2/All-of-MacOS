@@ -92,9 +92,7 @@ struct AOMMainShell<Content: View>: View {
             .background(AOMWorkspaceBackground())
             // 7.15: only a selection's actions under the page (M03).
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                AOMActionBar(appState: appState,
-                             paletteKeys: AOMPaletteShortcut.current(appState.currentPreset).displayString,
-                             showingCommandPalette: $showingCommandPalette)
+                AOMActionBar()
             }
             // The system toolbar title (design-3.3.6 b.11): standard size,
             // with the page's subtitle from `aomToolbarSubtitle`.
@@ -107,10 +105,14 @@ struct AOMMainShell<Content: View>: View {
                 }
                 // 7.15 (M03): Actions and Search in the toolbar, so both
                 // stay one click away with the sidebar hidden.
-                ToolbarItem(placement: .primaryAction) {
+                ToolbarItem(placement: .automatic) {
                     AOMToolbarActions(appState: appState,
                                       paletteKeys: AOMPaletteShortcut.current(appState.currentPreset).displayString,
                                       showingCommandPalette: $showingCommandPalette)
+                }
+                ToolbarItem(placement: .automatic) {
+                    AOMToolbarSearch(paletteKeys: AOMPaletteShortcut.current(appState.currentPreset).displayString,
+                                     showingCommandPalette: $showingCommandPalette)
                 }
                 ToolbarItem(placement: .automatic) {
                     Menu {

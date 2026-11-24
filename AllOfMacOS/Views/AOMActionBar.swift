@@ -58,8 +58,22 @@ final class AOMBarContexts: ObservableObject {
     /// Bumped on every write, so the bar re-renders though contexts hold closures.
     @Published private(set) var revision = 0
 
-    func set(_ context: AOMBarContext?, for tab: AOMMainTab) {
+    /// 7.16 (GPT V04): which writer owns each page's context. A page torn
+    /// down and rebuilt quickly (LRU eviction, reopen) must not have its new
+    /// context cleared by the old writer's late `onDisappear`.
+    private var owners: [AOMMainTab: UUID] = [:]
+
+    func set(_ context: AOMBarContext?, for tab: AOMMainTab, writer: UUID? = nil) {
+        if let writer { owners[tab] = writer }
         contexts[tab] = context
+        revision &+= 1
+    }
+
+    /// Clears the page's context only if `writer` still owns it.
+    func clear(_ tab: AOMMainTab, writer: UUID) {
+        guard owners[tab] == writer else { return }
+        owners[tab] = nil
+        contexts[tab] = nil
         revision &+= 1
     }
 }
@@ -77,6 +91,7 @@ private struct AOMBarContextWriter<ID: Equatable>: ViewModifier {
     let id: ID
     let make: () -> AOMBarContext?
     @Environment(\.aomPageTab) private var tab
+    @State private var writer = UUID()
 
     func body(content: Content) -> some View {
         content
@@ -84,14 +99,16 @@ private struct AOMBarContextWriter<ID: Equatable>: ViewModifier {
             .onChange(of: id) { _, _ in publish() }
             .onDisappear {
                 guard let tab else { return }
-                DispatchQueue.main.async { AOMBarContexts.shared.set(nil, for: tab) }
+                let writer = writer
+                DispatchQueue.main.async { AOMBarContexts.shared.clear(tab, writer: writer) }
             }
     }
 
     private func publish() {
         guard let tab else { return }
         let context = make()
-        DispatchQueue.main.async { AOMBarContexts.shared.set(context, for: tab) }
+        let writer = writer
+        DispatchQueue.main.async { AOMBarContexts.shared.set(context, for: tab, writer: writer) }
     }
 }
 
@@ -153,9 +170,6 @@ enum AOMActionBarModel {
 /// while a selection offers actions (up to three, with their keys), so no
 /// page repeats its own title, tagline, Actions and Search at the bottom.
 struct AOMActionBar: View {
-    let appState: AppState
-    let paletteKeys: String
-    @Binding var showingCommandPalette: Bool
     @ObservedObject private var navigation = AOMNavigation.shared
     @ObservedObject private var contexts = AOMBarContexts.shared
 
@@ -202,17 +216,16 @@ struct AOMToolbarActions: View {
     var body: some View {
         let tab = navigation.selected
         let context = contexts.contexts[tab]
-        HStack(spacing: AOMSpace.x1) {
-            Button { showsActions.toggle() } label: { Label("Actions", systemImage: "ellipsis.circle") }
-                .help("Every action for \(tab.title)")
-                .popover(isPresented: $showsActions, arrowEdge: .bottom) {
-                    AOMActionPanel(title: context?.title ?? tab.title,
-                                   sections: panelSections(tab: tab, context: context),
-                                   dismiss: { showsActions = false })
-                }
-            Button { showingCommandPalette = true } label: { Label("Search", systemImage: "magnifyingglass") }
-                .help("Search all tools, settings and commands (\(paletteKeys))")
-        }
+        // 7.16 (GPT V09): one toolbar item; Search is its own item (`AOMToolbarSearch`).
+        Button { showsActions.toggle() } label: { Label("Actions", systemImage: "ellipsis.circle") }
+            .help("Every action for \(tab.title)")
+            // Changing page closes the panel instead of showing another page's actions (V01/V04).
+            .onChange(of: tab) { _, _ in showsActions = false }
+            .popover(isPresented: $showsActions, arrowEdge: .bottom) {
+                AOMActionPanel(title: context?.title ?? tab.title,
+                               sections: panelSections(tab: tab, context: context),
+                               dismiss: { showsActions = false })
+            }
         .onAppear {
             // Isolated previews can open the panel for review (`--aom-preview-actions`).
             if PresetManager.isUIPreview, ProcessInfo.processInfo.arguments.contains("--aom-preview-actions") {
@@ -237,8 +250,6 @@ private struct AOMBarButton: View {
     let title: String
     let keys: String?
     let primary: Bool
-    var chevron = false
-    var highlighted = false
     var key: SwiftUI.KeyboardShortcut? = nil
     let run: () -> Void
     @State private var hovering = false
@@ -248,16 +259,12 @@ private struct AOMBarButton: View {
             HStack(spacing: AOMSpace.x1 + AOMSpace.x0_5) {
                 Text(title)
                     .font(AOMFont.callout.weight(primary ? .semibold : .medium))
-                    .foregroundStyle(primary ? AOMColor.accent : (hovering || highlighted ? AOMColor.text : AOMColor.textSecondary))
-                if chevron {
-                    Image(systemName: "chevron.up").font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(AOMColor.textTertiary)
-                }
+                    .foregroundStyle(primary ? AOMColor.accent : (hovering ? AOMColor.text : AOMColor.textSecondary))
                 if let keys, !keys.isEmpty { AOMKeycap(text: keys) }
             }
             .padding(.horizontal, AOMSpace.x2)
             .frame(height: 24)
-            .background(hovering || highlighted ? AOMColor.rowHover : Color.clear,
+            .background(hovering ? AOMColor.rowHover : Color.clear,
                         in: RoundedRectangle(cornerRadius: AOMRadius.control + 1, style: .continuous))
             .contentShape(Rectangle())
         }
@@ -274,45 +281,76 @@ struct AOMActionPanel: View {
     let title: String
     let sections: [AOMBarActionSection]
     let dismiss: () -> Void
-    @State private var selected = 0
+    /// 7.16 (GPT V01): the selection is an action's id, not an index, so a
+    /// list that shrinks while the panel is open can't run the wrong action
+    /// or index past the end.
+    @State private var selectedID: String?
     @State private var hovered: String?
     @FocusState private var focused: Bool
 
+    /// The panel's actions in order, built once per render (V08: rows no
+    /// longer search the whole list for their own index).
     private var flat: [AOMBarAction] { sections.flatMap(\.actions) }
 
     var body: some View {
+        let actions = flat
+        let current = AOMActionPanelSelection.resolve(selectedID, in: actions.map(\.id))
         VStack(alignment: .leading, spacing: AOMSpace.x1) {
             Text("Actions for \(title)")
                 .font(AOMFont.caption.weight(.semibold))
                 .foregroundStyle(AOMColor.textSecondary)
                 .padding(.horizontal, AOMSpace.x2)
                 .padding(.top, AOMSpace.x1)
-            ForEach(sections) { section in
-                if section.id != sections.first?.id { Divider().padding(.vertical, AOMSpace.x1) }
-                Text(section.title)
-                    .font(AOMFont.caption)
-                    .foregroundStyle(AOMColor.textTertiary)
-                    .padding(.horizontal, AOMSpace.x2)
-                ForEach(section.actions) { action in
-                    row(action, index: flat.firstIndex { $0.id == action.id } ?? 0)
+            // V08: a long list scrolls inside a bounded panel, and the
+            // keyboard selection is scrolled into view.
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: AOMSpace.x1) {
+                        ForEach(sections) { section in
+                            if section.id != sections.first?.id { Divider().padding(.vertical, AOMSpace.x1) }
+                            Text(section.title)
+                                .font(AOMFont.caption)
+                                .foregroundStyle(AOMColor.textTertiary)
+                                .padding(.horizontal, AOMSpace.x2)
+                            ForEach(section.actions) { action in
+                                row(action, isSelected: action.id == current).id(action.id)
+                            }
+                        }
+                    }
+                }
+                .frame(maxHeight: 420)
+                .onChange(of: selectedID) { _, id in
+                    if let id { proxy.scrollTo(id) }
                 }
             }
         }
         .padding(AOMSpace.x2)
         .frame(width: 300)
+        .fixedSize(horizontal: false, vertical: true)
         .focusable()
         .focusEffectDisabled()
         .focused($focused)
         .onAppear { focused = true }
-        .onKeyPress(.downArrow) { selected = min(selected + 1, flat.count - 1); return .handled }
-        .onKeyPress(.upArrow) { selected = max(selected - 1, 0); return .handled }
-        .onKeyPress(.return) { run(flat[selected]); return .handled }
+        .onKeyPress(.downArrow) { step(1, in: actions, from: current); return .handled }
+        .onKeyPress(.upArrow) { step(-1, in: actions, from: current); return .handled }
+        .onKeyPress(.return) {
+            // Resolved again at the moment of the key, by id.
+            guard let id = AOMActionPanelSelection.resolve(selectedID, in: flat.map(\.id)),
+                  let action = flat.first(where: { $0.id == id }) else { return .ignored }
+            run(action)
+            return .handled
+        }
         .onKeyPress(.escape) { dismiss(); return .handled }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Actions for \(title)")
     }
 
-    private func row(_ action: AOMBarAction, index: Int) -> some View {
-        let isSelected = index == selected
-        return Button { run(action) } label: {
+    private func step(_ offset: Int, in actions: [AOMBarAction], from current: String?) {
+        selectedID = AOMActionPanelSelection.step(current, by: offset, in: actions.map(\.id))
+    }
+
+    private func row(_ action: AOMBarAction, isSelected: Bool) -> some View {
+        Button { run(action) } label: {
             HStack(spacing: AOMSpace.x2) {
                 AOMAppIcon(action.identity, size: AOMIcon.identityRow)
                 Text(action.title)
@@ -333,9 +371,10 @@ struct AOMActionPanel: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
         .onHover { inside in
             hovered = inside ? action.id : (hovered == action.id ? nil : hovered)
-            if inside { selected = index }
+            if inside { selectedID = action.id }
         }
     }
 
@@ -343,5 +382,33 @@ struct AOMActionPanel: View {
         dismiss()
         // After the popover closes, so a capture never includes it.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { action.run() }
+    }
+}
+
+/// 7.16 (GPT V01): pure selection rules for the action panel.
+enum AOMActionPanelSelection {
+    /// The selected id if it is still listed, else the first one; nil when empty.
+    static func resolve(_ id: String?, in ids: [String]) -> String? {
+        if let id, ids.contains(id) { return id }
+        return ids.first
+    }
+
+    /// One step up or down, clamped at the ends.
+    static func step(_ id: String?, by offset: Int, in ids: [String]) -> String? {
+        guard !ids.isEmpty else { return nil }
+        let index = resolve(id, in: ids).flatMap { ids.firstIndex(of: $0) } ?? 0
+        return ids[min(max(index + offset, 0), ids.count - 1)]
+    }
+}
+
+/// 7.16 (GPT V09): Search as its own toolbar item, so it never shares a
+/// slot with a page's primary action and stays when the sidebar is hidden.
+struct AOMToolbarSearch: View {
+    let paletteKeys: String
+    @Binding var showingCommandPalette: Bool
+
+    var body: some View {
+        Button { showingCommandPalette = true } label: { Label("Search", systemImage: "magnifyingglass") }
+            .help("Search all tools, settings and commands (\(paletteKeys))")
     }
 }

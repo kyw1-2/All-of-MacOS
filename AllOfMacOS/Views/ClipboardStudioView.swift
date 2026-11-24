@@ -247,28 +247,40 @@ struct ClipboardStudioView: View {
     /// What the bar's clipboard context depends on: the item and its pins.
     private var clipboardBarKey: String {
         guard let id = selectedEntryID, let entry = store.entries.first(where: { $0.id == id }) else { return "" }
-        return id.uuidString + entry.pinboardIDs.map(\.uuidString).sorted().joined() + entry.title
+        // 7.16 (GPT V03): the boards' names and order too — the bar lists them.
+        let boards = store.boards.prefix(4).map { $0.id.uuidString + $0.name }.joined(separator: "|")
+        return id.uuidString + entry.pinboardIDs.map(\.uuidString).sorted().joined() + entry.title + "#" + boards
     }
+
+    /// 7.16 (GPT V03): the bar's buttons find the item and the board again
+    /// by id when pressed; one deleted or renamed meanwhile isn't acted on
+    /// through a stale copy.
+    private func liveEntry(_ id: UUID) -> ClipboardEntry? { store.entries.first { $0.id == id } }
 
     private func clipboardBarContext() -> AOMBarContext? {
         guard let id = selectedEntryID, let entry = store.entries.first(where: { $0.id == id }) else { return nil }
         let hue = AOMModule.clipboard.hue
+        let entryID = entry.id
         var actions = [
             AOMBarAction(id: "clip.copy", title: "Copy", identity: AOMIdentity(symbol: "doc.on.doc", color: hue),
-                         run: { copy(entry) }, key: SwiftUI.KeyboardShortcut(.return, modifiers: .command)),
+                         run: { if let now = liveEntry(entryID) { copy(now) } }, key: SwiftUI.KeyboardShortcut(.return, modifiers: .command)),
             AOMBarAction(id: "clip.plain", title: "Copy as Plain Text", identity: AOMIdentity(symbol: "textformat", color: hue),
-                         run: { copy(entry, plainText: true) }),
+                         run: { if let now = liveEntry(entryID) { copy(now, plainText: true) } }),
             AOMBarAction(id: "clip.rename", title: "Rename", identity: AOMIdentity(symbol: "pencil", color: hue),
-                         run: { beginRename(entry) })
+                         run: { if let now = liveEntry(entryID) { beginRename(now) } })
         ]
         for board in store.boards.prefix(4) {
             let pinned = entry.pinboardIDs.contains(board.id)
+            let boardID = board.id
             actions.append(AOMBarAction(id: "clip.pin.\(board.id)", title: pinned ? "Unpin from \(board.name)" : "Pin to \(board.name)",
                                         identity: AOMIdentity(symbol: pinned ? "pin.slash" : "pin", color: hue),
-                                        run: { togglePin(entry, board) }))
+                                        run: {
+                                            guard let now = liveEntry(entryID), let liveBoard = store.boards.first(where: { $0.id == boardID }) else { return }
+                                            togglePin(now, liveBoard)
+                                        }))
         }
         actions.append(AOMBarAction(id: "clip.delete", title: "Delete", identity: AOMIdentity(symbol: "trash", color: AOMColor.danger),
-                                    run: { delete(entry, in: filteredEntries) }))
+                                    run: { if let now = liveEntry(entryID) { delete(now, in: filteredEntries) } }))
         let title = entry.title.trimmingCharacters(in: .whitespacesAndNewlines)
         return AOMBarContext(title: title.isEmpty ? "Selected item" : String(title.prefix(60)), actions: actions)
     }

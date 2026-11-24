@@ -23,6 +23,15 @@ enum WhatsNew {
     /// Highlights of the current version, bundled so the panel works offline.
     /// Items that alter defaults people already use say so with a note.
     static let items: [Item] = [
+        Item(symbol: "ellipsis.circle", title: "Steadier Actions Panel",
+             detail: "The Actions panel scrolls when it's long, keeps your selection by action rather than position, and closes when you change page, so Return can't run something that just disappeared.",
+             note: "Fixed"),
+        Item(symbol: "bolt", title: "Buttons Act on What You See Now",
+             detail: "Run, Duplicate, Pin and Delete for an automation, and Copy or Pin for a clipboard item, look the item up when pressed — an edit made a moment ago is what runs, and a deleted item is left alone.",
+             note: "Fixed"),
+        Item(symbol: "menubar.rectangle", title: "Menu Bar Page Keeps Your Place",
+             detail: "Resizing the window past the point where the pane list becomes a pop-up no longer resets the pane. The header tells apart hiding off, no Accessibility, still reading and nothing hidden.",
+             note: "Fixed"),
         Item(symbol: "macwindow", title: "Actions and Search Moved to the Toolbar",
              detail: "The bar under every page is gone: Actions (⋯) and Search sit in the window's toolbar, even with the sidebar hidden. When you select something that has actions, a slim bar with them appears under the page.",
              note: "New"),

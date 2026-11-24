@@ -1218,32 +1218,46 @@ private struct WorkspaceBanner<Trailing: View>: View {
     /// 7.15: the toolbar already says "Workspace"; the header says how AOM
     /// is — "Ready to work", "AOM is paused", "AOM needs 2 permissions" —
     /// from the same snapshot the rest of the page uses, with its one action.
-    var body: some View {
-        AOMHeroBand(identity: AOMMainTab.home.identity, active: state.tone != .neutral) {
+    private var status: some View {
             AOMPageTimeline(every: 30) { context in
-                VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
-                    HStack(spacing: AOMSpace.x2) {
-                        Text(state.isRunning ? "Ready to work" : state.sentence)
-                            .font(AOMFont.heroTitle)
-                            .foregroundStyle(AOMColor.text)
-                            .lineLimit(1)
-                            .accessibilityAddTraits(.isHeader)
-                        if state.tone != .success {
-                            AOMStatusPill(state.tone == .warning ? "Action Needed" : "Paused", tone: state.tone)
-                        }
+            VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
+                HStack(spacing: AOMSpace.x2) {
+                    Text(state.isRunning ? "Ready to work" : state.sentence)
+                        .font(AOMFont.heroTitle)
+                        .foregroundStyle(AOMColor.text)
+                        .lineLimit(1)
+                        .accessibilityAddTraits(.isHeader)
+                    if state.tone != .success {
+                        AOMStatusPill(state.tone == .warning ? "Action Needed" : "Paused", tone: state.tone)
                     }
-                    HStack(spacing: AOMSpace.x1 + AOMSpace.x0_5) {
-                        Circle().fill(state.tone.color)
-                            .frame(width: AOMIcon.dot, height: AOMIcon.dot)
-                        Text(state.detail(now: context.date))
-                    }
-                    .font(AOMFont.callout)
-                    .foregroundStyle(AOMColor.textSecondary)
-                    .lineLimit(2)
                 }
+                HStack(spacing: AOMSpace.x1 + AOMSpace.x0_5) {
+                    Circle().fill(state.tone.color)
+                        .frame(width: AOMIcon.dot, height: AOMIcon.dot)
+                    Text(state.detail(now: context.date))
+                }
+                .font(AOMFont.callout)
+                .foregroundStyle(AOMColor.textSecondary)
+                .lineLimit(2)
             }
-            .frame(minWidth: 220, maxWidth: .infinity, alignment: .leading)
-            HStack(spacing: AOMSpace.x2) { trailing }.fixedSize()
+        }
+    }
+
+    /// 7.16 (GPT V05): in a narrow window the action and the Now/All Tools
+    /// switch move under the status instead of squeezing it.
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            AOMHeroBand(identity: AOMMainTab.home.identity, active: state.tone != .neutral) {
+                status.frame(minWidth: 220, idealWidth: 320, maxWidth: .infinity, alignment: .leading)
+                HStack(spacing: AOMSpace.x2) { trailing }.fixedSize()
+            }
+            VStack(alignment: .leading, spacing: AOMSpace.x2) {
+                AOMHeroBand(identity: AOMMainTab.home.identity, active: state.tone != .neutral) {
+                    status.frame(maxWidth: .infinity, alignment: .leading)
+                }
+                HStack(spacing: AOMSpace.x2) { trailing }.fixedSize()
+                    .padding(.leading, AOMSpace.rowInset + AOMIcon.heroMark + AOMSpace.x3)
+            }
         }
         .aomAnimation(.standard, value: state)
         .accessibilityLabel("Status: \(state.sentence)")
@@ -1509,8 +1523,17 @@ private struct WorkspacePermissionChips: View {
 
     @ViewBuilder
     private func chip(_ permission: AOMPermission, status: AOMPermissionStatus) -> some View {
-        if status == .granted || status == .manualReview {
+        if status == .granted {
             AOMStatusPill(permission.shortTitle, tone: .success, symbol: "checkmark.circle.fill")
+        } else if status == .manualReview {
+            // 7.16 (GPT V10): macOS doesn't say for this one — not "allowed".
+            Button { _ = permission.openSettings() } label: {
+                AOMStatusPill("\(permission.shortTitle): check manually", tone: .neutral, symbol: "info.circle")
+            }
+            .buttonStyle(.plain)
+            .help("macOS doesn't report \(permission.title) to apps. Check it in System Settings.")
+            .accessibilityLabel("\(permission.title), check manually")
+            .accessibilityHint("Opens System Settings")
         } else {
             Button { _ = permission.openSettings() } label: {
                 AOMStatusPill(permission.shortTitle, tone: .warning, symbol: "exclamationmark.circle.fill")

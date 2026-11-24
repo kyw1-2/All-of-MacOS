@@ -44,7 +44,7 @@ struct MenuBarControlPage: View {
     @State private var setup = false
 
     private var tab: MenuBarSettingsTab { MenuBarSettingsTab(rawValue: tabRaw) ?? .layout }
-    @State private var pageWidth: CGFloat = 1000
+    @State private var sideBySide = true
 
     @ViewBuilder
     private var pane: some View {
@@ -73,25 +73,28 @@ struct MenuBarControlPage: View {
             // panes as a list beside the pane when the page is wide, a
             // pop-up above it when narrow — not eight squeezed icon tabs.
             let selection = Binding(get: { tab }, set: { tabRaw = $0.rawValue })
-            Group {
-                if pageWidth >= MenuBarPaneNavigation.sideBySideWidth {
-                    HStack(alignment: .top, spacing: AOMSpace.x4) {
-                        MenuBarPaneNavigation(selection: selection)
-                            .frame(width: MenuBarPaneNavigation.width)
-                        VStack(alignment: .leading, spacing: AOMSpace.sectionGap) { pane }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
+            // 7.16 (GPT V06): one layout that changes direction, so the pane
+            // keeps its identity (drafts, selection, focus) when the window
+            // crosses the width; 16 pt of hysteresis stops flicker at the edge.
+            let layout = sideBySide ? AnyLayout(HStackLayout(alignment: .top, spacing: AOMSpace.x4))
+                                    : AnyLayout(VStackLayout(alignment: .leading, spacing: AOMSpace.sectionGap))
+            layout {
+                if sideBySide {
+                    MenuBarPaneNavigation(selection: selection)
+                        .frame(width: MenuBarPaneNavigation.width)
                 } else {
-                    VStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
-                        MenuBarPaneNavigation.Compact(selection: selection)
-                        pane
-                    }
+                    MenuBarPaneNavigation.Compact(selection: selection)
                 }
+                VStack(alignment: .leading, spacing: AOMSpace.sectionGap) { pane }
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             .background(GeometryReader { geometry in
                 Color.clear
-                    .onAppear { pageWidth = geometry.size.width }
-                    .onChange(of: geometry.size.width) { _, width in pageWidth = width }
+                    .onAppear { sideBySide = MenuBarPaneNavigation.sideBySide(width: geometry.size.width, current: sideBySide) }
+                    .onChange(of: geometry.size.width) { _, width in
+                        let next = MenuBarPaneNavigation.sideBySide(width: width, current: sideBySide)
+                        if next != sideBySide { sideBySide = next }
+                    }
             })
         }
         .aomPage("Menu Bar")
@@ -107,11 +110,14 @@ struct MenuBarControlPage: View {
     }
 
     /// One line under the title: is hiding on, and how many apps are where.
+    /// 7.16 (GPT V07): off, no Accessibility, not read yet and "nothing
+    /// hidden" are different states; apps are counted once across lanes and
+    /// items without an owner aren't counted as an app.
     private var headline: String {
-        guard modules.isOn(.menuBarHider) || layout.isSample else { return "Menu bar hiding is off" }
-        let lanes = layout.lanes
-        let hidden = Set(((lanes[.hidden] ?? []) + (lanes[.alwaysHidden] ?? [])).map(\.item.ownerBundleID)).count
-        return hidden == 0 ? "Nothing is hidden" : (hidden == 1 ? "1 app is hidden" : "\(hidden) apps are hidden")
+        MenuBarHeadline.text(hidingOn: modules.isOn(.menuBarHider) || layout.isSample,
+                             canRead: layout.isSample || AXIsProcessTrusted(),
+                             readOnce: layout.isSample || layout.lastRefresh != nil,
+                             hiddenOwners: ((layout.lanes[.hidden] ?? []) + (layout.lanes[.alwaysHidden] ?? [])).map(\.item.ownerBundleID))
     }
 
     private var summary: String {
@@ -161,6 +167,14 @@ struct MenuBarPaneNavigation: View {
     static let width: CGFloat = 184
     /// Below this page width the list becomes a pop-up above the pane.
     static let sideBySideWidth: CGFloat = 860
+
+    /// Pure (V06): side by side from 868 pt, stacked below 852 pt, and in
+    /// between whatever it already was.
+    static func sideBySide(width: CGFloat, current: Bool) -> Bool {
+        if width >= sideBySideWidth + 8 { return true }
+        if width < sideBySideWidth - 8 { return false }
+        return current
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -221,5 +235,16 @@ struct MenuBarPaneNavigation: View {
             .fixedSize()
             .padding(.horizontal, AOMSpace.rowInset)
         }
+    }
+}
+
+/// 7.16 (GPT V07): the Menu Bar page's headline, pure for the tests.
+enum MenuBarHeadline {
+    static func text(hidingOn: Bool, canRead: Bool, readOnce: Bool, hiddenOwners: [String?]) -> String {
+        guard hidingOn else { return "Menu bar hiding is off" }
+        guard canRead else { return "AOM can't read the menu bar" }
+        guard readOnce else { return "Reading the menu bar…" }
+        let apps = Set(hiddenOwners.compactMap { $0 }.filter { !$0.isEmpty }).count
+        return apps == 0 ? "Nothing is hidden" : (apps == 1 ? "1 app is hidden" : "\(apps) apps are hidden")
     }
 }

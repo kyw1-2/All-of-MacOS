@@ -590,27 +590,36 @@ struct ModernGesturesWorkspace: View {
         }
     }
 
+    /// 7.16 (GPT V02): the bar's buttons keep only the automation's id and
+    /// look it up when pressed, so an edit since the bar was built (a changed
+    /// step, a rename) is what runs, and a deleted one does nothing.
+    private func latest(_ id: UUID) -> Trigger? {
+        appState.currentPreset.triggers.first { $0.id == id }
+    }
+
     private func barContext() -> AOMBarContext? {
         guard let trigger = selectedTrigger else { return nil }
+        let id = trigger.id
         let hue = AOMModule.automation.hue
         var actions: [AOMBarAction] = []
         if !trigger.actions.isEmpty, ActionTree.problem(trigger.actions) == nil {
             actions.append(AOMBarAction(id: "auto.test", title: runStates[trigger.id] == .running ? "Running…" : "Run",
                                         identity: AOMIdentity(symbol: "play.fill", color: hue),
-                                        run: { test(trigger) }, key: SwiftUI.KeyboardShortcut(.return, modifiers: .command)))
+                                        run: { if let now = latest(id), !now.actions.isEmpty, ActionTree.problem(now.actions) == nil { test(now) } },
+                                        key: SwiftUI.KeyboardShortcut(.return, modifiers: .command)))
         }
         actions.append(AOMBarAction(id: "auto.toggle", title: trigger.isEnabled ? "Turn Off" : "Turn On",
                                     identity: AOMIdentity(symbol: trigger.isEnabled ? "pause.fill" : "play.circle", color: hue),
-                                    run: { appState.toggleTrigger(trigger) }))
+                                    run: { if let now = latest(id) { appState.toggleTrigger(now) } }))
         actions.append(AOMBarAction(id: "auto.duplicate", title: "Duplicate",
                                     identity: AOMIdentity(symbol: "plus.square.on.square", color: hue),
-                                    run: { duplicate(trigger) }))
+                                    run: { if let now = latest(id) { duplicate(now) } }))
         actions.append(AOMBarAction(id: "auto.pin", title: trigger.isFavorite ? "Unpin from Workspace" : "Pin to Workspace",
                                     identity: AOMIdentity(symbol: trigger.isFavorite ? "pin.slash" : "pin", color: hue),
-                                    run: { appState.toggleFavorite(trigger) }))
+                                    run: { if let now = latest(id) { appState.toggleFavorite(now) } }))
         actions.append(AOMBarAction(id: "auto.delete", title: "Delete",
                                     identity: AOMIdentity(symbol: "trash", color: AOMColor.danger),
-                                    shortcut: "⌫", run: { delete(trigger) }))
+                                    shortcut: "⌫", run: { if let now = latest(id) { delete(now) } }))
         return AOMBarContext(title: trigger.displayName, actions: actions)
     }
 

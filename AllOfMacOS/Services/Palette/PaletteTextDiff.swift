@@ -15,9 +15,9 @@ enum PaletteTextDiff {
 
     /// Lines of `old` against `new`. A removal followed by an addition
     /// pairs up as a changed line.
-    static func lines(_ old: String, _ new: String) -> [LineChange] {
+    static func lines(_ old: String, _ new: String, shouldStop: () -> Bool = { false }) -> [LineChange] {
         let a = split(old), b = split(new)
-        let ops = script(a, b)
+        let ops = script(a, b, shouldStop: shouldStop)
         var result: [LineChange] = []
         var index = 0
         while index < ops.count {
@@ -43,8 +43,8 @@ enum PaletteTextDiff {
     }
 
     /// Only the changes (the rows ↑↓ steps through).
-    static func changes(_ old: String, _ new: String) -> [LineChange] {
-        lines(old, new).filter { if case .same = $0 { return false }; return true }
+    static func changes(_ old: String, _ new: String, shouldStop: () -> Bool = { false }) -> [LineChange] {
+        lines(old, new, shouldStop: shouldStop).filter { if case .same = $0 { return false }; return true }
     }
 
     /// What a trailing newline reads as in a row.
@@ -72,21 +72,23 @@ enum PaletteTextDiff {
     /// in one pass and a one-line edit in a long text stays exact; only the
     /// differing middle runs the LCS, and Swift's Myers difference takes a
     /// middle too big for the table.
-    private static func script(_ a: [String], _ b: [String]) -> [LineChange] {
+    private static func script(_ a: [String], _ b: [String], shouldStop: () -> Bool) -> [LineChange] {
         var head = 0
         while head < a.count, head < b.count, a[head] == b[head] { head += 1 }
         var tail = 0
         while tail < a.count - head, tail < b.count - head, a[a.count - 1 - tail] == b[b.count - 1 - tail] { tail += 1 }
-        let middle = middleScript(Array(a[head..<(a.count - tail)]), Array(b[head..<(b.count - tail)]))
+        let middle = middleScript(Array(a[head..<(a.count - tail)]), Array(b[head..<(b.count - tail)]), shouldStop: shouldStop)
         return a[..<head].map { .same($0) } + middle + a[(a.count - tail)...].map { .same($0) }
     }
 
-    private static func middleScript(_ a: [String], _ b: [String]) -> [LineChange] {
+    private static func middleScript(_ a: [String], _ b: [String], shouldStop: () -> Bool) -> [LineChange] {
         let n = a.count, m = b.count
         if n == 0 || m == 0 { return a.map { .removed($0) } + b.map { .added($0) } }
         guard n * m <= 4_000_000 else { return myers(a, b) }
         var table = [[Int]](repeating: [Int](repeating: 0, count: m + 1), count: n + 1)
         for i in stride(from: n - 1, through: 0, by: -1) {
+            // 7.16 (GPT V15): a superseded comparison stops between rows.
+            if i % 64 == 0, shouldStop() { return [] }
             for j in stride(from: m - 1, through: 0, by: -1) {
                 table[i][j] = a[i] == b[j] ? table[i + 1][j + 1] + 1 : max(table[i + 1][j], table[i][j + 1])
             }
@@ -151,50 +153,74 @@ enum PaletteTextDiff {
 /// compared off the main thread (≈ 0.3 s for two 1 MB texts on an M1) while
 /// the screen says "Comparing…"; a small one at once. The result — which
 /// holds lines of both copies — belongs to the open screen and is dropped
-/// when it closes.
+/// when it closes. 7.16 (GPT V15): one comparison at a time on a serial
+/// queue, latest wins — a newer request or `clear()` bumps the generation
+/// and the running one stops at its next check; the result is kept only for
+/// the exact texts it was asked about.
 @MainActor
 final class PaletteDiffJob {
     static let shared = PaletteDiffJob()
     /// Below this many UTF-8 bytes in all, comparing on the spot is quicker than a hop.
     static let inlineLimit = 64 * 1024
 
-    private var key: Int?
+    private var request: (old: String, new: String)?
     private var result: [PaletteTextDiff.LineChange]?
-    private var task: Task<Void, Never>?
+    private var running = false
+    private let worker = DispatchQueue(label: "aom.palette.diff", qos: .userInitiated)
+    nonisolated private static let generationLock = NSLock()
+    nonisolated(unsafe) private static var generation = 0
+
+    nonisolated private static func currentGeneration() -> Int {
+        generationLock.lock(); defer { generationLock.unlock() }
+        return generation
+    }
+
+    private static func bump() -> Int {
+        generationLock.lock(); defer { generationLock.unlock() }
+        generation &+= 1
+        return generation
+    }
 
     /// The changes, or nil while they are being worked out (`ready` runs once they are).
     func changes(_ old: String, _ new: String, ready: @escaping @MainActor () -> Void) -> [PaletteTextDiff.LineChange]? {
-        var hasher = Hasher()
-        hasher.combine(old); hasher.combine(new)
-        let key = hasher.finalize()
-        if key == self.key {
+        if let request, request.old == old, request.new == new {
             if let result { return result }
-            if task != nil { return nil }
+            if running { return nil }
         }
-        task?.cancel()
-        self.key = key
+        let ticket = Self.bump()
+        request = (old, new)
         result = nil
         if old.utf8.count + new.utf8.count <= Self.inlineLimit {
             let changes = PaletteTextDiff.changes(old, new)
             result = changes
-            task = nil
+            running = false
             return changes
         }
-        task = Task { [weak self] in
-            let changes = await Task.detached(priority: .userInitiated) { PaletteTextDiff.changes(old, new) }.value
-            guard let self, !Task.isCancelled, self.key == key else { return }
-            self.result = changes
-            self.task = nil
-            ready()
+        running = true
+        worker.async {
+            // Superseded before it started: nothing to do.
+            guard Self.currentGeneration() == ticket else { return }
+            let changes = PaletteTextDiff.changes(old, new) { Self.currentGeneration() != ticket }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    let job = PaletteDiffJob.shared
+                    guard Self.currentGeneration() == ticket, let request = job.request,
+                          request.old == old, request.new == new else { return }
+                    job.result = changes
+                    job.running = false
+                    ready()
+                }
+            }
         }
         return nil
     }
 
-    /// The screen closed: nothing of either copy stays.
+    /// The screen closed: nothing of either copy stays, and a running
+    /// comparison stops.
     func clear() {
-        task?.cancel()
-        task = nil
-        key = nil
+        _ = Self.bump()
+        request = nil
         result = nil
+        running = false
     }
 }
