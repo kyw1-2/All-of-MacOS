@@ -95,20 +95,24 @@ private struct AOMBarContextWriter<ID: Equatable>: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .onAppear { publish() }
+            .aomPageLifecycle(onActivate: { publish() }, onDeactivate: { clear() })
             .onChange(of: id) { _, _ in publish() }
-            .onDisappear {
-                guard let tab else { return }
-                let writer = writer
-                DispatchQueue.main.async { AOMBarContexts.shared.clear(tab, writer: writer) }
-            }
     }
 
     private func publish() {
-        guard let tab else { return }
+        guard let tab, AOMNavigation.shared.selected == tab else { return }
         let context = make()
         let writer = writer
-        DispatchQueue.main.async { AOMBarContexts.shared.set(context, for: tab, writer: writer) }
+        DispatchQueue.main.async {
+            guard AOMNavigation.shared.selected == tab else { return }
+            AOMBarContexts.shared.set(context, for: tab, writer: writer)
+        }
+    }
+
+    private func clear() {
+        guard let tab else { return }
+        let writer = writer
+        DispatchQueue.main.async { AOMBarContexts.shared.clear(tab, writer: writer) }
     }
 }
 
@@ -224,7 +228,15 @@ struct AOMToolbarActions: View {
             .popover(isPresented: $showsActions, arrowEdge: .bottom) {
                 AOMActionPanel(title: context?.title ?? tab.title,
                                sections: panelSections(tab: tab, context: context),
-                               dismiss: { showsActions = false })
+                               dismiss: { showsActions = false },
+                               canRun: { [revision = contexts.revision] action in
+                                   guard navigation.selected == tab else { return false }
+                                   if context?.actions.contains(where: { $0.id == action.id }) == true {
+                                       return contexts.revision == revision
+                                   }
+                                   return panelSections(tab: tab, context: nil).flatMap(\.actions)
+                                       .contains { $0.id == action.id && $0.title == action.title }
+                               })
             }
         .onAppear {
             // Isolated previews can open the panel for review (`--aom-preview-actions`).
@@ -281,6 +293,7 @@ struct AOMActionPanel: View {
     let title: String
     let sections: [AOMBarActionSection]
     let dismiss: () -> Void
+    let canRun: @MainActor (AOMBarAction) -> Bool
     /// 7.16 (GPT V01): the selection is an action's id, not an index, so a
     /// list that shrinks while the panel is open can't run the wrong action
     /// or index past the end.
@@ -330,7 +343,7 @@ struct AOMActionPanel: View {
         .focusable()
         .focusEffectDisabled()
         .focused($focused)
-        .onAppear { focused = true }
+        .onAppear { focused = true; selectedID = actions.first?.id }
         .onKeyPress(.downArrow) { step(1, in: actions, from: current); return .handled }
         .onKeyPress(.upArrow) { step(-1, in: actions, from: current); return .handled }
         .onKeyPress(.return) {
@@ -374,29 +387,31 @@ struct AOMActionPanel: View {
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .onHover { inside in
             hovered = inside ? action.id : (hovered == action.id ? nil : hovered)
-            if inside { selectedID = action.id }
         }
     }
 
     private func run(_ action: AOMBarAction) {
         dismiss()
         // After the popover closes, so a capture never includes it.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { action.run() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            guard canRun(action) else { return }
+            action.run()
+        }
     }
 }
 
 /// 7.16 (GPT V01): pure selection rules for the action panel.
 enum AOMActionPanelSelection {
-    /// The selected id if it is still listed, else the first one; nil when empty.
+    /// A vanished explicit selection must never silently become another action.
     static func resolve(_ id: String?, in ids: [String]) -> String? {
-        if let id, ids.contains(id) { return id }
-        return ids.first
+        guard let id else { return ids.first }
+        return ids.contains(id) ? id : nil
     }
 
     /// One step up or down, clamped at the ends.
     static func step(_ id: String?, by offset: Int, in ids: [String]) -> String? {
         guard !ids.isEmpty else { return nil }
-        let index = resolve(id, in: ids).flatMap { ids.firstIndex(of: $0) } ?? 0
+        guard let index = resolve(id, in: ids).flatMap({ ids.firstIndex(of: $0) }) else { return ids.first }
         return ids[min(max(index + offset, 0), ids.count - 1)]
     }
 }
