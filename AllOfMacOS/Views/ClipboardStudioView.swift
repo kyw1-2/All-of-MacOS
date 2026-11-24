@@ -246,7 +246,8 @@ struct ClipboardStudioView: View {
 
     /// What the bar's clipboard context depends on: the item and its pins.
     private var clipboardBarKey: String {
-        guard let id = selectedEntryID, let entry = store.entries.first(where: { $0.id == id }) else { return "" }
+        guard !search.isSearchPending, let id = selectedEntryID,
+              let entry = filteredEntries.first(where: { $0.id == id }) else { return "" }
         // 7.16 (GPT V03): the boards' names and order too — the bar lists them.
         let boards = store.boards.prefix(4).map { $0.id.uuidString + $0.name }.joined(separator: "|")
         return id.uuidString + entry.pinboardIDs.map(\.uuidString).sorted().joined() + entry.title + "#" + boards
@@ -255,10 +256,14 @@ struct ClipboardStudioView: View {
     /// 7.16 (GPT V03): the bar's buttons find the item and the board again
     /// by id when pressed; one deleted or renamed meanwhile isn't acted on
     /// through a stale copy.
-    private func liveEntry(_ id: UUID) -> ClipboardEntry? { store.entries.first { $0.id == id } }
+    private func liveEntry(_ id: UUID) -> ClipboardEntry? {
+        guard !search.isSearchPending, selectedEntryID == id,
+              filteredEntries.contains(where: { $0.id == id }) else { return nil }
+        return store.entries.first { $0.id == id }
+    }
 
     private func clipboardBarContext() -> AOMBarContext? {
-        guard let id = selectedEntryID, let entry = store.entries.first(where: { $0.id == id }) else { return nil }
+        guard let id = selectedEntryID, let entry = liveEntry(id) else { return nil }
         let hue = AOMModule.clipboard.hue
         let entryID = entry.id
         var actions = [

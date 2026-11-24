@@ -58,6 +58,7 @@ final class FilesDialogHelper {
     private var hiddenDialog: AXUIElement?
     private var loadTask: Task<Void, Never>?
     private var statusReset: DispatchWorkItem?
+    private var attachmentGeneration = 0
     private var lastClipboardChange = -1
     /// Tells the module the status board's line may have changed.
     var onChange: (() -> Void)?
@@ -147,6 +148,9 @@ final class FilesDialogHelper {
         if hiddenDialog != nil, latest == nil { hiddenDialog = nil }
         guard let state else {
             if attached != nil {
+                attachmentGeneration &+= 1
+                statusReset?.cancel()
+                model.busy = false
                 attached = nil
                 panel.detach()
                 FilesDialogHotKeys.shared.unregister()
@@ -161,6 +165,8 @@ final class FilesDialogHelper {
             panel.move(to: state.frame)
             return
         }
+        attachmentGeneration &+= 1
+        statusReset?.cancel()
         attached = state
         model.appName = state.appName
         model.kind = state.classification.kind
@@ -192,17 +198,18 @@ final class FilesDialogHelper {
         let wantsRecents = settings.showsRecentFolders
         let wantsNewest = settings.includesNewestFiles
         let jumps = FilesRecentFolderStore.shared.jumps
+        let generation = attachmentGeneration
         // 7.13 (GPT UX3-11): each list shows as soon as it is ready — a
         // Finder that takes its 2 s no longer holds back the recent folders.
         let recents = Task { [weak self] in
             let files = await Self.newestFiles(wanted: wantsRecents && wantsNewest)
-            guard let self, !Task.isCancelled, wantsRecents else { return }
+            guard let self, !Task.isCancelled, wantsRecents, self.attachmentGeneration == generation else { return }
             self.applyRecents(jumps: jumps, newest: files)
         }
         loadTask = Task { [weak self] in
             await withTaskCancellationHandler {
                 let finder = await Self.finderFolders(wanted: wantsFinder)
-                guard let self, !Task.isCancelled else { return }
+                guard let self, !Task.isCancelled, self.attachmentGeneration == generation else { return }
                 self.applyFinder(finder)
                 _ = await recents.value
             } onCancel: {
@@ -288,16 +295,18 @@ final class FilesDialogHelper {
             return
         }
         let name = FilesPath.displayName(folder.path)
+        let generation = attachmentGeneration
         model.busy = true
         model.status = .working("Going to \(name)…")
         tracker.jump(to: folder, frontmostPID: {
             DispatchQueue.main.sync { NSWorkspace.shared.frontmostApplication?.processIdentifier }
         }) { [weak self] result in
             guard let self else { return }
+            if case .success(let folder) = result { FilesRecentFolderStore.shared.note(folder) }
+            guard self.attachmentGeneration == generation else { return }
             self.model.busy = false
             switch result {
-            case .success(let folder):
-                FilesRecentFolderStore.shared.note(folder)
+            case .success:
                 self.show(.done("Went to \(name)"))
                 self.applyRecents(jumps: FilesRecentFolderStore.shared.jumps, newest: [])
             case .failure(let failure):

@@ -1098,7 +1098,8 @@ struct ModernGesturesWorkspace: View {
     /// and never twice at once.
     private func test(_ stale: Trigger) {
         guard runStates[stale.id] != .running else { return }
-        let trigger = appState.currentPreset.triggers.first { $0.id == stale.id } ?? stale
+        guard let trigger = latest(stale.id), !trigger.actions.isEmpty,
+              ActionTree.problem(trigger.actions) == nil else { return }
         runStates[trigger.id] = .running
         let name = trigger.displayName
         ActionExecutor.executeActions(trigger.actions, fromTrackpad: trigger.input.category == .trackpad,

@@ -291,9 +291,10 @@ final class WindowSwitcherController: NSObject, ObservableObject {
             note = "Switch to “\(item.title.isEmpty ? item.appName : item.title)” to close it: it's in another Space."
             return
         }
+        let opening = session
         SwitcherWindowActions.close(window) { [weak self] closed in
-            guard let self else { return }
-            if closed { self.items.removeAll { $0.id == item.id } } else { self.note = "\(item.appName) didn't close the window." }
+            guard let self, self.session == opening, self.isShowing else { return }
+            if closed { self.items.removeAll { $0.id == item.id && $0.pid == item.pid } } else { self.note = "\(item.appName) didn't close the window." }
         }
     }
 
@@ -303,8 +304,10 @@ final class WindowSwitcherController: NSObject, ObservableObject {
             return
         }
         let minimize = item.state != .minimized
+        let opening = session
         SwitcherWindowActions.setMinimized(window, minimize) { [weak self] done in
-            guard let self, done, let index = self.items.firstIndex(where: { $0.id == item.id }) else { return }
+            guard let self, self.session == opening, self.isShowing, done,
+                  let index = self.items.firstIndex(where: { $0.id == item.id && $0.pid == item.pid }) else { return }
             self.items[index].state = minimize ? .minimized : .normal
         }
     }

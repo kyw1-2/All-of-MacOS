@@ -16,11 +16,15 @@ enum PaletteTextDiff {
     /// Lines of `old` against `new`. A removal followed by an addition
     /// pairs up as a changed line.
     static func lines(_ old: String, _ new: String, shouldStop: () -> Bool = { false }) -> [LineChange] {
+        guard !shouldStop() else { return [] }
         let a = split(old), b = split(new)
+        guard !shouldStop() else { return [] }
         let ops = script(a, b, shouldStop: shouldStop)
+        guard !shouldStop() else { return [] }
         var result: [LineChange] = []
         var index = 0
         while index < ops.count {
+            if index % 64 == 0, shouldStop() { return [] }
             switch ops[index] {
             case .same(let line): result.append(.same(line)); index += 1
             case .removed:
@@ -84,7 +88,12 @@ enum PaletteTextDiff {
     private static func middleScript(_ a: [String], _ b: [String], shouldStop: () -> Bool) -> [LineChange] {
         let n = a.count, m = b.count
         if n == 0 || m == 0 { return a.map { .removed($0) } + b.map { .added($0) } }
-        guard n * m <= 4_000_000 else { return myers(a, b) }
+        guard !shouldStop() else { return [] }
+        guard n <= 4_000_000 / m else {
+            // The standard library Myers pass itself is not interruptible. Never
+            // start it when superseded, or convert/publish its cancelled result.
+            return myers(a, b, shouldStop: shouldStop)
+        }
         var table = [[Int]](repeating: [Int](repeating: 0, count: m + 1), count: n + 1)
         for i in stride(from: n - 1, through: 0, by: -1) {
             // 7.16 (GPT V15): a superseded comparison stops between rows.
@@ -106,8 +115,10 @@ enum PaletteTextDiff {
     }
 
     /// Swift's own Myers difference, for middles too big for the LCS table.
-    private static func myers(_ a: [String], _ b: [String]) -> [LineChange] {
+    private static func myers(_ a: [String], _ b: [String], shouldStop: () -> Bool) -> [LineChange] {
+        guard !shouldStop() else { return [] }
         let difference = b.difference(from: a)
+        guard !shouldStop() else { return [] }
         var removed = Set<Int>(), inserted = Set<Int>()
         for change in difference {
             switch change {
@@ -166,6 +177,10 @@ final class PaletteDiffJob {
     private var request: (old: String, new: String)?
     private var result: [PaletteTextDiff.LineChange]?
     private var running = false
+    // One active worker and one replaceable pending request. Never queue a
+    // closure retaining every superseded clipboard pair.
+    private var workerBusy = false
+    private var pendingReady: (@MainActor () -> Void)?
     private let worker = DispatchQueue(label: "aom.palette.diff", qos: .userInitiated)
     nonisolated private static let generationLock = NSLock()
     nonisolated(unsafe) private static var generation = 0
@@ -187,8 +202,9 @@ final class PaletteDiffJob {
             if let result { return result }
             if running { return nil }
         }
-        let ticket = Self.bump()
+        _ = Self.bump()
         request = (old, new)
+        pendingReady = nil
         result = nil
         if old.utf8.count + new.utf8.count <= Self.inlineLimit {
             let changes = PaletteTextDiff.changes(old, new)
@@ -197,22 +213,35 @@ final class PaletteDiffJob {
             return changes
         }
         running = true
+        pendingReady = ready
+        launchPending()
+        return nil
+    }
+
+    private func launchPending() {
+        guard !workerBusy, let request, let ready = pendingReady else { return }
+        let (old, new) = request
+        let ticket = Self.currentGeneration()
+        pendingReady = nil
+        workerBusy = true
         worker.async {
-            // Superseded before it started: nothing to do.
-            guard Self.currentGeneration() == ticket else { return }
-            let changes = PaletteTextDiff.changes(old, new) { Self.currentGeneration() != ticket }
+            let changes = Self.currentGeneration() == ticket
+                ? PaletteTextDiff.changes(old, new) { Self.currentGeneration() != ticket }
+                : []
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     let job = PaletteDiffJob.shared
-                    guard Self.currentGeneration() == ticket, let request = job.request,
-                          request.old == old, request.new == new else { return }
-                    job.result = changes
-                    job.running = false
-                    ready()
+                    job.workerBusy = false
+                    if Self.currentGeneration() == ticket, let request = job.request,
+                       request.old == old, request.new == new {
+                        job.result = changes
+                        job.running = false
+                        ready()
+                    }
+                    job.launchPending()
                 }
             }
         }
-        return nil
     }
 
     /// The screen closed: nothing of either copy stays, and a running
@@ -220,6 +249,7 @@ final class PaletteDiffJob {
     func clear() {
         _ = Self.bump()
         request = nil
+        pendingReady = nil
         result = nil
         running = false
     }
