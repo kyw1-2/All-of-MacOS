@@ -4,7 +4,7 @@ The GPT 7.12.1 spec and the Gemini 7.12.1 report, each claim checked against the
 
 ### Launcher
 - **Compare With… finds the real changes**: two equal long copies showed every line changed (a 2,000-line pair crossed the comparison's size cap); lines both texts share at the start and end are now set aside first, and a big differing middle uses a proper diff. **Swap Sides** really swaps (it always re-sorted by date), text that spells "⏎ (newline at end)" no longer equals a trailing newline, Windows line endings compare as equal, and the header counts what changed, was added and was removed.
-- **Free Times**: if your calendars can't be read, the screen says so and nothing is copied — before, a failed read looked like a free week. A time that has already started drops out when you copy. Working hours are in **Settings › Shortcuts › Free times**; a summary row at the end shows the length, hours and when the calendars were read.
+- **Free Times**: if your calendars can't be read, the screen says so and nothing is copied — before, a failed read looked like a free week. A time that has already started drops out when you copy. Working hours are in **Settings › Shortcut Recorder › Free times**.
 
 ### Drop Shelf and Files
 - Showing the shelf while it was fading out could leave it closed; the Files dialog panel could stay on screen but invisible when a new dialog appeared during its fade.

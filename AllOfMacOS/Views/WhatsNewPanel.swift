@@ -27,7 +27,7 @@ enum WhatsNew {
              detail: "Compare With… now finds the real changes in long texts (two equal 2,000-line copies used to show every line changed), Swap Sides really swaps, and the header counts what changed, was added and was removed.",
              note: "Fixed"),
         Item(symbol: "calendar.badge.clock", title: "Free Times You Can Trust",
-             detail: "Set your working hours in Settings › Shortcuts › Free times. If your calendars can't be read, nothing is copied — before, that looked like a free week — and a time that has already started drops out.",
+             detail: "Set your working hours in Settings › Shortcut Recorder › Free times. If your calendars can't be read, nothing is copied — before, that looked like a free week — and a time that has already started drops out.",
              note: "Fixed"),
         Item(symbol: "tray.full", title: "Steadier Drop Shelf",
              detail: "Showing the shelf while it fades out no longer leaves it closed, a file the Trash refuses is named, and files an app never delivers stop blocking the shelf after two minutes.",

@@ -274,18 +274,6 @@ extension QuickCommandPalette {
         }
         let hours = availability.hours
         let window = String(format: "%02d:%02d–%02d:%02d", hours.start / 60, hours.start % 60, hours.end / 60, hours.end % 60)
-        // 7.13 (GPT UX-07): what the list is built from — length, hours and
-        // how fresh the calendars are — as the last row, so ↩ still picks the
-        // first time; typing a number changes the length.
-        let fresh = availability.loadedAt.map { "read \(AOMRelativeTime.string($0))" } ?? ""
-        var summary = screenRow("free.summary", "\(availability.minutes)-minute meetings · weekdays \(window)",
-                                ["Type 30, 45, 60 or 90 to change the length", "hours in Settings › Shortcuts › Free times", fresh]
-                                    .filter { !$0.isEmpty }.joined(separator: " · "),
-                                icon: "slider.horizontal.3", group: nil,
-                                primary: PaletteAction(title: "Read Again", symbol: "arrow.clockwise", effect: .stay) {
-                                    Task { @MainActor in await availability.load(); sourcesChanged() }
-                                })
-        summary.placement = .fallback
         guard !slots.isEmpty else {
             rows.append(screenRow("free.none", "No free \(availability.minutes)-minute time in the next 7 days", "Weekdays \(window) · type 30 for a shorter meeting",
                                   icon: "calendar.badge.exclamationmark", group: nil,
@@ -306,7 +294,6 @@ extension QuickCommandPalette {
             row.accessory = picked ? "✓" : nil
             rows.append(row)
         }
-        rows.append(summary)
         return rows
     }
 }

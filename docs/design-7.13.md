@@ -31,7 +31,7 @@ Every claim below was checked against the code at `f88517c` before acting. Gemin
 | UX3-11 | FilesDialogHelper | Finder windows and recents publish independently. |
 | UX3-14 | FilesDialogPanel | Re-attach during the fade-out restores alpha (was: on screen, invisible). |
 | UX-06 | Tools712 | Diff header counts changed/added/removed. |
-| UX-07 | Tools712, ShortcutsSettingsView | Settings › Shortcuts › Free times (working hours); a summary row at the end of the list (length, hours, last read, ↩ reads again). |
+| UX-07 | Tools712, ShortcutsSettingsView | Settings › Shortcut Recorder › Free times (working hours); the screen header names where the hours are set. |
 | Timers | MenuBarHider, MenuBarNativeHiding, PaletteRoutes, ClipboardStore, AOMMenuBarPanel, MenuBarSetupGuide | Tolerance on the 7 repeating timers that had none (the other 19 already had it). |
 
 Tests: `AllOfMacOSTests/AOM713Tests.swift`.

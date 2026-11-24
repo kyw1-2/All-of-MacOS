@@ -1603,7 +1603,7 @@ extension QuickCommandPalette {
             let window = String(format: "%02d:%02d–%02d:%02d", hours.start / 60, hours.start % 60, hours.end / 60, hours.end % 60)
             return RouteHeader(symbol: "calendar.badge.clock", tint: AOMModule.focus.hue,
                                title: "\(availability.minutes)-Minute Meetings · Weekdays \(window)",
-                               detail: "Pick up to three times with ↩, then Copy at the top. Only free and busy are read — titles, people and places never leave your calendars. Type 30, 45 or 90 to change the length.")
+                               detail: "Pick up to three times with ↩, then Copy at the top. Only free and busy are read — titles, people and places never leave your calendars. Type 30, 45 or 90 to change the length; the hours are in Settings › Shortcut Recorder › Free times.")
         case .clipboardDiff?:
             return RouteHeader(symbol: "arrow.left.arrow.right.square", tint: AOMModule.clipboard.hue, title: "What Changed",
                                detail: "− the older copy, + the newer, ± a changed line with the changed part in [brackets]. ↑↓ goes from change to change; ↩ copies that line.")
