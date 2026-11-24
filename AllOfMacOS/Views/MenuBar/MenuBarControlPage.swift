@@ -117,6 +117,7 @@ struct MenuBarControlPage: View {
         MenuBarHeadline.text(hidingOn: modules.isOn(.menuBarHider) || layout.isSample,
                              canRead: layout.isSample || AXIsProcessTrusted(),
                              readOnce: layout.isSample || layout.lastRefresh != nil,
+                             complete: layout.isSample || layout.lastScanComplete,
                              hiddenOwners: ((layout.lanes[.hidden] ?? []) + (layout.lanes[.alwaysHidden] ?? [])).map(\.item.ownerBundleID))
     }
 
@@ -124,6 +125,7 @@ struct MenuBarControlPage: View {
         guard modules.isOn(.menuBarHider) || layout.isSample else { return "Hiding is off — turn it on in General, or follow the Setup Guide." }
         guard layout.isSample || AXIsProcessTrusted() else { return "Allow Accessibility to read menu bar items." }
         guard layout.isSample || layout.lastRefresh != nil else { return "Waiting for the first menu bar scan." }
+        guard layout.isSample || layout.lastScanComplete else { return "The last scan was incomplete — refresh to check all items." }
         let lanes = layout.lanes
         let hidden = (lanes[.hidden] ?? []).count, always = (lanes[.alwaysHidden] ?? []).count
         if hidden + always == 0 { return "Nothing hidden in the last scan — drag icons to Hidden in Menu Bar Items." }
@@ -165,6 +167,7 @@ extension Notification.Name {
 struct MenuBarPaneNavigation: View {
     @Binding var selection: MenuBarSettingsTab
     @State private var hovered: MenuBarSettingsTab?
+    @FocusState private var focusedTab: MenuBarSettingsTab?
     static let width: CGFloat = 184
     /// Below this page width the list becomes a pop-up above the pane.
     static let sideBySideWidth: CGFloat = 860
@@ -181,7 +184,7 @@ struct MenuBarPaneNavigation: View {
         VStack(alignment: .leading, spacing: 2) {
             ForEach(MenuBarSettingsTab.allCases) { tab in
                 let selected = tab == selection
-                Button { selection = tab } label: {
+                Button { selection = tab; focusedTab = tab } label: {
                     HStack(spacing: AOMSpace.x2) {
                         Image(systemName: tab.symbol)
                             .font(.system(size: 13, weight: .medium))
@@ -200,6 +203,7 @@ struct MenuBarPaneNavigation: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .focused($focusedTab, equals: tab)
                 .onHover { hovered = $0 ? tab : (hovered == tab ? nil : hovered) }
                 .accessibilityLabel(tab.title)
                 .accessibilityAddTraits(selected ? .isSelected : [])
@@ -219,6 +223,7 @@ struct MenuBarPaneNavigation: View {
         guard let index = all.firstIndex(of: selection) else { return .ignored }
         let next = min(max(index + offset, 0), all.count - 1)
         selection = all[next]
+        focusedTab = all[next]
         return .handled
     }
 
@@ -241,11 +246,14 @@ struct MenuBarPaneNavigation: View {
 
 /// 7.16 (GPT V07): the Menu Bar page's headline, pure for the tests.
 enum MenuBarHeadline {
-    static func text(hidingOn: Bool, canRead: Bool, readOnce: Bool, hiddenOwners: [String?]) -> String {
+    static func text(hidingOn: Bool, canRead: Bool, readOnce: Bool, complete: Bool = true, hiddenOwners: [String?]) -> String {
         guard hidingOn else { return "Menu bar hiding is off" }
         guard canRead else { return "AOM can't read the menu bar" }
         guard readOnce else { return "Reading the menu bar…" }
+        guard complete else { return "Menu bar scan incomplete" }
         let apps = Set(hiddenOwners.compactMap { $0 }.filter { !$0.isEmpty }).count
+        let unknown = hiddenOwners.filter { $0 == nil || $0 == "" }.count
+        if unknown > 0 { return "\(apps) known app\(apps == 1 ? "" : "s") · \(unknown) unidentified hidden item\(unknown == 1 ? "" : "s")" }
         return apps == 0 ? "Nothing is hidden" : (apps == 1 ? "1 app is hidden" : "\(apps) apps are hidden")
     }
 }
