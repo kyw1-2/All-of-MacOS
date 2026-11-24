@@ -122,11 +122,12 @@ struct MenuBarControlPage: View {
 
     private var summary: String {
         guard modules.isOn(.menuBarHider) || layout.isSample else { return "Hiding is off — turn it on in General, or follow the Setup Guide." }
+        guard layout.isSample || AXIsProcessTrusted() else { return "Allow Accessibility to read menu bar items." }
+        guard layout.isSample || layout.lastRefresh != nil else { return "Waiting for the first menu bar scan." }
         let lanes = layout.lanes
-        let apps = { (section: MenuBarSection) in Set((lanes[section] ?? []).map(\.item.ownerBundleID)).count }
-        let hidden = apps(.hidden), always = apps(.alwaysHidden)
-        if hidden + always == 0 { return "Nothing hidden yet — drag icons to Hidden in Menu Bar Items." }
-        return "\(hidden) app\(hidden == 1 ? "" : "s") hidden · \(always) always hidden · click ❮ in the menu bar to show them"
+        let hidden = (lanes[.hidden] ?? []).count, always = (lanes[.alwaysHidden] ?? []).count
+        if hidden + always == 0 { return "Nothing hidden in the last scan — drag icons to Hidden in Menu Bar Items." }
+        return "\(hidden) item\(hidden == 1 ? "" : "s") hidden · \(always) always hidden · click ❮ in the menu bar to show them"
     }
 }
 
