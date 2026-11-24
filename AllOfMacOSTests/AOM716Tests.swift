@@ -24,7 +24,9 @@ final class AOM716Tests: XCTestCase {
         XCTAssertEqual(MenuBarHeadline.text(hidingOn: true, canRead: true, readOnce: false, hiddenOwners: []), "Reading the menu bar…")
         XCTAssertEqual(MenuBarHeadline.text(hidingOn: true, canRead: true, readOnce: true, hiddenOwners: []), "Nothing is hidden")
         XCTAssertEqual(MenuBarHeadline.text(hidingOn: true, canRead: true, readOnce: true,
-                                            hiddenOwners: ["com.a", "com.a", "com.b", nil, ""]), "2 apps are hidden")
+                                            hiddenOwners: ["com.a", "com.a", "com.b"]), "2 apps are hidden")
+        XCTAssertEqual(MenuBarHeadline.text(hidingOn: true, canRead: true, readOnce: true, complete: false, hiddenOwners: []), "Menu bar scan incomplete")
+        XCTAssertEqual(MenuBarHeadline.text(hidingOn: true, canRead: true, readOnce: true, hiddenOwners: [nil, ""]), "0 known apps · 2 unidentified hidden items")
     }
 
     // V06: hysteresis around 860 pt.
@@ -46,6 +48,11 @@ final class AOM716Tests: XCTestCase {
         XCTAssertEqual(contexts.contexts[.files]?.title, "new")
         contexts.clear(.files, writer: new)
         XCTAssertNil(contexts.contexts[.files])
+    }
+
+    func testCancelledDiffDoesNotProduceAResult() {
+        XCTAssertTrue(PaletteTextDiff.changes("a\nb", "a\nc", shouldStop: { true }).isEmpty)
+        XCTAssertEqual(PaletteTextDiff.changes("a\nb", "a\nc").count, 1)
     }
 
     // V15: a comparison of the same small pair is answered at once and kept.
