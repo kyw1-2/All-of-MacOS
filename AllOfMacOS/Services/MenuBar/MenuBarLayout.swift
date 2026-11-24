@@ -297,6 +297,7 @@ final class MenuBarLayoutModel: ObservableObject {
     @Published private(set) var busy = false
     @Published private(set) var status: String?
     @Published private(set) var lastRefresh: Date?
+    @Published private(set) var lastScanComplete = false
     /// True in an isolated preview filled with sample items.
     @Published private(set) var isSample = false
     fileprivate var lastReveal = Date.distantPast
@@ -366,6 +367,8 @@ final class MenuBarLayoutModel: ObservableObject {
         guard !isSample, !busy else { return }
         guard AXIsProcessTrusted() else {
             items = []
+            lastRefresh = nil
+            lastScanComplete = false
             status = "Allow Accessibility so AOM can read the menu bar."
             return
         }
@@ -400,6 +403,13 @@ final class MenuBarLayoutModel: ObservableObject {
             DispatchQueue.main.async { [weak self] in
                 MainActor.assumeIsolated {
                     guard let self, ticket == self.generation else { done(); return }
+                    guard AXIsProcessTrusted() else {
+                        self.items = []
+                        self.lastScanComplete = false
+                        self.status = "Allow Accessibility so AOM can read the menu bar."
+                        done(); return
+                    }
+                    self.lastScanComplete = snapshot.appsLeft == 0
                     // AOM's own icons (its menu, weather) are items like any other;
                     // only the Hider's chevron and dividers are left out.
                     let native = MenuBarNativeHiding.isAvailable
