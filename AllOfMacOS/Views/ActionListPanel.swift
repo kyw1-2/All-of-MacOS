@@ -22,6 +22,9 @@ struct ActionCardView: View {
     var onCopy: () -> Void = {}
     var onAddInside: () -> Void = {}
     var onAddElse: () -> Void = {}
+    /// Workbench 2 (D12): this step's options are open in the step inspector;
+    /// the card is outlined in the accent instead of expanding.
+    var isInspected = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -33,6 +36,14 @@ struct ActionCardView: View {
             }
         }
         .aomCard(padding: 0)
+        .overlay {
+            if isInspected {
+                RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous)
+                    .strokeBorder(AOMColor.accent, lineWidth: 2)
+                    .accessibilityHidden(true)
+            }
+        }
+        .accessibilityAddTraits(isInspected ? .isSelected : [])
         .padding(.leading, CGFloat(depth) * AOMSpace.x5)
         .opacity(action.isEnabled ? 1 : 0.55)
         .animation(AOMMotion.panel, value: isExpanded)
