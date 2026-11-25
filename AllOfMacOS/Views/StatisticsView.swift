@@ -46,15 +46,15 @@ struct StatisticsView: View {
         var unmatched: Int { max(0, detected - fired) }
     }
 
-    private var figures: Figures {
+    private func figures(now: Date) -> Figures {
         guard let interval = period.interval else {
             return Figures(detected: stats.totalGestures, fired: stats.totalFired,
                            distinct: stats.uniqueGesturesCount, entries: stats.sortedEntries)
         }
-        let since = Date().addingTimeInterval(-interval)
+        let since = now.addingTimeInterval(-interval)
         var byGesture: [String: GestureStatEntry] = [:]
         var detected = 0, fired = 0
-        for event in stats.events where event.timestamp >= since {
+        for event in stats.events where (since...now).contains(event.timestamp) {
             var entry = byGesture[event.gesture] ?? GestureStatEntry(gesture: event.gesture, totalCount: 0, firedCount: 0)
             if event.fired { fired += 1; entry.firedCount += 1 } else { detected += 1; entry.totalCount += 1 }
             entry.lastDetected = max(entry.lastDetected ?? .distantPast, event.timestamp)
@@ -68,10 +68,10 @@ struct StatisticsView: View {
 
     /// True when the bounded event log starts after the chosen period began,
     /// so day or week figures miss the period's earliest inputs.
-    private var periodIsTruncated: Bool {
+    private func periodIsTruncated(now: Date) -> Bool {
         guard let interval = period.interval, stats.events.count >= GestureStatistics.recentEventLimit,
               let oldest = stats.events.first?.timestamp else { return false }
-        return oldest > Date().addingTimeInterval(-interval)
+        return oldest > now.addingTimeInterval(-interval)
     }
 
     /// How the area under the figures is divided at a given page width.
@@ -91,15 +91,16 @@ struct StatisticsView: View {
     var body: some View {
         GeometryReader { geometry in
             let layout = Layout(width: geometry.size.width)
-            let figures = figures
+            let now = Date()
+            let figures = figures(now: now)
+            let series = Self.activitySeries(events: stats.events, period: period, now: now)
             AOMPage {
                 header(figures)
-                // Day and week figures come from a bounded event log; the
-                // footer says so only when it actually cuts the period short.
-                AOMSection(footer: periodIsTruncated
-                           ? "These figures cover the latest \(GestureStatistics.recentEventLimit.formatted()) inputs, so earlier activity in this period isn't counted. All Time uses the full totals."
-                           : nil,
-                           padding: AOMSpace.x1) {
+                AOMSection("Overview", detail: periodIsTruncated(now: now) ? "Partial history" : nil, padding: AOMSpace.x1) {
+                    if periodIsTruncated(now: now) {
+                        AOMInfoButton("The log kept only the latest \(GestureStatistics.recentEventLimit.formatted()) events. All Time uses the full totals.", topic: "Partial history")
+                    }
+                } content: {
                     overviewStrip(figures, columns: geometry.size.width >= Self.stripSingleRowWidth ? nil : 2)
                 }
                 switch layout {
@@ -108,7 +109,7 @@ struct StatisticsView: View {
                         // Its own height, top-aligned: an empty list must not
                         // stretch to the taller column beside it.
                         VStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
-                            activitySection
+                            activitySection(series)
                             mostUsedSection(figures)
                         }
                         .fixedSize(horizontal: false, vertical: true)
@@ -119,19 +120,20 @@ struct StatisticsView: View {
                         .frame(width: layout == .threeColumns ? AOMSize.tileMax : AOMSize.drawerWidth.lowerBound)
                     }
                 case .stacked:
-                    activitySection
+                    activitySection(series)
                     mostUsedSection(figures)
                     inputsSection
                     configurationSection
                 }
                 // D30: the events themselves, apart from the figures above,
                 // under the same period (and the chart's selected bar).
-                eventLogSection
+                eventLogSection(series, now: now)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .aomPage("Insights")
         .aomObserving(observation)
+        .onChange(of: period) { _, _ in selectedBucket = nil }
         .aomPageToolbar {
             ToolbarItemGroup(placement: .automatic) {
                 Picker("Period", selection: $period) {
@@ -181,62 +183,97 @@ struct StatisticsView: View {
 
     // MARK: - Activity chart (design-336 #26–28, #70, #84)
 
-    /// One bar of the activity chart: automations that ran in an hour (last
-    /// 24 hours) or a day (last 7 days), from the recent event log.
     struct ActivityBucket: Identifiable, Equatable {
         let start: Date
         let runs: Int
-        let isCurrent: Bool
         var id: Date { start }
     }
 
-    /// Hourly buckets for the last 24 hours, daily ones for the last 7 days.
-    /// All Time charts the last 7 days too: the event log behind the chart is
-    /// bounded, the running totals are not per day.
-    static func activityBuckets(events: [GestureEvent], hourly: Bool, now: Date = Date(),
-                                calendar: Calendar = .current) -> [ActivityBucket] {
-        let unit: Calendar.Component = hourly ? .hour : .day
-        let count = hourly ? 24 : 7
-        guard let current = calendar.dateInterval(of: unit, for: now)?.start else { return [] }
-        let starts = (0..<count).reversed().compactMap { calendar.date(byAdding: unit, value: -$0, to: current) }
-        guard let first = starts.first else { return [] }
-        var runs = [Date: Int]()
-        for event in events where event.fired && event.timestamp >= first && event.timestamp <= now {
-            if let start = calendar.dateInterval(of: unit, for: event.timestamp)?.start { runs[start, default: 0] += 1 }
+    struct ActivitySeries {
+        let buckets: [ActivityBucket]
+        let unit: Calendar.Component
+        var total: Int { buckets.reduce(0) { $0 + $1.runs } }
+
+        func label(for date: Date) -> String {
+            switch unit {
+            case .hour: date.formatted(date: .omitted, time: .shortened)
+            case .month: date.formatted(.dateTime.month(.abbreviated).year(.twoDigits))
+            case .year: date.formatted(.dateTime.year())
+            default: date.formatted(.dateTime.month(.abbreviated).day())
+            }
         }
-        return starts.map { ActivityBucket(start: $0, runs: runs[$0] ?? 0, isCurrent: $0 == current) }
     }
 
-    private var activitySection: some View {
-        let hourly = period == .day
-        let buckets = Self.activityBuckets(events: stats.events, hourly: hourly)
-        let total = buckets.reduce(0) { $0 + $1.runs }
-        let span = hourly ? "last 24 hours" : "last 7 days"
-        // The title states the chart's message (HIG Charts): the total.
-        return AOMSection("Activity", detail: "\(total.formatted()) run\(total == 1 ? "" : "s") in the \(span)",
-                          help: "Automations that ran per \(hourly ? "hour" : "day"), from the most recent \(GestureStatistics.recentEventLimit.formatted()) inputs. The current \(hourly ? "hour" : "day") is in the accent colour.",
+    /// Calendar-aligned bars include both partial edge bins, but count only
+    /// events within the exact rolling period used by the figures and log.
+    /// All Time uses the available event history, not a mislabeled 7-day chart.
+    nonisolated static func activitySeries(events: [GestureEvent], period: Period, now: Date,
+                                           calendar: Calendar = .current) -> ActivitySeries {
+        let earliestLogged = events.lazy.map(\.timestamp).filter { $0 <= now }.min() ?? now
+        let since = period.interval.map { now.addingTimeInterval(-$0) } ?? earliestLogged
+        let days = now.timeIntervalSince(since) / 86_400
+        let unit: Calendar.Component = switch period {
+        case .day: .hour
+        case .week: .day
+        case .all: days <= 1 ? .hour : (days <= 31 ? .day : (days <= 730 ? .month : .year))
+        }
+        var counts: [Date: Int] = [:]
+        for event in events where event.fired && (since...now).contains(event.timestamp) {
+            if let bin = calendar.dateInterval(of: unit, for: event.timestamp) { counts[bin.start, default: 0] += 1 }
+        }
+        guard !counts.isEmpty, var bin = calendar.dateInterval(of: unit, for: since) else {
+            return ActivitySeries(buckets: [], unit: unit)
+        }
+        var buckets: [ActivityBucket] = []
+        while bin.start <= now {
+            buckets.append(ActivityBucket(start: bin.start, runs: counts[bin.start, default: 0]))
+            guard let next = calendar.dateInterval(of: unit, for: bin.end), next.start > bin.start else { break }
+            bin = next
+        }
+        return ActivitySeries(buckets: buckets, unit: unit)
+    }
+
+    private func activitySection(_ series: ActivitySeries) -> some View {
+        let total = series.total
+        let unit = String(describing: series.unit)
+        return AOMSection("Automation runs", detail: period == .all ? "Recorded events" : period.rawValue,
+                          help: "One bar per \(unit), from the retained event log. Select a bar to filter the log. All Time figures use running totals.",
                           padding: total == 0 ? 0 : AOMSpace.cardPadding) {
             if total == 0 {
-                AOMInlineEmpty(symbol: "chart.bar", message: "No automations ran in the \(span).")
+                AOMInlineEmpty(symbol: "chart.bar", message: "No runs recorded in this period.")
             } else {
-                activityChart(buckets, hourly: hourly, total: total, span: span)
+                VStack(alignment: .leading, spacing: AOMSpace.x2) {
+                    activityChart(series)
+                    DisclosureGroup("View run counts") {
+                        ForEach(series.buckets) { bucket in
+                            Button {
+                                selectedBucket = bucket.start
+                            } label: {
+                                HStack {
+                                    Text(series.label(for: bucket.start))
+                                    Spacer()
+                                    Text("\(bucket.runs.formatted()) \(bucket.runs == 1 ? "run" : "runs")").monospacedDigit()
+                                }
+                            }
+                            .buttonStyle(AOMRowButtonStyle())
+                        }
+                    }
+                    .font(AOMFont.callout)
+                }
             }
         }
     }
 
     // MARK: Event log (D30)
 
-    private var eventLogSection: some View {
-        let hourly = period == .day
-        let bucketStart = bucket(at: selectedBucket,
-                                 in: Self.activityBuckets(events: stats.events, hourly: hourly), hourly: hourly)?.start
-        let shown = AOMActivityLog.events(stats.events, now: Date(), within: period.interval,
-                                          bucketStart: bucketStart, hourly: hourly, runsOnly: logRunsOnly)
-        let scope = bucketStart.map { start in
-            hourly ? start.formatted(date: .omitted, time: .shortened) : start.formatted(date: .abbreviated, time: .omitted)
-        } ?? period.rawValue
-        return AOMSection("Event log", detail: shown.isEmpty ? nil : "\(shown.count.formatted()) · \(scope)",
-                          help: "The newest inputs AOM recognised, up to \(AOMActivityLog.limit). Select a bar in Activity to see only that \(hourly ? "hour" : "day").") {
+    private func eventLogSection(_ series: ActivitySeries, now: Date) -> some View {
+        let bucketStart = bucket(at: selectedBucket, in: series)?.start
+        let shown = AOMActivityLog.events(stats.events, now: now, within: period.interval,
+                                          bucketStart: bucketStart, hourly: series.unit == .hour, runsOnly: logRunsOnly,
+                                          bucketUnit: series.unit)
+        let scope = bucketStart.map(series.label(for:)) ?? period.rawValue
+        return AOMSection("Event log", detail: shown.isEmpty ? scope : "\(shown.count.formatted()) · \(scope)",
+                          help: "The latest \(AOMActivityLog.limit) recorded events in the selected period or bar.") {
             HStack(spacing: AOMSpace.x2) {
                 Toggle("Runs only", isOn: $logRunsOnly).toggleStyle(.checkbox).font(AOMFont.callout)
                 if bucketStart != nil {
@@ -246,12 +283,12 @@ struct StatisticsView: View {
         } content: {
             if shown.isEmpty {
                 AOMInlineEmpty(symbol: "list.bullet.rectangle",
-                               message: logRunsOnly ? "No automation ran in this period." : "No inputs in this period.")
+                               message: logRunsOnly ? "No runs recorded in this period." : "No inputs recorded in this period.")
             } else {
                 VStack(spacing: 0) {
                     ForEach(Array(shown.enumerated()), id: \.offset) { index, event in
                         HStack(spacing: AOMSpace.x3) {
-                            Text(event.timestamp.formatted(date: hourly ? .omitted : .abbreviated, time: .standard))
+                            Text(event.timestamp.formatted(date: period == .day ? .omitted : .abbreviated, time: .standard))
                                 .font(AOMFont.callout.monospacedDigit())
                                 .foregroundStyle(AOMColor.textSecondary)
                                 .frame(minWidth: 96, alignment: .leading)
@@ -272,31 +309,36 @@ struct StatisticsView: View {
     }
 
     /// The bucket a chart selection falls in (the selection is a date inside it).
-    private func bucket(at date: Date?, in buckets: [ActivityBucket], hourly: Bool) -> ActivityBucket? {
-        guard let date else { return nil }
-        let unit: Calendar.Component = hourly ? .hour : .day
-        return buckets.first { Calendar.current.isDate($0.start, equalTo: date, toGranularity: unit) }
+    private func bucket(at date: Date?, in series: ActivitySeries) -> ActivityBucket? {
+        guard let date, let start = Calendar.current.dateInterval(of: series.unit, for: date)?.start else { return nil }
+        return series.buckets.first { $0.start == start }
     }
 
-    private func activityChart(_ buckets: [ActivityBucket], hourly: Bool, total: Int, span: String) -> some View {
-        let selected = bucket(at: selectedBucket, in: buckets, hourly: hourly)
+    private func activityChart(_ series: ActivitySeries) -> some View {
+        let selected = bucket(at: selectedBucket, in: series)
+        let unit = String(describing: series.unit).capitalized
+        let peak = series.buckets.map(\.runs).max() ?? 0
+        let tickStep = max(1, Int(ceil(Double(peak) / 3)))
+        let top = max(1, (peak + tickStep - 1) / tickStep) * tickStep
+        let ticks = Array(stride(from: 0, through: top, by: tickStep))
+        let labelStep = max(1, (series.buckets.count + 5) / 6)
+        let dates = stride(from: 0, to: series.buckets.count, by: labelStep).map { series.buckets[$0].start }
         return Chart {
-            ForEach(buckets) { bucket in
-                BarMark(x: .value(hourly ? "Hour" : "Day", bucket.start, unit: hourly ? .hour : .day),
-                        y: .value("Runs", bucket.runs))
-                    .foregroundStyle(bucket.isCurrent || bucket.id == selected?.id ? Color.accentColor : Color.accentColor.opacity(0.4))
+            ForEach(series.buckets) { bucket in
+                BarMark(x: .value(unit, bucket.start, unit: series.unit),
+                        y: .value("Runs", bucket.runs), width: .ratio(0.65))
+                    .foregroundStyle(bucket.id == selected?.id ? AOMColor.accent : AOMColor.textTertiary)
                     .cornerRadius(AOMRadius.keycap)
-                    .accessibilityLabel(hourly ? bucket.start.formatted(date: .omitted, time: .shortened)
-                                               : bucket.start.formatted(.dateTime.weekday(.wide)))
+                    .accessibilityLabel(series.label(for: bucket.start))
                     .accessibilityValue("\(bucket.runs) run\(bucket.runs == 1 ? "" : "s")")
             }
             if let selected {
-                RuleMark(x: .value(hourly ? "Hour" : "Day", selected.start, unit: hourly ? .hour : .day))
+                RuleMark(x: .value(unit, selected.start, unit: series.unit))
                     .foregroundStyle(AOMColor.hairline)
                     .annotation(position: .top, spacing: AOMSpace.x1,
                                 overflowResolution: .init(x: .fit(to: .chart), y: .disabled)) {
-                        Text("\(hourly ? selected.start.formatted(date: .omitted, time: .shortened) : selected.start.formatted(.dateTime.weekday(.wide))) · \(selected.runs) run\(selected.runs == 1 ? "" : "s")")
-                            .font(AOMFont.caption.weight(.medium))
+                        Text("\(series.label(for: selected.start)) · \(selected.runs.formatted()) \(selected.runs == 1 ? "run" : "runs")")
+                            .font(AOMFont.caption.weight(.medium).monospacedDigit())
                             .foregroundStyle(AOMColor.text)
                             .padding(.horizontal, AOMSpace.x2)
                             .padding(.vertical, AOMSpace.x0_5)
@@ -306,21 +348,20 @@ struct StatisticsView: View {
             }
         }
         .chartXSelection(value: $selectedBucket)
-        // Bars start at zero with few grid lines (HIG Charts, axes).
+        .chartYScale(domain: 0...top)
+        .chartYAxisLabel("Runs", position: .leading)
         .chartYAxis {
-            AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { _ in
+            AxisMarks(position: .leading, values: ticks) { _ in
                 AxisGridLine()
-                AxisValueLabel().font(AOMFont.caption)
+                AxisValueLabel().font(AOMFont.caption.monospacedDigit())
             }
         }
         .chartXAxis {
-            if hourly {
-                AxisMarks(values: .stride(by: .hour, count: 6)) { _ in
-                    AxisValueLabel(format: .dateTime.hour(), centered: true).font(AOMFont.caption)
-                }
-            } else {
-                AxisMarks(values: .stride(by: .day)) { _ in
-                    AxisValueLabel(format: .dateTime.weekday(.abbreviated), centered: true).font(AOMFont.caption)
+            AxisMarks(values: dates) { value in
+                AxisValueLabel(centered: true) {
+                    if let date = value.as(Date.self) {
+                        Text(series.label(for: date)).font(AOMFont.caption.monospacedDigit())
+                    }
                 }
             }
         }
@@ -328,8 +369,8 @@ struct StatisticsView: View {
         // Room above the top grid line for its label.
         .padding(.top, AOMSpace.x2)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Automations run per \(hourly ? "hour" : "day")")
-        .accessibilityValue("\(total) in the \(span)")
+        .accessibilityLabel("Automation runs per \(unit.lowercased())")
+        .accessibilityValue("\(series.total) recorded runs · \(period.rawValue)")
     }
 
     private func mostUsedSection(_ figures: Figures) -> some View {
@@ -377,16 +418,11 @@ struct StatisticsView: View {
         VStack(alignment: .leading, spacing: 0) {
             if figures.entries.isEmpty {
                 // design-336 b.9: one row in the card, one button.
-                AOMCardEmptyRow(period == .all ? "No inputs recorded yet." : "No inputs in the \(period.rawValue.lowercased()).",
-                                detail: "Your gestures, shortcuts and mouse buttons appear here as you use them.",
-                                systemImage: "hand.tap") {
-                    if period != .all { Button("Show All Time") { period = .all } }
-                }
+                AOMInlineEmpty(symbol: "hand.tap", message: "No inputs recorded in this period.")
             } else {
                 let maxCount = max(1, figures.entries.map(\.totalCount).max() ?? 1)
                 ForEach(Array(figures.entries.prefix(25).enumerated()), id: \.element.id) { index, entry in
-                    GestureStatRow(rank: index + 1, entry: entry, maxCount: maxCount,
-                                   accentColor: appState.accentColorChoice.color)
+                    GestureStatRow(rank: index + 1, entry: entry, maxCount: maxCount)
                         .contentShape(Rectangle())
                         .contextMenu { mostUsedMenu(entry) }
                         .overlay(alignment: .top) {
@@ -483,7 +519,6 @@ private struct GestureStatRow: View {
     let rank: Int
     let entry: GestureStatEntry
     let maxCount: Int
-    let accentColor: Color
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x3) {
@@ -507,8 +542,8 @@ private struct GestureStatRow: View {
                     }
                     if entry.firedCount > 0 {
                         Text("\(entry.firedCount) fired")
-                            .font(AOMFont.caption.weight(.medium))
-                            .foregroundStyle(AOMColor.successText)
+                            .font(AOMFont.caption.weight(.medium).monospacedDigit())
+                            .foregroundStyle(AOMColor.textSecondary)
                             .lineLimit(1)
                     }
                     Text("\(entry.totalCount)")
@@ -519,7 +554,7 @@ private struct GestureStatRow: View {
                     let fraction = CGFloat(entry.totalCount) / CGFloat(maxCount)
                     ZStack(alignment: .leading) {
                         Capsule().fill(AOMColor.track)
-                        Capsule().fill(accentColor).frame(width: max(AOMSpace.x1, geo.size.width * fraction))
+                        Capsule().fill(AOMColor.textTertiary).frame(width: geo.size.width * fraction)
                     }
                 }
                 .frame(height: AOMFeatureSize.meter)
@@ -546,14 +581,17 @@ enum AOMActivityLog {
     static let limit = 50
 
     static func events(_ events: [GestureEvent], now: Date, within interval: TimeInterval?, bucketStart: Date?,
-                       hourly: Bool, runsOnly: Bool, calendar: Calendar = .current) -> [GestureEvent] {
+                       hourly: Bool, runsOnly: Bool, calendar: Calendar = .current,
+                       bucketUnit: Calendar.Component? = nil) -> [GestureEvent] {
         let earliest = interval.map { now.addingTimeInterval(-$0) }
-        let unit: Calendar.Component = hourly ? .hour : .day
+        let unit = bucketUnit ?? (hourly ? .hour : .day)
+        let bin = bucketStart.flatMap { calendar.dateInterval(of: unit, for: $0) }
         var result: [GestureEvent] = []
         for event in events.reversed() {
-            if let earliest, event.timestamp < earliest { break }
+            if let earliest, event.timestamp < earliest { continue }
+            guard event.timestamp <= now else { continue }
             if runsOnly && !event.fired { continue }
-            if let bucketStart, !calendar.isDate(event.timestamp, equalTo: bucketStart, toGranularity: unit) { continue }
+            if let bin, !(bin.start..<bin.end).contains(event.timestamp) { continue }
             result.append(event)
             if result.count == limit { break }
         }

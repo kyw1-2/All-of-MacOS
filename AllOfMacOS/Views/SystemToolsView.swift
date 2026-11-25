@@ -21,39 +21,32 @@ struct SystemToolsView: View {
 
     private static let tileMinimumWidth: CGFloat = 228
     private static let toggleMinimumWidth: CGFloat = 188
-    private static let emptyStateMinimumHeight: CGFloat = 240
+    private var searching: Bool { !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    private var showsStrip: Bool { !searching && selectedGroup == nil }
 
-    private var showsStrip: Bool { query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && selectedGroup == nil }
-
-    private var visibleGroups: [(group: SystemToolGroup, tools: [SystemToolInfo])] {
-        SystemToolGroup.allCases.compactMap { group in
-            guard selectedGroup == nil || selectedGroup == group else { return nil }
-            // 7.2.2: a grouped tile's options show only while searching.
-            let searching = !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            let tools = SystemToolCatalog.availableTools(in: group).filter { $0.matches(query) && (searching || $0.groupedInto == nil) }
-            return tools.isEmpty ? nil : (group, tools)
-        }
+    private func matchesFilters(_ info: SystemToolInfo) -> Bool {
+        (selectedGroup == nil || selectedGroup == info.group) && info.matches(query)
     }
 
-    /// The last result, or how to use the page before anything ran.
-    private var subtitle: String {
-        guard let result = model.lastResult else {
-            return "Browse by category, search for a task, or star a tool for quick access."
+    private var visibleFavorites: [SystemToolInfo] {
+        model.favorites.map(SystemToolCatalog.info).filter { $0.isAvailable && matchesFilters($0) }
+    }
+
+    private func visibleGroups(excluding favorites: [SystemToolInfo]) -> [(group: SystemToolGroup, tools: [SystemToolInfo])] {
+        let pinned = Set(favorites.map(\.id))
+        let matches = SystemToolCatalog.available.filter { info in
+            matchesFilters(info) && (searching || info.groupedInto == nil) && !pinned.contains(info.id)
         }
-        let time = result.date.formatted(date: .omitted, time: .shortened)
-        return "\(result.succeeded ? "✓" : "⚠︎") \(SystemToolCatalog.info(result.tool).title.replacingOccurrences(of: "…", with: "")): \(result.message) · \(time)"
+        let byGroup = Dictionary(grouping: matches, by: \.group)
+        return SystemToolGroup.allCases.compactMap { group in byGroup[group].map { (group, $0) } }
     }
 
     var body: some View {
         AOMPage {
-            // 7.15 (M01): the last result, or an invitation — not the page's name.
-            AOMPageHeader(model.lastResult.map { $0.succeeded ? "Last task finished" : "Last task needs a look" } ?? "Maintenance and quick fixes",
-                          subtitle: subtitle)
-                .help(model.lastResult?.message ?? "")
-            // D29: the last result in one place, with whether it can be undone
-            // and the way to run it again, beside the search and categories.
             if let result = model.lastResult {
                 lastResultStrip(result)
+            } else {
+                AOMPageHeader("Maintenance and quick fixes", help: "Search for a task or star a tool to keep it at the top.")
             }
             HStack {
                 // 6.1: categories as view tabs (Linear, iStat Menus' module
@@ -66,6 +59,14 @@ struct SystemToolsView: View {
                     Button("Reset Filters") { selectedGroup = nil; query = "" }
                 }
             }
+            let pinned = visibleFavorites
+            let shown = visibleGroups(excluding: pinned)
+            if !pinned.isEmpty {
+                VStack(alignment: .leading, spacing: AOMSpace.titleGap) {
+                    AOMSectionTitle("Favorites")
+                    grid(pinned)
+                }
+            }
             if showsStrip {
                 VStack(alignment: .leading, spacing: AOMSpace.titleGap) {
                     AOMSectionTitle("This Mac")
@@ -74,15 +75,10 @@ struct SystemToolsView: View {
                                       openFreeUpSpace: { model.showStartupDisk = true },
                                       openNetworkInfo: { model.showNetworkInfo = true })
                 }
-                favorites
             }
-            let shown = visibleGroups
-            if shown.isEmpty {
-                AOMEmptyState(query.isEmpty ? "No available tools in this category" : "No Tools Match “\(query)”", systemImage: "magnifyingglass",
-                              message: "Choose another category or try a different search.") {
-                    Button("Show All Tools") { query = ""; selectedGroup = nil }
-                }
-                .frame(minHeight: Self.emptyStateMinimumHeight)
+            if shown.isEmpty && pinned.isEmpty {
+                AOMInlineEmpty(symbol: "magnifyingglass", message: searching ? "No matching tools." : "No tools in this category.",
+                               actionTitle: "Show All Tools") { query = ""; selectedGroup = nil }
             } else {
                 ForEach(shown, id: \.group) { entry in
                     VStack(alignment: .leading, spacing: AOMSpace.titleGap) {
@@ -184,19 +180,6 @@ struct SystemToolsView: View {
         .accessibilityElement(children: .combine)
     }
 
-    // MARK: - Favorites
-
-    @ViewBuilder
-    private var favorites: some View {
-        let pinned = model.favorites.map(SystemToolCatalog.info).filter(\.isAvailable)
-        if !pinned.isEmpty {
-            VStack(alignment: .leading, spacing: AOMSpace.titleGap) {
-                AOMSectionTitle("Favorites")
-                grid(pinned)
-            }
-        }
-    }
-
     // MARK: - Pieces
 
     private func grid(_ tools: [SystemToolInfo]) -> some View {
@@ -250,12 +233,16 @@ struct SystemToolsView: View {
 
 /// D29: whether a tool's last run can be taken back, said under its result.
 enum SystemToolUndoNote {
+    static let trashRecovery = "No Undo in AOM. Use Put Back in Finder’s Trash while the items are still there."
+
     static func note(_ id: SystemToolID, kind: SystemToolKind) -> String? {
         switch id {
         // Free Up Space empties the Trash and clears caches (both confirmed
         // first); what it moves to the Trash can still be put back.
         case .freeUpSpace: return "Items moved to the Trash can be put back; an emptied Trash or cleared caches can't."
-        case .resetSavedState: return "Saved window state can't be restored once reset."
+        case .resetSavedState, .uninstall: return trashRecovery
+        case .activity, .killApps, .relaunchApp: return "Quitting can't be undone. Reopening an app won't recover unsaved work."
+        case .launchServices, .spotlight, .repair: return "The previous index can't be restored by AOM."
         default: break
         }
         switch kind {

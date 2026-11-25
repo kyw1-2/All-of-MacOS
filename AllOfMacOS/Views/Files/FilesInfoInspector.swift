@@ -54,15 +54,19 @@ struct FilesItemInfo: Equatable {
 
 struct FilesInfoInspector: View {
     let url: URL
+    var sampleInfo: FilesItemInfo? = nil
     let quickLook: () -> Void
     let close: () -> Void
     @State private var info: FilesItemInfo?
 
     var body: some View {
-        AOMInspector {
-            AOMInspectorSection(FileManager.default.displayName(atPath: url.path), showsDivider: false) {
+        let info = sampleInfo ?? info
+        let canOpen = info?.exists == true && sampleInfo == nil
+        return AOMInspector {
+            AOMInspectorSection("Selected Path", showsDivider: false) {
+                AOMInspectorRow("Name", text: url.path == "/" ? "/" : url.lastPathComponent)
                 if let info, !info.exists {
-                    Label("This item was moved or deleted.", systemImage: "questionmark.folder")
+                    Label("This path is unavailable.", systemImage: "questionmark.folder")
                         .font(AOMFont.callout)
                         .foregroundStyle(AOMColor.warningText)
                 } else {
@@ -93,6 +97,7 @@ struct FilesInfoInspector: View {
                             Button(crumb.name) { NSWorkspace.shared.activateFileViewerSelecting([crumb.url]) }
                                 .buttonStyle(.link)
                                 .font(AOMFont.callout)
+                                .disabled(sampleInfo != nil || (crumb.url.path == url.path && !canOpen))
                                 .help("Show “\(crumb.name)” in the Finder")
                         }
                     }
@@ -105,8 +110,10 @@ struct FilesInfoInspector: View {
                     Button("Open") { FilesFileActions.open([url]) }
                     Button("Quick Look", action: quickLook)
                 }
+                .disabled(!canOpen)
                 HStack(spacing: AOMSpace.x2) {
                     Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+                        .disabled(!canOpen)
                     Button("Copy Path") {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(url.path, forType: .string)
@@ -118,11 +125,12 @@ struct FilesInfoInspector: View {
             }
         }
         .task(id: url) {
-            info = nil
+            guard sampleInfo == nil else { return }
+            self.info = nil
             let target = url
             let read = await Task.detached(priority: .utility) { FilesItemInfo.read(target) }.value
             guard !Task.isCancelled else { return }
-            info = read
+            self.info = read
         }
     }
 }

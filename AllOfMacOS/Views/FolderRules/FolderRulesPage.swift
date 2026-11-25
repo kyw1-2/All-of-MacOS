@@ -10,7 +10,7 @@ struct FolderRulesPage: View {
     @ObservedObject private var engine = FolderRulesEngine.shared
     @AppStorage("AOMFolderRulesListWidth") private var listWidth = AOMSize.moduleListIdeal
     @AppStorage("AOMFolderRulesInspector") private var showsInspector = false
-    @State private var inspectorWidth = Double(AOMSize.inspectorIdeal)
+    @AppStorage("AOMFolderRulesInspectorWidth") private var inspectorWidth = Double(AOMSize.inspectorIdeal)
     @Environment(\.undoManager) private var undoManager
     @State private var pageWidth: CGFloat = 0
     /// Whether the inspector fits now (Workbench 2 D02/D27): decided from
@@ -80,7 +80,9 @@ struct FolderRulesPage: View {
         .aomToolbarSubtitle(toolbarSubtitle)
         .aomPageToolbar { toolbarContent }
         .aomToast(model.toast)
-        .aomPageDeleteCommand { model.removeSelection(undoManager: undoManager) }
+        .aomPageDeleteCommand {
+            if !FolderRulesPageSamples.enabled { model.removeSelection(undoManager: undoManager) }
+        }
         // Rules can be added or removed while the page is hidden.
         .aomPageLifecycle(onActivate: { model.selectDefault() })
     }
@@ -88,8 +90,12 @@ struct FolderRulesPage: View {
     private var page: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: AOMSpace.x2) {
-                FolderRulesHeader(engine: engine)
-                FolderRulesNotices(model: model, engine: engine)
+                if FolderRulesPageSamples.enabled {
+                    AOMPageHeader("3 Sample Rules", subtitle: "Preview data · no files are watched", identity: false)
+                } else {
+                    FolderRulesHeader(engine: engine)
+                    FolderRulesNotices(model: model, engine: engine)
+                }
             }
             .padding(.horizontal, AOMSpace.pageMargin)
             .padding(.top, AOMSpace.pageTop)
@@ -113,6 +119,7 @@ struct FolderRulesPage: View {
                              displayed: clampedListWidth,
                              maximum: pageWidth > 0 ? pageWidth - AOMSize.detailMinimum - AOMWorkbenchPolicy.dividerAllowance : nil)
             FolderRulesDetail(model: model, engine: engine, showPreview: showPreview)
+                .disabled(FolderRulesPageSamples.enabled)
                 .frame(minWidth: AOMSize.detailMinimum, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             if isInspectorShown {
                 HStack(spacing: 0) {
@@ -121,6 +128,7 @@ struct FolderRulesPage: View {
                     FolderRulesInspector(model: model, engine: engine)
                         .frame(width: shownInspectorWidth)
                         .frame(maxHeight: .infinity)
+                        .disabled(FolderRulesPageSamples.enabled)
                 }
                 .transition(.move(edge: .trailing).combined(with: .opacity))
                 .accessibilityElement(children: .contain)
@@ -157,6 +165,7 @@ struct FolderRulesPage: View {
                 model.newRule()
             }
             .help("New Rule in the selected folder; the menu adds a template or a folder")
+            .disabled(FolderRulesPageSamples.enabled)
         }
         ToolbarItem(placement: .automatic) {
             Button {
@@ -281,12 +290,25 @@ struct FolderRulesListColumn: View {
                 }
                 .tag(FolderRulesPageModel.Selection.activity)
                 Section("Folders") {
-                    ForEach(engine.config.folders) { folder in
-                        folderRow(folder)
-                            .tag(FolderRulesPageModel.Selection.folder(folder.id))
-                        ForEach(engine.config.rules(in: folder.id)) { rule in
-                            ruleRow(rule)
+                    ForEach(model.config.folders) { folder in
+                        if FolderRulesPageSamples.enabled {
+                            Label(folder.name, systemImage: "folder")
+                                .tag(FolderRulesPageModel.Selection.folder(folder.id))
+                        } else {
+                            folderRow(folder)
+                                .tag(FolderRulesPageModel.Selection.folder(folder.id))
+                        }
+                        ForEach(model.rules(in: folder.id)) { rule in
+                            if FolderRulesPageSamples.enabled {
+                                AOMListRow(rule.name, detail: FolderRulesText.summary(rule)) {
+                                    Image(systemName: "circle")
+                                }
+                                .padding(.leading, AOMSpace.x4)
                                 .tag(FolderRulesPageModel.Selection.rule(rule.id))
+                            } else {
+                                ruleRow(rule)
+                                    .tag(FolderRulesPageModel.Selection.rule(rule.id))
+                            }
                         }
                     }
                     Button {
@@ -299,11 +321,13 @@ struct FolderRulesListColumn: View {
                     .buttonStyle(.plain)
                     .padding(.vertical, AOMSpace.x1)
                     .help("Choose another folder to watch")
+                    .disabled(FolderRulesPageSamples.enabled)
                 }
             }
             .listStyle(.inset(alternatesRowBackgrounds: false))
             .scrollContentBackground(.hidden)
             .dropDestination(for: URL.self) { urls, _ in
+                guard !FolderRulesPageSamples.enabled else { return false }
                 let folders = urls.filter { url in
                     var isDirectory: ObjCBool = false
                     return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue
@@ -325,6 +349,7 @@ struct FolderRulesListColumn: View {
                 Button("Move Rule Up") { model.moveSelectedRule(by: -1) }.disabled(!isRuleSelected)
                 Button("Move Rule Down") { model.moveSelectedRule(by: 1) }.disabled(!isRuleSelected)
             }
+            .disabled(FolderRulesPageSamples.enabled)
         })
     }
 

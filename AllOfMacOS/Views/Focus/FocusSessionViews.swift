@@ -31,7 +31,6 @@ struct FocusSessionHeader: View {
         if let run = timer.run {
             AOMStatusHeader(.focus, active: !run.isPaused, title: run.phase.title,
                             figure: FocusDurationFormat.countdown(run.remaining(at: now)), unit: "left",
-                            detail: Self.runningDetail(run: run, timer: timer, now: now),
                             status: run.isPaused ? AOMStatus("Paused", tone: .neutral, symbol: "pause.fill") : nil,
                             progress: run.progress(at: now)) {
                 if run.isPaused {
@@ -48,16 +47,18 @@ struct FocusSessionHeader: View {
                 .help(run.phase == .focus ? "Ends this focus early and starts the break" : "Ends the break and starts the next focus")
                 Button { session.stop() } label: { Label("Stop", systemImage: "stop.fill") }
                     .help("Ends the session; focused minutes stay in the log")
+                let detail = Self.runningDetail(run: run, timer: timer, now: now)
+                if !detail.isEmpty { AOMInfoButton(detail) }
             }
             .accessibilityValue("\(FocusDurationFormat.spoken(run.remaining(at: now))) left")
         } else {
-            AOMStatusHeader(.focus, active: false, title: "Focus",
-                            figure: FocusDurationFormat.countdown(plan.length(of: .focus)), unit: nil,
-                            detail: Self.idleDetail(timer: timer, plan: plan, now: now)) {
+            AOMStatusHeader(.focus, active: false, title: "Ready to focus",
+                            figure: FocusDurationFormat.countdown(plan.length(of: .focus))) {
                 Button { session.start() } label: { Label("Start Focus", systemImage: "play.fill") }
                     .aomPrimaryButton()
                     .aomShortcut(.return, modifiers: [.command])
                     .help("Starts a \(plan.focusMinutes) min focus (⌘↩)")
+                AOMInfoButton(Self.idleDetail(plan: plan))
             }
         }
     }
@@ -86,7 +87,7 @@ struct FocusSessionHeader: View {
         return parts.joined(separator: " · ")
     }
 
-    static func idleDetail(timer: FocusTimer, plan: FocusPlan, now: Date) -> String {
+    static func idleDetail(plan: FocusPlan) -> String {
         guard plan.breaksEnabled else { return "\(plan.focusMinutes) min focus, no breaks" }
         var text = "\(plan.focusMinutes) min focus, \(plan.breakMinutes) min break"
         if plan.longBreaksEnabled {
@@ -200,10 +201,14 @@ struct FocusTodaySection: View {
                             detail: FocusTodaySection.hours(stats.weekMinutes), systemImage: "calendar", tint: AOMModule.focus.hue)
             ])
             AOMRowDivider()
-            FocusWeekChart(days: stats.lastSevenDays)
-                .frame(height: 112)
-                .padding(.horizontal, AOMSpace.cardPadding)
-                .padding(.vertical, AOMSpace.x3)
+            if stats.lastSevenDays.contains(where: { $0.minutes > 0 }) {
+                FocusWeekChart(days: stats.lastSevenDays)
+                    .frame(height: 112)
+                    .padding(.horizontal, AOMSpace.cardPadding)
+                    .padding(.vertical, AOMSpace.x3)
+            } else {
+                AOMInlineEmpty(symbol: "chart.bar", message: "No focus time recorded in the last 7 days.")
+            }
         }
     }
 
@@ -222,7 +227,7 @@ struct FocusWeekChart: View {
         let today = days.last?.day
         Chart(days) { day in
             BarMark(x: .value("Day", day.day, unit: .day), y: .value("Minutes", day.minutes), width: .ratio(0.55))
-                .foregroundStyle(day.day == today ? AOMModule.focus.hue : AOMModule.focus.hue.opacity(0.45))
+                .foregroundStyle(AOMColor.textTertiary)
                 .cornerRadius(3)
         }
         .chartYScale(domain: 0...max(30, peak))
@@ -242,16 +247,7 @@ struct FocusWeekChart: View {
                 AxisValueLabel().font(AOMFont.caption)
             }
         }
-        .overlay {
-            if peak == 0 {
-                Text("No focus this week yet")
-                    .font(AOMFont.callout)
-                    .foregroundStyle(AOMColor.textSecondary)
-                    .padding(.horizontal, AOMSpace.x2)
-                    .padding(.vertical, AOMSpace.x1)
-                    .background(AOMColor.overlaySurface, in: Capsule())
-            }
-        }
+        .chartYAxisLabel("Minutes", position: .trailing)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Focused minutes, last 7 days")
         .accessibilityValue(days.map { day in
@@ -311,12 +307,11 @@ struct FocusDuringSection: View {
 
     var body: some View {
         let options = settings.settings
-        AOMSection("During focus", footer: "macOS gives apps no direct way to turn on a Focus such as Do Not Disturb, so choose a shortcut that uses Set Focus. Changes apply from the next focus.") {
+        AOMSection("During focus", help: "\(Self.shortcutsHelp) Changes apply from the next session.") {
             if let problem = session.shortcutProblem {
-                AOMNotice(.warning, problem) {
+                AOMSettingRow("Shortcut couldn’t run", symbol: "exclamationmark.triangle", help: problem) {
                     Button("Refresh") { shortcuts.reload() }
                 }
-                .padding(AOMSpace.x2)
             }
             AOMToggleRow("Hide distracting apps", detail: "At the start, and again if one comes forward",
                          symbol: "eye.slash", isOn: $settings.settings.hidesDistractions)

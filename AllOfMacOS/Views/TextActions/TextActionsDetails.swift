@@ -50,7 +50,6 @@ struct TextActionsStatusNotices: View {
 /// timing and placement, the Copy fallback and the shortcut.
 struct TextActionsBarDetail: View {
     @Binding var settings: TextActionsSettings
-    @State private var sample: TextActionsPreviewSample = .text
     @ObservedObject private var shortcuts = CaptureShortcuts.shared
     @Environment(\.openSettings) private var openSettings
 
@@ -66,19 +65,6 @@ struct TextActionsBarDetail: View {
                     .accessibilityLabel("Text Actions")
             }
             TextActionsStatusNotices(isOn: settings.isOn)
-
-            AOMSection("Preview", footer: "Point at an item to see what it does. Some appear only for the text they fit, such as Open Link for a web address.",
-                       padding: AOMSpace.cardPadding) {
-                Picker("Sample", selection: $sample) {
-                    ForEach(TextActionsPreviewSample.allCases) { Text($0.title).tag($0) }
-                }
-                .pickerStyle(.menu)
-                .fixedSize()
-                .help("The kind of text the preview selects")
-                .accessibilityLabel("Sample text")
-            } content: {
-                TextActionsPreviewBox(settings: settings, sample: sample)
-            }
 
             AOMSection("Show the bar when") {
                 AOMToggleRow("Dragging across text", isOn: $settings.showsOnDrag)
@@ -150,7 +136,7 @@ struct TextActionsExcludedAppsDetail: View {
         AOMPage(maxWidth: AOMSize.readableWidth) {
             AOMPageHeader("Excluded Apps", subtitle: settings.excludedApps.isEmpty ? "The bar can appear in every app"
                                                                   : "The bar never appears in \(Self.count(settings.excludedApps.count))", identity: false)
-            AOMSection("Apps", footer: "Password managers start on the list. In every app the bar also stays out of password fields and secure keyboard entry, and while AOM is paused.") {
+            AOMSection("Apps", help: "Password managers start on the list. The bar always stays out of password fields and secure keyboard entry, and while AOM is paused.") {
                 TextActionsAppList(bundleIDs: $settings.excludedApps)
             }
         }
@@ -179,24 +165,8 @@ struct TextActionDetail: View {
                     .help(settings.isOn(id) ? "Leave \(id.title) off the bar" : "Put \(id.title) on the bar")
                     .accessibilityLabel(id.title)
             }
-            AOMSection("Preview", footer: previewFooter, padding: AOMSpace.cardPadding) {
-                TextActionsPreviewBox(settings: previewSettings, sample: TextActionsPreviewSample.best(for: id))
-            }
             options
         }
-    }
-
-    /// The preview shows the bar with this action on, so an action that is
-    /// off can be seen before it is switched on.
-    private var previewSettings: TextActionsSettings {
-        var preview = settings
-        preview.setAction(id, isOn: true)
-        return preview
-    }
-
-    private var previewFooter: String {
-        let when = Self.appearsWhen(id)
-        return settings.isOn(id) ? when : "\(when) Shown here as if it were on."
     }
 
     @ViewBuilder

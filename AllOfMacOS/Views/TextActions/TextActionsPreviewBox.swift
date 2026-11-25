@@ -42,6 +42,43 @@ enum TextActionsPreviewSample: String, CaseIterable, Identifiable {
     }
 }
 
+/// The preview stays separate from the scrolling settings at either width.
+struct TextActionsPreviewPane: View {
+    let settings: TextActionsSettings
+    let selectedAction: TextActionID?
+    let actionIsOn: Bool
+    let sample: TextActionsPreviewSample
+    @Binding var barSample: TextActionsPreviewSample
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AOMSpace.x2) {
+            AOMSectionTitle("Live Preview") {
+                AOMInfoButton(help, topic: "Live Preview")
+                if selectedAction == nil {
+                    Picker("Sample Text", selection: $barSample) {
+                        ForEach(TextActionsPreviewSample.allCases) { Text($0.title).tag($0) }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+            }
+            TextActionsPreviewBox(settings: settings, sample: sample)
+            if let selectedAction, !actionIsOn {
+                Text("Showing \(selectedAction.title) as if it were on.")
+                    .font(AOMFont.caption)
+                    .foregroundStyle(AOMColor.textSecondary)
+            }
+        }
+        .padding(AOMSpace.x3)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var help: String {
+        selectedAction.map(TextActionDetail.appearsWhen)
+            ?? "Some actions appear only for matching text. This preview doesn't run actions."
+    }
+}
+
 /// The bar exactly as it will look with the current settings, over a mock
 /// selection in a text field. The items show their tooltips; clicking runs
 /// nothing except paging and the transform menus.
@@ -50,6 +87,7 @@ struct TextActionsPreviewBox: View {
     let sample: TextActionsPreviewSample
     @StateObject private var model = TextActionBarModel()
     @State private var hasItems = true
+    @State private var barWidth: CGFloat = 220
 
     /// The preview pages at a width that fits the detail column.
     static let maxBarWidth: CGFloat = 420
@@ -75,15 +113,19 @@ struct TextActionsPreviewBox: View {
                 .accessibilityLabel("Selected text: \(sample.text)")
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, AOMSpace.x5)
+        .padding(.vertical, AOMSpace.x3)
         .padding(.horizontal, AOMSpace.x3)
         .background(AOMColor.sunken, in: RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous))
-        .task(id: PreviewKey(settings: settings, sample: sample)) { rebuild() }
+        .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width in
+            barWidth = min(Self.maxBarWidth, max(150, width - 2 * AOMSpace.x3))
+        }
+        .task(id: PreviewKey(settings: settings, sample: sample, width: barWidth)) { rebuild() }
     }
 
     private struct PreviewKey: Equatable {
         let settings: TextActionsSettings
         let sample: TextActionsPreviewSample
+        let width: CGFloat
     }
 
     private func rebuild() {
@@ -96,7 +138,7 @@ struct TextActionsPreviewBox: View {
         let actions = TextActionApplicability.actions(settings: settings, traits: traits, context: context)
         let items = TextActionBarItems.make(actions, traits: traits, context: context, speaking: false)
         hasItems = !items.isEmpty
-        model.set(items, showsNames: settings.showsNames, maxWidth: Self.maxBarWidth)
+        model.set(items, showsNames: settings.showsNames, maxWidth: barWidth)
         model.perform = { _, _, _ in }
     }
 }
