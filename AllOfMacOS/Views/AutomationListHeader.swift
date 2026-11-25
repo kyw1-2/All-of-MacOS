@@ -54,138 +54,15 @@ struct AutomationListHeader: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorSchemeContrast) private var contrast
 
-    private var current: AutomationScopeChoice? { scopes.first { $0.kind == scope } }
-
+    /// 7.18: search and the scope live in the page toolbar (one filter field,
+    /// one options menu); the list header keeps only the input picker.
     var body: some View {
-        VStack(alignment: .leading, spacing: AOMSpace.x2 + AOMSpace.x0_5) {
-            titleRow
-            searchField
-            inputBar
-        }
-        .padding(.horizontal, AOMSpace.x3)
-        .padding(.top, AOMSpace.x3)
-        .padding(.bottom, AOMSpace.x2)
-        .onChange(of: focusRequest) { _, requested in
-            if requested { searchFocused = true; focusRequest = false }
-        }
+        inputBar
+            .padding(.horizontal, AOMSpace.x3)
+            .padding(.top, AOMSpace.x3)
+            .padding(.bottom, AOMSpace.x2)
     }
 
-    // MARK: Title
-
-    private var titleRow: some View {
-        HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x2) {
-            Text("Automations")
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(AOMColor.text)
-                .accessibilityAddTraits(.isHeader)
-            Text("\(total)")
-                .font(AOMFont.callout.monospacedDigit())
-                .foregroundStyle(AOMColor.textTertiary)
-            Spacer(minLength: AOMSpace.x2)
-        }
-    }
-
-    // MARK: Search + scope
-
-    private var searchField: some View {
-        let shape = RoundedRectangle(cornerRadius: 9, style: .continuous)
-        return HStack(spacing: AOMSpace.x1 + AOMSpace.x0_5) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(AOMColor.textTertiary)
-            TextField("Search \(current?.count ?? total) automations", text: $query)
-                .textFieldStyle(.plain)
-                .font(AOMFont.body)
-                .focused($searchFocused)
-                .onExitCommand { query = "" }
-                .accessibilityLabel("Search automations")
-            if !query.isEmpty {
-                Button { query = "" } label: {
-                    Image(systemName: "xmark.circle.fill").foregroundStyle(AOMColor.textTertiary)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Clear search")
-            }
-            scopeMenu
-        }
-        .padding(.leading, AOMSpace.x2 + AOMSpace.x0_5)
-        .padding(.trailing, AOMSpace.x1)
-        .frame(height: 32)
-        .background(AOMColor.surface, in: shape)
-        .overlay {
-            shape.strokeBorder(searchFocused ? AOMColor.accent.opacity(0.7)
-                               : (contrast == .increased ? AOMColor.strongLine : AOMColor.hairline),
-                               lineWidth: searchFocused ? 1.5 : 0.5)
-        }
-        .aomAnimation(.quick, value: searchFocused)
-    }
-
-    /// The scope as the search field's accessory (Raycast's dropdown): the
-    /// app's own icon or a glyph, its name, a chevron; the menu lists every
-    /// scope with its count.
-    private var scopeMenu: some View {
-        Menu {
-            ForEach(scopes.filter { $0.kind == .all || $0.kind == .everywhere }) { choice in
-                scopeItem(choice)
-            }
-            let apps = scopes.filter { if case .app = $0.kind { return true }; return false }
-            if !apps.isEmpty {
-                Section("Only in an app") { ForEach(apps) { scopeItem($0) } }
-            }
-            let groups = scopes.filter { if case .group = $0.kind { return true }; return false }
-            if !groups.isEmpty {
-                Section("Activation groups") { ForEach(groups) { scopeItem($0) } }
-            }
-            Divider()
-            Button("Edit Activation Groups…", action: editGroups)
-        } label: {
-            HStack(spacing: AOMSpace.x1) {
-                scopeIcon(current, size: 15)
-                Text(current?.title ?? "All apps")
-                    .font(AOMFont.caption.weight(.semibold))
-                    .lineLimit(1)
-                Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(AOMColor.textTertiary)
-            }
-            .foregroundStyle(AOMColor.text)
-            .padding(.horizontal, AOMSpace.x2)
-            .frame(height: 24)
-            .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-            .contentShape(Rectangle())
-        }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help("Which automations the list shows. Each automation's “Applies to” sets where it runs.")
-        .accessibilityLabel("Show automations for, \(current?.title ?? "All apps")")
-    }
-
-    private func scopeItem(_ choice: AutomationScopeChoice) -> some View {
-        Button {
-            selectScope(choice.kind)
-        } label: {
-            if let image = Self.appIcon(choice.bundleID) {
-                Label { Text("\(choice.title)  \(choice.count)") } icon: { Image(nsImage: image) }
-            } else {
-                Label("\(choice.title)  \(choice.count)", systemImage: choice.kind == scope ? "checkmark" : choice.symbol)
-            }
-        }
-    }
-
-    @ViewBuilder private func scopeIcon(_ choice: AutomationScopeChoice?, size: CGFloat) -> some View {
-        if let image = Self.appIcon(choice?.bundleID) {
-            Image(nsImage: image).resizable().interpolation(.high).frame(width: size, height: size)
-        } else {
-            Image(systemName: choice?.symbol ?? "square.stack.fill")
-                .font(.system(size: size - 4, weight: .semibold))
-                .foregroundStyle(AOMModule.automation.hue)
-                .frame(width: size, height: size)
-        }
-    }
-
-    /// An app's icon, 16 pt, cached by bundle identifier.
-    @MainActor private static var iconCache: [String: NSImage] = [:]
     @MainActor static func appIcon(_ bundleID: String?) -> NSImage? {
         guard let bundleID, !bundleID.isEmpty else { return nil }
         if let cached = iconCache[bundleID] { return cached }
