@@ -78,7 +78,9 @@ struct ClipboardStudioView: View {
     @ObservedObject private var store = ClipboardStore.shared
     @StateObject private var search = ClipboardPanelState()
     @AppStorage("AOMClipboardGridLayout") private var gridLayout = false
-    @State private var selectedEntryID: UUID?
+    @State private var target = AOMActionTarget<UUID>()
+    @Environment(\.aomPageActivity) private var pageActivity
+    @FocusState private var galleryFocused: Bool
     @State private var boardCounts: [UUID: Int] = [:]
     @State private var hoveredCardID: UUID? = nil
     @State private var showingSettings = false
@@ -106,6 +108,7 @@ struct ClipboardStudioView: View {
     /// The detail's title while it is being renamed in place.
     @State private var renamingID: UUID?
     @State private var renameText = ""
+    @State private var renameGeneration = AOMFocusGeneration()
     @FocusState private var renameFocused: Bool
     /// Characters, words and lines (or pixels) for the detail, read off the
     /// main thread by the preview cache.
@@ -150,6 +153,7 @@ struct ClipboardStudioView: View {
 
     var body: some View {
         let entries = filteredEntries
+        let pending = search.isSearchPending
         let state = ClipboardEmptyContent.resolve(isLoading: store.isLoading, storage: store.storageStatus, paused: store.paused)
         VStack(spacing: 0) {
             header
@@ -165,29 +169,19 @@ struct ClipboardStudioView: View {
                     .padding(.horizontal, AOMSpace.x4).padding(.vertical, AOMSpace.x3)
             }
             Group {
-                if search.isSearchPending {
-                    ProgressView("Searching clipboard…").frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if entries.isEmpty {
-                    if store.entries.isEmpty && (state.isStorageProblem || state == .loading) {
-                        AOMEmptyState(state.title, systemImage: state.systemImage, message: state.message) { storageActions(state) }
-                    } else if store.entries.isEmpty {
-                        AOMEmptyState(state.title, systemImage: state.systemImage, message: state.message) {
-                            if store.paused { Button("Resume History") { store.resume() }.buttonStyle(AOMPrimaryButtonStyle()) }
-                        }
-                    } else if !search.query.isEmpty {
-                        ContentUnavailableView.search(text: search.query)
-                    } else {
-                        AOMEmptyState(search.board == nil ? "No Matching Items" : "Pinboard Is Empty",
-                                      systemImage: search.board == nil ? "line.3.horizontal.decrease.circle" : "pin",
-                                      message: search.board == nil ? "No items of this type yet." : "Pin items from their menu to keep them here.") {
-                            Button("Show All Items") { search.kind = nil; search.board = nil }
-                        }
+                if pending {
+                    HStack(spacing: AOMSpace.x2) {
+                        ProgressView().controlSize(.small)
+                        Text("Searching clipboard…").font(AOMFont.callout)
                     }
+                    .padding(AOMSpace.pageMargin)
+                } else if entries.isEmpty {
+                    emptyLibrary(state)
                 } else {
                     library(entries)
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .aomPane()
         .aomPageToolbar {
@@ -213,6 +207,24 @@ struct ClipboardStudioView: View {
             ModuleSettingsSheet("Clipboard Settings", done: { showingSettings = false }) {
                 ClipboardSettingsView()
             }
+        }
+        .onChange(of: entries.map(\.id)) { _, ids in reconcileSelection(ids, pending: pending) }
+        .onChange(of: pending) { _, pending in reconcileSelection(entries.map(\.id), pending: pending) }
+        .onChange(of: target.selected) { _, id in if renamingID != id { cancelRename() } }
+        .onChange(of: gridLayout) { _, _ in cancelRename() }
+        .onChange(of: store.boards.map(\.id)) { _, ids in
+            if let board = search.board, !ids.contains(board) { search.board = nil; target.selected = nil }
+        }
+        .aomPageLifecycle(onActivate: {
+            let live = filteredEntries
+            reconcileSelection(live.map(\.id), pending: search.isSearchPending)
+        }, onDeactivate: { cancelRename() })
+        .task {
+            guard AOMWorkbenchPreviewData.enabled else { return }
+            await store.ready()
+            guard !Task.isCancelled, store.entries.isEmpty else { return }
+            let samples = AOMWorkbenchPreviewData.clipboard()
+            store.seedWorkbenchPreview(entries: samples.entries, boards: samples.boards)
         }
         .sheet(isPresented: $showingNewBoardSheet) { newBoardSheet }
         .onChange(of: search.board) { _, board in savedBoard = board?.uuidString ?? "" }
@@ -261,8 +273,8 @@ struct ClipboardStudioView: View {
 
     /// What the bar's clipboard context depends on: the item and its pins.
     private var clipboardBarKey: String {
-        guard !search.isSearchPending, let id = selectedEntryID,
-              let entry = filteredEntries.first(where: { $0.id == id }) else { return "" }
+        guard let entry = liveEntry() else { return "" }
+        let id = entry.id
         // 7.16 (GPT V03): the boards' names and order too — the bar lists them.
         let boards = store.boards.prefix(4).map { $0.id.uuidString + $0.name }.joined(separator: "|")
         return id.uuidString + entry.pinboardIDs.map(\.uuidString).sorted().joined() + entry.title + "#" + boards
@@ -271,23 +283,26 @@ struct ClipboardStudioView: View {
     /// 7.16 (GPT V03): the bar's buttons find the item and the board again
     /// by id when pressed; one deleted or renamed meanwhile isn't acted on
     /// through a stale copy.
-    private func liveEntry(_ id: UUID) -> ClipboardEntry? {
-        guard !search.isSearchPending, selectedEntryID == id,
-              filteredEntries.contains(where: { $0.id == id }) else { return nil }
-        return store.entries.first { $0.id == id }
+    private func liveEntry(expecting id: UUID? = nil, addressedTo row: UUID? = nil) -> ClipboardEntry? {
+        guard pageActivity.isActive, search.board.map({ id in store.boards.contains { $0.id == id } }) != false else { return nil }
+        // Refresh against the current query/revision *before* inspecting pending.
+        // This also blocks a shortcut in the same turn as a query change.
+        let visible = filteredEntries
+        return target.resolve(in: visible, pending: search.isSearchPending, id: \.id,
+                              addressedTo: row, expecting: id)
     }
 
     private func clipboardBarContext() -> AOMBarContext? {
-        guard let id = selectedEntryID, let entry = liveEntry(id) else { return nil }
+        guard let entry = liveEntry() else { return nil }
         let hue = AOMModule.clipboard.hue
-        let entryID = entry.id
+        let id = entry.id
         var actions = [
             AOMBarAction(id: "clip.copy", title: "Copy", identity: AOMIdentity(symbol: "doc.on.doc", color: hue),
-                         run: { if let now = liveEntry(entryID) { copy(now) } }, key: SwiftUI.KeyboardShortcut(.return, modifiers: .command)),
+                         run: { copy(expecting: id) }, key: SwiftUI.KeyboardShortcut(.return, modifiers: .command)),
             AOMBarAction(id: "clip.plain", title: "Copy as Plain Text", identity: AOMIdentity(symbol: "textformat", color: hue),
-                         run: { if let now = liveEntry(entryID) { copy(now, plainText: true) } }),
+                         run: { copy(expecting: id, plainText: true) }),
             AOMBarAction(id: "clip.rename", title: "Rename", identity: AOMIdentity(symbol: "pencil", color: hue),
-                         run: { if let now = liveEntry(entryID) { beginRename(now) } })
+                         run: { if let now = liveEntry(expecting: id) { beginRename(now) } })
         ]
         for board in store.boards.prefix(4) {
             let pinned = entry.pinboardIDs.contains(board.id)
@@ -295,12 +310,12 @@ struct ClipboardStudioView: View {
             actions.append(AOMBarAction(id: "clip.pin.\(board.id)", title: pinned ? "Unpin from \(board.name)" : "Pin to \(board.name)",
                                         identity: AOMIdentity(symbol: pinned ? "pin.slash" : "pin", color: hue),
                                         run: {
-                                            guard let now = liveEntry(entryID), let liveBoard = store.boards.first(where: { $0.id == boardID }) else { return }
-                                            togglePin(now, liveBoard)
+                                            guard let now = liveEntry(expecting: id) else { return }
+                                            togglePin(now, boardID: boardID)
                                         }))
         }
         actions.append(AOMBarAction(id: "clip.delete", title: "Delete", identity: AOMIdentity(symbol: "trash", color: AOMColor.danger),
-                                    run: { if let now = liveEntry(entryID) { delete(now, in: filteredEntries) } }))
+                                    run: { if let now = liveEntry(expecting: id) { delete(now) } }))
         let title = entry.title.trimmingCharacters(in: .whitespacesAndNewlines)
         return AOMBarContext(title: title.isEmpty ? "Selected item" : String(title.prefix(60)), actions: actions)
     }
@@ -327,7 +342,8 @@ struct ClipboardStudioView: View {
     // MARK: - Library (list + detail like Mail and Notes; Paste's cards for the gallery)
 
     private func library(_ entries: [ClipboardEntry]) -> some View {
-        Group {
+        let previewID = target.preview(in: entries.map(\.id), autoHighlight: !isNarrowed)
+        return Group {
             if gridLayout {
                 ScrollView {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: AOMSize.tileMin, maximum: AOMSize.tileMax), spacing: AOMSpace.tileGap)],
@@ -338,6 +354,12 @@ struct ClipboardStudioView: View {
                     .padding(.vertical, AOMSpace.x4)
                 }
                 .background(AOMPageTint())
+                .focusable()
+                .focusEffectDisabled()
+                .focused($galleryFocused)
+                .onKeyPress(.return) { copyFromSelection() }
+                .onKeyPress(characters: .init(charactersIn: "c")) { press in copyFromSelection(press) }
+                .aomPageDeleteCommand { if let entry = liveEntry() { delete(entry) } }
             } else {
                 // The list + detail template (b.2). Workbench 2: `AOMListDetail`
                 // draws plain columns now (no `.inspector` inset under the
@@ -346,8 +368,12 @@ struct ClipboardStudioView: View {
                 AOMListDetail(listWidth: $listWidth, showsInspector: $showsInspector, narrowInspector: .inDetail,
                               onArrangementChange: { inspectorBeside = $0.showsInspectorBeside }) {
                     AOMListColumn(rows: {
-                        List(selection: $selectedEntryID) {
-                            ForEach(entries) { entry in libraryRow(entry) }
+                        List(selection: $target.selected) {
+                            ForEach(entries) { entry in
+                                libraryRow(entry)
+                                    .listRowBackground(target.selected == nil && previewID == entry.id
+                                                       ? AOMColor.track : Color.clear)
+                            }
                         }
                         // Plain rows with hairlines: alternating fills also striped
                         // the empty space under a short history.
@@ -355,21 +381,16 @@ struct ClipboardStudioView: View {
                         .scrollContentBackground(.hidden)
                         // Two-line rows (title over source and time), as Mail.
                         .environment(\.defaultMinListRowHeight, AOMSize.listRowDouble)
-                        .onKeyPress(.return) {
-                            guard let entry = entries.first(where: { $0.id == selectedEntryID }) else { return .ignored }
-                            copy(entry)
-                            return .handled
-                        }
-                        .aomPageDeleteCommand {
-                            if let entry = entries.first(where: { $0.id == selectedEntryID }) { delete(entry, in: entries) }
-                        }
+                        .onKeyPress(.return) { copyFromSelection() }
+                        .onKeyPress(characters: .init(charactersIn: "c")) { press in copyFromSelection(press) }
+                        .aomPageDeleteCommand { if let entry = liveEntry() { delete(entry) } }
                         .accessibilityLabel("Clipboard items")
                     }, footer: {
                         AOMAddRemoveBar(addLabel: "New Text Item", add: {
                             newText = ""
                             showingNewTextSheet = true
-                        }, removeLabel: "Delete Item", remove: entries.first(where: { $0.id == selectedEntryID }).map { entry in
-                            { delete(entry, in: entries) }
+                        }, removeLabel: "Delete Item", remove: liveEntry().map { entry in
+                            { if let now = liveEntry(expecting: entry.id) { delete(now) } }
                         }) {
                             Button("New Pinboard…") { presentNewBoard() }
                             Button("Open Shelf") { ClipboardPanelController.shared.show() }
@@ -380,25 +401,17 @@ struct ClipboardStudioView: View {
                     })
                 } detail: {
                     Group {
-                        if let entry = entries.first(where: { $0.id == selectedEntryID }) {
+                        if let entry = entries.first(where: { $0.id == previewID }) {
                             detailPane(entry)
                         } else {
-                            AOMEmptyState("No Item Selected", systemImage: "doc.on.clipboard",
-                                          message: isNarrowed && !entries.isEmpty
-                                              ? "Select an item in these results to see all of it, copy it or pin it."
-                                              : "Select an item to see all of it, copy it or pin it.")
+                            Label("Select an item to preview it.", systemImage: "doc.on.clipboard")
+                                .font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
+                                .padding(AOMSpace.pageMargin)
                         }
                     }
                 } inspector: {
-                    inspector(entries.first(where: { $0.id == selectedEntryID }))
+                    inspector(entries.first(where: { $0.id == previewID }))
                 }
-                // The detail shows the highlighted row: the first item is
-                // selected on arrival and when the library isn't narrowed.
-                // Workbench 2 (D03, D05): a search or filter that hides the
-                // selected item leaves nothing selected (Return and ⌫ do
-                // nothing) instead of moving to whatever is first now.
-                .onAppear { reconcileSelection(entries, arriving: true) }
-                .onChange(of: entries.map(\.id)) { _, _ in reconcileSelection(entries, arriving: false) }
             }
         }
     }
@@ -409,10 +422,39 @@ struct ClipboardStudioView: View {
             || search.source != nil || search.recentDays != 0
     }
 
-    private func reconcileSelection(_ entries: [ClipboardEntry], arriving: Bool) {
-        let next = AOMStableSelection.reconcile(selectedEntryID, visible: entries.map(\.id),
-                                                autoSelectFirst: arriving || !isNarrowed)
-        if next != selectedEntryID { selectedEntryID = next }
+    private func reconcileSelection(_ ids: [UUID], pending: Bool) {
+        var next = target
+        next.reconcile(in: ids, pending: pending)
+        if next != target { target = next }
+        if let renamingID, pending || !ids.contains(renamingID) { cancelRename() }
+    }
+
+    private func copyFromSelection(_ press: KeyPress? = nil) -> KeyPress.Result {
+        if let press, press.modifiers != .command { return .ignored }
+        guard let entry = liveEntry() else { return .ignored }
+        copy(expecting: entry.id)
+        return .handled
+    }
+
+    private func emptyLibrary(_ state: ClipboardEmptyContent) -> some View {
+        let title = store.entries.isEmpty ? state.title
+            : (!search.query.isEmpty ? "No matching items" : (search.board == nil ? "No items of this type" : "Pinboard is empty"))
+        return HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x2) {
+            Label(title, systemImage: store.entries.isEmpty ? state.systemImage : "tray")
+                .font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
+            if store.entries.isEmpty {
+                if case .empty(paused: true) = state {
+                    Button("Resume History") { store.resume() }.buttonStyle(AOMSoftButtonStyle())
+                } else {
+                    storageActions(state)
+                }
+                AOMInfoButton(state.message)
+            } else {
+                Button("Show All Items") { search.query = ""; search.kind = nil; search.board = nil }
+                    .buttonStyle(AOMSoftButtonStyle())
+            }
+        }
+        .padding(AOMSpace.pageMargin)
     }
 
     /// Two lines per item, like a Mail or Notes list: the title in Body over
@@ -458,8 +500,8 @@ struct ClipboardStudioView: View {
         .accessibilityElement(children: .combine)
         .help(entry.title)
         .tag(entry.id)
-        .simultaneousGesture(TapGesture(count: 2).onEnded { copy(entry) })
-        .onDrag { ClipboardStudioDrag.provider(for: entry) }
+        .simultaneousGesture(TapGesture(count: 2).onEnded { copy(addressedTo: entry.id) })
+        .onDrag { liveEntry(addressedTo: entry.id).map(ClipboardStudioDrag.provider(for:)) ?? NSItemProvider() }
         .contextMenu { entryMenu(entry) }
     }
 
@@ -475,28 +517,43 @@ struct ClipboardStudioView: View {
     }
 
     /// Flat, no shortcuts, unavailable items hidden (b.4).
-    @ViewBuilder private func entryMenu(_ entry: ClipboardEntry) -> some View {
-        Button("Copy") { copy(entry) }
+    @ViewBuilder private func entryMenu(_ entry: ClipboardEntry, fromRow: Bool = true) -> some View {
+        let expected = fromRow ? nil : entry.id
+        let addressed = fromRow ? entry.id : nil
+        func resolve() -> ClipboardEntry? { liveEntry(expecting: expected, addressedTo: addressed) }
+        Button("Copy") { copy(expecting: expected, addressedTo: addressed) }
         if entry.kind == .text || entry.kind == .link {
-            Button("Copy as Plain Text") { copy(entry, plainText: true) }
+            Button("Copy as Plain Text") { copy(expecting: expected, addressedTo: addressed, plainText: true) }
         }
-        if entry.kind == .link, let url = URL(string: (entry.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)),
-           ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
-            Button("Open Link") { NSWorkspace.shared.open(url) }
+        if entry.kind == .link {
+            Button("Open Link") { openLink(resolve()) }
         }
         if !entry.fileURLs.isEmpty {
-            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting(entry.fileURLs) }
+            Button("Show in Finder") {
+                if let files = resolve()?.fileURLs, !files.isEmpty { NSWorkspace.shared.activateFileViewerSelecting(files) }
+            }
         }
-        Button("Rename") { beginRename(entry) }
+        if !gridLayout {
+            Button("Rename") { if let now = resolve() { beginRename(now) } }
+        }
         if !store.boards.isEmpty {
             Menu("Pinboards") {
                 ForEach(store.boards) { board in
-                    Button(entry.pinboardIDs.contains(board.id) ? "Unpin from \(board.name)" : "Pin to \(board.name)") { togglePin(entry, board) }
+                    Button(entry.pinboardIDs.contains(board.id) ? "Unpin from \(board.name)" : "Pin to \(board.name)") {
+                        if let now = resolve() { togglePin(now, boardID: board.id) }
+                    }
                 }
             }
         }
         Divider()
-        Button("Delete", role: .destructive) { delete(entry, in: filteredEntries) }
+        Button("Delete", role: .destructive) { if let now = resolve() { delete(now) } }
+    }
+
+    private func openLink(_ entry: ClipboardEntry?) {
+        guard let entry, entry.kind == .link, let text = entry.text,
+              let url = URL(string: text.trimmingCharacters(in: .whitespacesAndNewlines)),
+              ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { return }
+        NSWorkspace.shared.open(url)
     }
 
     /// The selected item, readable (design-3.4.0 b.2 detail): its title
@@ -506,14 +563,14 @@ struct ClipboardStudioView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
                 detailHeader(entry)
-                ClipboardStudioCard.Preview(entry: entry, large: true)
+                ClipboardStudioCard.Preview(entry: entry, large: true, onOpenLink: { openLink(liveEntry(expecting: entry.id)) })
                     .frame(maxWidth: .infinity,
                            minHeight: entry.kind == .text || entry.kind == .link ? AOMSize.textPreviewMinHeight : AOMSize.tileMin,
                            alignment: .topLeading)
                     .padding(entry.kind == .image || entry.kind == .color ? 0 : AOMSpace.x4)
                     .background(AOMColor.surface, in: RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous))
                     .clipShape(RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous))
-                    .onDrag { ClipboardStudioDrag.provider(for: entry) }
+                    .onDrag { liveEntry(expecting: entry.id).map(ClipboardStudioDrag.provider(for:)) ?? NSItemProvider() }
                 // In the inspector when it is beside the preview (D15).
                 if !(showsInspector && inspectorBeside) {
                     AOMSection("Details") {
@@ -612,9 +669,15 @@ struct ClipboardStudioView: View {
                         .textFieldStyle(.plain)
                         .font(AOMFont.title)
                         .focused($renameFocused)
-                        .onSubmit { commitRename(entry) }
-                        .onExitCommand { renamingID = nil }
-                        .onChange(of: renameFocused) { _, focused in if !focused, renamingID == entry.id { commitRename(entry) } }
+                        .task(id: renameGeneration.token) { [token = renameGeneration.token] in
+                            await Task.yield()
+                            guard !Task.isCancelled, renameGeneration.matches(token), renamingID == entry.id,
+                                  liveEntry(expecting: entry.id) != nil else { return }
+                            renameFocused = true
+                        }
+                        .onSubmit { commitRename(entry.id) }
+                        .onExitCommand { cancelRename() }
+                        .onChange(of: renameFocused) { _, focused in if !focused { commitRename(entry.id) } }
                         .accessibilityLabel("Title")
                 } else {
                     Text(entry.title)
@@ -637,12 +700,13 @@ struct ClipboardStudioView: View {
             .layoutPriority(1)
             Spacer(minLength: AOMSpace.x2)
             // The section's one prominent action (design-336 b.6).
-            Button { copy(entry) } label: { Label("Copy", systemImage: "doc.on.doc") }
+            Button { copy(expecting: entry.id) } label: { Label("Copy", systemImage: "doc.on.doc") }
                 .buttonStyle(AOMPrimaryButtonStyle())
+                .disabled(liveEntry(expecting: entry.id) == nil)
                 .aomShortcut("c", modifiers: [.command, .shift])
-                .help("Copy (⇧⌘C, or press Return in the list)")
+                .help("Select a row to copy it (⇧⌘C, or press Return in the list)")
             Menu {
-                entryMenu(entry)
+                entryMenu(entry, fromRow: false)
             } label: {
                 Image(systemName: "ellipsis.circle")
             }
@@ -651,46 +715,73 @@ struct ClipboardStudioView: View {
             .fixedSize()
             .tint(AOMColor.textSecondary)
             .frame(width: AOMIcon.hitArea, height: AOMIcon.hitArea)
+            .disabled(liveEntry(expecting: entry.id) == nil)
             .help("More actions for this item")
             .accessibilityLabel("More actions")
         }
     }
 
     private func beginRename(_ entry: ClipboardEntry) {
-        selectedEntryID = entry.id
+        guard !gridLayout else { return }
+        target.selected = entry.id
         renameText = entry.title
         renamingID = entry.id
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { renameFocused = true }
+        renameGeneration.invalidate()
     }
 
-    private func commitRename(_ entry: ClipboardEntry) {
-        let trimmed = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
+    private func cancelRename() {
+        guard renamingID != nil else { return }
         renamingID = nil
-        guard !trimmed.isEmpty, trimmed != entry.title else { return }
-        store.rename(entryID: entry.id, title: trimmed)
+        renameGeneration.invalidate()
+        renameFocused = false
+    }
+
+    private func commitRename(_ id: UUID) {
+        guard renamingID == id else { return }
+        let entry = liveEntry(expecting: id)
+        let trimmed = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
+        cancelRename()
+        guard let entry, !trimmed.isEmpty, trimmed != entry.title else { return }
+        store.rename(entryID: id, title: trimmed)
         toast.show("Renamed to “\(trimmed.prefix(40))”")
     }
 
-    /// Deleting never asks: the toast and Edit › Undo bring the item back
-    /// (b.4), and the selection moves to the neighbouring item (#97).
-    private func delete(_ entry: ClipboardEntry, in entries: [ClipboardEntry]) {
-        if selectedEntryID == entry.id, let index = entries.firstIndex(where: { $0.id == entry.id }) {
-            let next = entries.indices.contains(index + 1) ? entries[index + 1] : (index > 0 ? entries[index - 1] : nil)
-            selectedEntryID = next?.id
-        }
+    /// The toast and Edit › Undo each address this command's deletion receipt.
+    private func delete(_ entry: ClipboardEntry) {
+        let id = entry.id
+        if target.selected == id { target.selected = nil }
+        if renamingID == id { cancelRename() }
         let store = store
-        let revert: @MainActor () -> Void = { _ = store.undoDeletion() }
-        AOMUndo.perform("Delete Item", undoManager: undoManager, perform: { store.delete(entryID: entry.id) }, revert: revert)
-        let manager = undoManager
-        toast.show("Deleted “\(entry.title.prefix(40))”", action: {
-            if let manager, manager.canUndo, manager.undoActionName == "Delete Item" { manager.undo() } else { revert() }
-        })
+        var receipt: ClipboardStore.DeletionReceipt?
+        let revert: @MainActor () -> Void = {
+            guard let current = receipt else { return }
+            receipt = nil
+            _ = store.undoDeletion(current)
+        }
+        AOMUndo.perform("Delete Item", undoManager: undoManager, perform: {
+            receipt = store.deleteRecordingReceipt(entryIDs: [id])
+        }, revert: revert)
+        toast.show("Deleted “\(entry.title.prefix(40))”", action: revert)
     }
 
     private func libraryCard(_ entry: ClipboardEntry) -> some View {
         ClipboardStudioCard(entry: entry, isHovered: hoveredCardID == entry.id, boards: store.boards,
-            onCopy: { copy(entry) }, onTogglePin: { board in togglePin(entry, board) },
-            onDelete: { delete(entry, in: filteredEntries) })
+            onCopy: { copy(addressedTo: entry.id) }, onTogglePin: { board in
+                if let now = liveEntry(addressedTo: entry.id) { togglePin(now, boardID: board.id) }
+            }, onDelete: { if let now = liveEntry(addressedTo: entry.id) { delete(now) } })
+            .overlay {
+                if target.selected == entry.id {
+                    RoundedRectangle(cornerRadius: AOMRadius.card).strokeBorder(AOMColor.accent, lineWidth: 2)
+                        .allowsHitTesting(false).accessibilityHidden(true)
+                }
+            }
+            .onTapGesture {
+                if liveEntry(addressedTo: entry.id) != nil { target.selected = entry.id; galleryFocused = true }
+            }
+            .accessibilityAddTraits(target.selected == entry.id ? .isSelected : [])
+            .accessibilityAction(named: Text("Select Item")) {
+                if liveEntry(addressedTo: entry.id) != nil { target.selected = entry.id; galleryFocused = true }
+            }
             .onHover { hovering in
                 if hovering { hoveredCardID = entry.id } else if hoveredCardID == entry.id { hoveredCardID = nil }
             }
@@ -699,38 +790,20 @@ struct ClipboardStudioView: View {
     // MARK: - Toolbar
 
     @ToolbarContentBuilder private var toolbarContent: some ToolbarContent {
-        ToolbarItemGroup(placement: .automatic) {
-            Button {
-                newText = ""
-                showingNewTextSheet = true
-            } label: {
-                Label("New Text", systemImage: "plus.bubble")
-            }
-            .help("Create a text snippet in clipboard history")
-            Button {
-                showingSettings = true
-            } label: {
-                Label("Settings", systemImage: "slider.horizontal.3")
-            }
-            .help("Clipboard history capacity, ignored apps and paste shortcuts")
-            Picker("Layout", selection: $gridLayout) {
-                Label("List", systemImage: "list.bullet").tag(false)
-                Label("Gallery", systemImage: "square.grid.2x2").tag(true)
-            }
-            .pickerStyle(.segmented)
-            .help("List with preview, or a gallery of cards")
-            if !gridLayout {
-                Button {
-                    withAnimation(AOMMotion.panel) { showsInspector.toggle() }
-                } label: {
-                    Label(showsInspector ? "Hide Inspector" : "Show Inspector", systemImage: "sidebar.trailing")
-                }
-                .keyboardShortcut("i", modifiers: [.command, .option])
-                .help(showsInspector ? "Hide the item's details (⌥⌘I)" : "Show the item's details beside the preview (⌥⌘I)")
-            }
-            // Pause lives with the other history commands; while paused the
-            // filter bar and the sidebar say so, with Resume one click away.
+        ToolbarItem(placement: .automatic) {
             Menu {
+                Picker("Layout", selection: $gridLayout) {
+                    Label("List", systemImage: "list.bullet").tag(false)
+                    Label("Gallery", systemImage: "square.grid.2x2").tag(true)
+                }
+                if !gridLayout {
+                    Button(showsInspector ? "Hide Inspector" : "Show Inspector", systemImage: "sidebar.trailing") {
+                        withAnimation(AOMMotion.panel) { showsInspector.toggle() }
+                    }
+                    .keyboardShortcut("i", modifiers: [.command, .option])
+                }
+                Divider()
+                Button("Open Shelf", systemImage: "rectangle.bottomthird.inset.filled") { ClipboardPanelController.shared.show() }
                 // "History", the page's own word for it; "Recording" is the
                 // screen recorder's (Capture, the status menu).
                 if store.paused {
@@ -755,17 +828,21 @@ struct ClipboardStudioView: View {
                 Divider()
                 Button("Clipboard Settings…") { showingSettings = true }
             } label: {
-                Label("More", systemImage: "ellipsis.circle")
+                Label("View", systemImage: "slider.horizontal.3")
             }
-            .help("Pause or erase history, and clipboard settings")
+            .help("Clipboard layout, inspector and history options")
         }
         ToolbarItem(placement: .primaryAction) {
-            Button {
-                ClipboardPanelController.shared.show()
+            Menu {
+                Button("New Text Item…") { newText = ""; showingNewTextSheet = true }
+                Button("New Pinboard…") { presentNewBoard() }
             } label: {
-                Label("Open Shelf", systemImage: "rectangle.bottomthird.inset.filled")
+                Label("New", systemImage: "plus")
+            } primaryAction: {
+                newText = ""
+                showingNewTextSheet = true
             }
-            .help("Open the quick-paste shelf\(ClipboardShortcuts.shared.shortcut(for: .history).map { " (\($0.displayString))" } ?? "")")
+            .help("Create a text item or pinboard")
         }
     }
 
@@ -783,18 +860,21 @@ struct ClipboardStudioView: View {
                 .help("Clipboard history is paused — click to resume")
                 .accessibilityLabel("Clipboard history is paused. Resume")
             }
-            Picker("Type", selection: $search.kind) {
-                Text("All").tag(ClipboardEntry.Kind?.none)
+            HStack(spacing: AOMSpace.x0_5) {
+                filterChip("All Types", symbol: "line.3.horizontal.decrease", selected: search.kind == nil, iconOnly: true) {
+                    search.kind = nil
+                }
                 ForEach(ClipboardEntry.Kind.allCases) { kind in
-                    Image(systemName: kind.symbol)
-                        .help(kind.displayName)
-                        .accessibilityLabel(kind.displayName)
-                        .tag(Optional(kind))
+                    filterChip(kind.displayName, symbol: kind.symbol, selected: search.kind == kind, iconOnly: true) {
+                        search.kind = kind
+                    }
                 }
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+            .padding(AOMSpace.x0_5)
+            .background(AOMColor.track, in: RoundedRectangle(cornerRadius: AOMRadius.control))
             .fixedSize()
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Clipboard type filter")
         }
         .padding(.horizontal, AOMSpace.pageMargin - AOMSpace.x1)
         .padding(.vertical, AOMSpace.x2)
@@ -804,14 +884,13 @@ struct ClipboardStudioView: View {
     private var pinboardsBar: some View {
         ScrollView(.horizontal) {
             HStack(spacing: AOMSpace.x2) {
-                AOMFilterChip("All Items", symbol: "tray.full", count: store.entries.count, selected: search.board == nil) {
-                    withAnimation(AOMMotion.quick) { search.board = nil }
+                filterChip("All Items · \(store.entries.count)", symbol: "tray.full", selected: search.board == nil) {
+                    search.board = nil
                 }
                 ForEach(store.boards) { board in
                     let count = boardCounts[board.id] ?? 0
-                    AOMFilterChip(board.name, dot: colorForBoard(board.color), count: count,
-                                  selected: search.board == board.id) {
-                        withAnimation(AOMMotion.quick) { search.board = search.board == board.id ? nil : board.id }
+                    filterChip("\(board.name) · \(count)", symbol: "pin", selected: search.board == board.id) {
+                        search.board = search.board == board.id ? nil : board.id
                     }
                     .contextMenu {
                         Button("Delete Pinboard…", role: .destructive) { boardPendingDeletion = board }
@@ -832,6 +911,25 @@ struct ClipboardStudioView: View {
         }
         .scrollIndicators(.hidden)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func filterChip(_ title: String, symbol: String, selected: Bool, iconOnly: Bool = false,
+                            action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: symbol)
+                .labelStyle(ClipboardChipLabelStyle(iconOnly: iconOnly))
+                .font(AOMFont.callout.weight(.medium))
+                .foregroundStyle(selected ? AOMColor.accent : AOMColor.textSecondary)
+                .padding(.horizontal, AOMSpace.x2)
+                .frame(height: AOMFeatureSize.chip)
+                .background(selected ? AOMColor.surface : (iconOnly ? Color.clear : AOMColor.track),
+                            in: RoundedRectangle(cornerRadius: AOMRadius.control))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .help(title)
     }
 
     // MARK: - New Board and New Text sheets
@@ -864,14 +962,14 @@ struct ClipboardStudioView: View {
                     let text = newText
                     showingNewTextSheet = false
                     if let entry = store.createTextItem(text) {
-                        selectedEntryID = entry.id
+                        target.selected = entry.id
                         showToast("Added “\(entry.title.prefix(40))”")
                     } else {
                         toast.show("Couldn't add the text because history can't be saved right now", tone: .danger)
                     }
                 }
                 .buttonStyle(AOMPrimaryButtonStyle())
-                .keyboardShortcut(.defaultAction).buttonStyle(AOMPrimaryButtonStyle())
+                .keyboardShortcut(.defaultAction)
                 .disabled(newText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
@@ -915,7 +1013,7 @@ struct ClipboardStudioView: View {
                 }
                 .buttonStyle(AOMPrimaryButtonStyle())
                 .disabled(newBoardName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .keyboardShortcut(.defaultAction).buttonStyle(AOMPrimaryButtonStyle())
+                .keyboardShortcut(.defaultAction)
             }
         }
         .padding(AOMSpace.x5)
@@ -924,8 +1022,9 @@ struct ClipboardStudioView: View {
 
     // MARK: - Helpers
 
-    private func copy(_ entry: ClipboardEntry, plainText: Bool = false) {
+    private func copy(expecting id: UUID? = nil, addressedTo row: UUID? = nil, plainText: Bool = false) {
         Task {
+            guard let entry = liveEntry(expecting: id, addressedTo: row) else { return }
             do {
                 _ = try await store.writeAsync(entryIDs: [entry.id], plainText: plainText, playSound: true)
                 showToast("Copied “\(entry.title.prefix(40))”")
@@ -933,7 +1032,8 @@ struct ClipboardStudioView: View {
         }
     }
 
-    private func togglePin(_ entry: ClipboardEntry, _ board: ClipboardPinboard) {
+    private func togglePin(_ entry: ClipboardEntry, boardID: UUID) {
+        guard let board = store.boards.first(where: { $0.id == boardID }) else { return }
         if entry.pinboardIDs.contains(board.id) {
             if store.unpin(entryID: entry.id, boardID: board.id) {
                 showToast("Unpinned from \(board.name). It was older than the history limit, so it was deleted; Undo Delete restores it")
@@ -968,6 +1068,17 @@ struct ClipboardStudioView: View {
         case "yellow": return .yellow
         case "green": return .green
         default: return .gray
+        }
+    }
+}
+
+private struct ClipboardChipLabelStyle: LabelStyle {
+    let iconOnly: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: AOMSpace.x1) {
+            configuration.icon
+            if !iconOnly { configuration.title }
         }
     }
 }
@@ -1081,13 +1192,21 @@ extension ClipboardStudioCard {
     struct Preview: View {
         let entry: ClipboardEntry
         var large = false
-        @State private var thumbnail: ClipboardThumbnailCache.Preview?
+        var onOpenLink: (() -> Void)? = nil
+        @Environment(\.aomPageActivity) private var pageActivity
+        @State private var decoded: (revision: UUID, thumbnail: ClipboardThumbnailCache.Preview)?
+        private var thumbnail: ClipboardThumbnailCache.Preview? {
+            decoded?.revision == entry.contentVersion ? decoded?.thumbnail : nil
+        }
 
         var body: some View {
             content
-                .task(id: entry.id) {
-                    guard entry.kind == .image, let data = entry.imageData else { return }
-                    thumbnail = await ClipboardThumbnailCache.shared.preview(id: entry.id, data: data)
+                .aomVisibleTask(id: entry.contentVersion) {
+                    guard entry.kind == .image, let data = entry.imageData, thumbnail == nil,
+                          let result = await ClipboardThumbnailCache.shared.cancellablePreview(
+                              id: entry.id, revision: entry.contentVersion, data: data),
+                          !Task.isCancelled, pageActivity.isActive else { return }
+                    decoded = (entry.contentVersion, result)
                 }
         }
 
@@ -1129,8 +1248,8 @@ extension ClipboardStudioCard {
                         .foregroundStyle(AOMColor.textSecondary)
                         .lineLimit(large ? nil : 4)
                         .textSelection(.enabled)
-                    if large, let url = URL(string: entry.text ?? ""), url.scheme?.hasPrefix("http") == true {
-                        Button("Open in Browser") { NSWorkspace.shared.open(url) }
+                    if large, let onOpenLink {
+                        Button("Open in Browser", action: onOpenLink).buttonStyle(AOMSoftButtonStyle())
                     }
                     Spacer(minLength: 0)
                 }

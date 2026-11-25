@@ -307,6 +307,15 @@ final class ClipboardStore: ObservableObject {
 
     func ready() async { await loadingTask?.value }
 
+    /// Screenshot fixtures bypass capture and persistence, and never replace data.
+    func seedWorkbenchPreview(entries: [ClipboardEntry], boards: [ClipboardPinboard]) {
+        guard PresetManager.isUIPreview, isolated,
+              ProcessInfo.processInfo.arguments.contains("--aom-preview-sample-data"),
+              !isLoading, storageStatus == .ok, self.entries.isEmpty, self.boards.isEmpty else { return }
+        self.boards = boards
+        self.entries = entries
+    }
+
     func start() {
         guard timer == nil else { return }
         // Do not capture the user's pre-existing clipboard merely by opening AOM.
@@ -729,12 +738,24 @@ final class ClipboardStore: ObservableObject {
 
     func delete(entryID: UUID) { delete(entryIDs: [entryID]) }
 
-    func delete(entryIDs: [UUID]) {
+    func delete(entryIDs: [UUID]) { _ = deleteRecordingReceipt(entryIDs: entryIDs) }
+
+    /// The UI keeps this small token, not a second copy of image/file payloads.
+    /// Older receipts expire with the existing bounded store undo history.
+    struct DeletionReceipt: Equatable {
+        fileprivate let id: UUID
+    }
+
+    @discardableResult
+    func deleteRecordingReceipt(entryIDs: [UUID]) -> DeletionReceipt? {
         let ids = Set(entryIDs)
-        rememberDeletion(entries.filter { ids.contains($0.id) })
+        let batch = DeletionBatch(entries: entries.filter { ids.contains($0.id) })
+        guard !batch.isEmpty else { return nil }
+        rememberDeletion(batch)
         entries.removeAll { ids.contains($0.id) }
         pruneDigests()
         scheduleSave()
+        return batch.receipt
     }
 
     /// One Undo Delete step: items removed from history, plus pinboards
@@ -742,6 +763,7 @@ final class ClipboardStore: ObservableObject {
     /// stayed. Pinboards are restored before items, so restored items find
     /// their pinboards again.
     struct DeletionBatch {
+        let receipt = DeletionReceipt(id: UUID())
         struct Board { var index: Int; var board: ClipboardPinboard }
         var entries: [ClipboardEntry]
         var boards: [Board] = []
@@ -788,6 +810,18 @@ final class ClipboardStore: ObservableObject {
     @discardableResult
     func undoLastDeletion() -> UndoResult {
         guard let batch = deletionHistory.popLast() else { return UndoResult() }
+        return restoreDeletion(batch)
+    }
+
+    /// Undo a specific command, even if another surface deleted something
+    /// since. A consumed or evicted receipt must not undo a different command.
+    @discardableResult
+    func undoDeletion(_ receipt: DeletionReceipt) -> UndoResult {
+        guard let index = deletionHistory.firstIndex(where: { $0.receipt == receipt }) else { return UndoResult() }
+        return restoreDeletion(deletionHistory.remove(at: index))
+    }
+
+    private func restoreDeletion(_ batch: DeletionBatch) -> UndoResult {
         if let limit = batch.limit, settings[keyPath: limit.keyPath] == limit.applied, limit.applied != limit.previous {
             settings[keyPath: limit.keyPath] = limit.previous
         }
