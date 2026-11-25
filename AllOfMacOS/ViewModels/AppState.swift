@@ -315,6 +315,44 @@ class AppState: ObservableObject {
     func removeDisplayProfile(_ id: UUID) { currentPreset.snapProfiles.removeAll { $0.id == id }; save() }
     func setAutomaticSnapProfiles(_ enabled: Bool) { currentPreset.automaticSnapProfiles = enabled; save() }
 
+    // MARK: - Storage shortcuts
+    /// Explicit user action, not a global default: never take another shortcut.
+    static func storageShortcutTemplates() -> [Trigger] {
+        var empty = Trigger(name: "Empty Trash", input: .keyboardShortcut(KeyboardShortcut(keyCode: 17, modifiers: .option)))
+        var safety = ActionParameters()
+        safety.requiresConfirmation = true
+        empty.actions = [TriggerAction(actionType: .emptyTrash, parameters: safety)]
+        var cleanup = Trigger(name: "Disk Cleanup", input: .keyboardShortcut(KeyboardShortcut(keyCode: 16, modifiers: .option)))
+        var link = ActionParameters()
+        link.url = "aom://open-free-up-space"
+        cleanup.actions = [TriggerAction(actionType: .openURL, parameters: link)]
+        return [empty, cleanup]
+    }
+
+    func installStorageShortcuts() {
+        var added: [String] = []
+        var skipped: [String] = []
+        for trigger in Self.storageShortcutTemplates() {
+            guard case .keyboardShortcut(let key) = trigger.input else { continue }
+            if currentPreset.triggers.contains(where: { existing in
+                guard case .keyboardShortcut(let used) = existing.input else { return false }
+                return PaletteHotkeyRules.same(used, key)
+            }) {
+                skipped.append(key.displayString + " — existing automation")
+                continue
+            }
+            if let owner = PaletteHotkeyStore.shared.owner(of: key, triggers: currentPreset.triggers) {
+                skipped.append(key.displayString + " — " + owner)
+                continue
+            }
+            currentPreset.addTrigger(trigger)
+            added.append(key.displayString + " " + trigger.name)
+        }
+        if !added.isEmpty { save() }
+        let message = (added.map { "Added " + $0 } + skipped.map { "Skipped " + $0 }).joined(separator: "\n")
+        presetOperationReporter("Storage Shortcuts", message, skipped.isEmpty ? .success : .actionNeeded)
+    }
+
     // MARK: - Trigger Management
 
     func addTrigger(_ trigger: Trigger) {
