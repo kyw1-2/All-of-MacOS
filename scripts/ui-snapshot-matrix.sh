@@ -35,7 +35,7 @@ for mode in light dark; do
   for size in $SIZES; do
     for tab in $TABS; do
       shot "tab$(printf %02d "$tab")-${size}-${mode}" --aom-preview-size "$size" --aom-preview-tab "$tab" \
-        --aom-preview-activate --aom-preview-insights-sample --aom-preview-menubar-sample
+        --aom-preview-activate --aom-preview-insights-sample --aom-preview-menubar-sample --aom-preview-sample-data
     done
   done
   shot "settings-${mode}" --aom-preview-settings --aom-preview-activate
