@@ -72,7 +72,6 @@ struct AOMMainShell<Content: View>: View {
                         .aomButtonDefaults()
                         .environment(\.aomOpaqueContent, true)
                     if drawerOpen && sideBySide {
-                        AOMDivider(axis: .vertical)
                         DiagnosticDrawerView(showLog: $showLog, showTouchVisualizer: $showTouchVisualizer)
                             .frame(width: drawerWidth)
                             .background(AOMPageTint())
@@ -86,7 +85,6 @@ struct AOMMainShell<Content: View>: View {
                             .frame(maxHeight: .infinity)
                             .font(AOMFont.body)
                             .background(AOMColor.raised)
-                            .overlay(alignment: .leading) { AOMDivider(axis: .vertical) }
                             .aomElevation(.raised)
                     }
                 }
@@ -106,29 +104,24 @@ struct AOMMainShell<Content: View>: View {
                 ToolbarItemGroup(placement: .navigation) {
                     AOMHistoryButtons(appState: appState)
                 }
-                // 7.15 (M03): Actions and Search in the toolbar, so both
-                // stay one click away with the sidebar hidden.
-                ToolbarItem(placement: .automatic) {
-                    AOMToolbarActions(appState: appState,
-                                      paletteKeys: AOMPaletteShortcut.current(appState.currentPreset).displayString,
-                                      showingCommandPalette: $showingCommandPalette)
-                }
-                ToolbarItem(placement: .automatic) {
-                    AOMToolbarSearch(paletteKeys: AOMPaletteShortcut.current(appState.currentPreset).displayString,
-                                     showingCommandPalette: $showingCommandPalette)
-                }
-                // Workbench 2 (D01): this opens the diagnostics drawer, not a
-                // selection inspector, so it no longer borrows the inspector's
-                // name and `sidebar.right` symbol. A page's own inspector
-                // (Folder Rules ⌥⌘I, AOMListDetail) is the only "Inspector".
-                // The names match Window › Diagnostics Console / Touch Visualizer.
-                ToolbarItem(placement: .automatic) {
-                    Menu {
-                        Toggle(AOMDiagnosticsNames.console, isOn: $showLog)
-                        Toggle(AOMDiagnosticsNames.touchVisualizer, isOn: $showTouchVisualizer)
-                    } label: { Label(AOMDiagnosticsNames.menu, systemImage: AOMDiagnosticsNames.symbol) }
-                    .help(AOMDiagnosticsNames.help)
-                    .accessibilityLabel(AOMDiagnosticsNames.menu)
+                AOMSelectionToolbarItem(
+                    appState: appState,
+                    paletteKeys: AOMLauncherShortcut.isRegistered ? AOMLauncherShortcut.current.displayString
+                        : AOMPaletteShortcut.current(appState.currentPreset).displayString,
+                    showingCommandPalette: $showingCommandPalette
+                )
+                if showLog || showTouchVisualizer {
+                    ToolbarItem(placement: .automatic) {
+                        Button {
+                            withAnimation(AOMMotion.panel) {
+                                showLog = false
+                                showTouchVisualizer = false
+                            }
+                        } label: {
+                            Label(AOMDiagnosticsNames.close, systemImage: "xmark")
+                        }
+                        .help(AOMDiagnosticsNames.close)
+                    }
                 }
             }
         }
@@ -587,7 +580,23 @@ private struct AOMSidebarSearchButton: View {
 /// (`AOMShellTitle`) draws the selected page's as the window subtitle.
 extension View {
     func aomToolbarSubtitle(_ subtitle: String) -> some View {
+        aomToolbarSubtitle(subtitle, id: nil)
+    }
+
+    func aomToolbarSubtitle(_ subtitle: String, id: AOMHeaderContentID?) -> some View {
         modifier(AOMToolbarSubtitle(subtitle: subtitle))
+            .environment(\.aomToolbarSubtitleID, subtitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : id)
+    }
+}
+
+private struct AOMToolbarSubtitleIDKey: EnvironmentKey {
+    static let defaultValue: AOMHeaderContentID? = nil
+}
+
+extension EnvironmentValues {
+    var aomToolbarSubtitleID: AOMHeaderContentID? {
+        get { self[AOMToolbarSubtitleIDKey.self] }
+        set { self[AOMToolbarSubtitleIDKey.self] = newValue }
     }
 }
 
@@ -671,6 +680,7 @@ enum AOMSidebarDensity {
 /// apart from "Inspector" (a page's panel for the selected item).
 enum AOMDiagnosticsNames {
     static let menu = "Diagnostics"
+    static let close = "Close Diagnostics"
     static let console = "Diagnostics Console"
     static let touchVisualizer = "Touch Visualizer"
     static let symbol = "stethoscope"

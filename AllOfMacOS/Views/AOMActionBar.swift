@@ -24,6 +24,12 @@ struct AOMBarAction: Identifiable {
     let run: @MainActor () -> Void
     /// A key the bar binds while this action is shown (contexts only).
     var key: SwiftUI.KeyboardShortcut? = nil
+    /// Explicit role for new actions; legacy actions identify Delete by id.
+    var role: ButtonRole? = nil
+
+    var buttonRole: ButtonRole? {
+        role ?? (id == "clip.delete" || id == "auto.delete" ? .destructive : nil)
+    }
 
     /// The keys as text ("⌘↩"), from `key` when it is set.
     var keysText: String? {
@@ -124,6 +130,12 @@ struct AOMBarActionSection: Identifiable {
 }
 
 enum AOMActionBarModel {
+    /// Preserve the relative order within each group.
+    static func overflowActions(_ actions: [AOMBarAction]) -> [AOMBarAction] {
+        let remaining = actions.dropFirst(3)
+        return remaining.filter { $0.buttonRole != .destructive } + remaining.filter { $0.buttonRole == .destructive }
+    }
+
     /// The quick actions that belong to a page, in their Workspace order.
     static func quickActions(for tab: AOMMainTab) -> [WorkspaceQuickActionKind] {
         WorkspaceQuickActionKind.allCases.filter { $0.module.tab == tab }
@@ -169,10 +181,7 @@ enum AOMActionBarModel {
     }
 }
 
-/// 7.15 (mock-up M03, Nova/Linear, HIG Toolbars): the page's Actions and
-/// Search live in the window toolbar; this bar appears under the page only
-/// while a selection offers actions (up to three, with their keys), so no
-/// page repeats its own title, tagline, Actions and Search at the bottom.
+/// The selected item's actions: three direct buttons with shortcuts, then More.
 struct AOMActionBar: View {
     @ObservedObject private var navigation = AOMNavigation.shared
     @ObservedObject private var contexts = AOMBarContexts.shared
@@ -190,9 +199,32 @@ struct AOMActionBar: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer(minLength: AOMSpace.x3)
+                let revision = contexts.revision
                 ForEach(Array(context.actions.prefix(3).enumerated()), id: \.element.id) { index, action in
-                    AOMBarButton(title: action.title, keys: action.keysText, primary: index == 0,
-                                 key: action.key, run: action.run)
+                    AOMBarButton(title: action.title, keys: action.keysText,
+                                 primary: index == 0 && action.buttonRole != .destructive,
+                                 key: action.key, role: action.buttonRole) {
+                        run(action, tab: tab, revision: revision)
+                    }
+                }
+                let overflow = AOMActionBarModel.overflowActions(context.actions)
+                if !overflow.isEmpty {
+                    Menu {
+                        ForEach(overflow) { action in
+                            Button(action.title, role: action.buttonRole) {
+                                run(action, tab: tab, revision: revision)
+                            }
+                            .keyboardShortcut(action.key)
+                        }
+                    } label: {
+                        Label("More Actions", systemImage: "ellipsis").labelStyle(.iconOnly)
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuOrder(.fixed)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .help("More Actions")
+                    .accessibilityLabel("More Actions")
                 }
             }
             .padding(.horizontal, AOMSpace.x3)
@@ -203,11 +235,34 @@ struct AOMActionBar: View {
             .accessibilityLabel("\(context.title ?? tab.title) actions")
         }
     }
+
+    private func run(_ action: AOMBarAction, tab: AOMMainTab, revision: Int) {
+        guard navigation.selected == tab, contexts.revision == revision else { return }
+        action.run()
+    }
 }
 
-/// 7.15: Search and Actions in the toolbar — the same command palette and
-/// the same action panel the bottom bar used to open, reachable with the
-/// sidebar hidden.
+/// Keep the subscription here, so changing a row's selection doesn't rebuild
+/// the shell. Omit the toolbar item itself when there's no selection context.
+struct AOMSelectionToolbarItem: ToolbarContent {
+    let appState: AppState
+    let paletteKeys: String
+    @Binding var showingCommandPalette: Bool
+    @ObservedObject private var navigation = AOMNavigation.shared
+    @ObservedObject private var contexts = AOMBarContexts.shared
+
+    var body: some ToolbarContent {
+        if contexts.contexts[navigation.selected] != nil {
+            ToolbarItem(placement: .automatic) {
+                AOMToolbarActions(appState: appState, paletteKeys: paletteKeys,
+                                  showingCommandPalette: $showingCommandPalette)
+                    .id(navigation.selected)
+            }
+        }
+    }
+}
+
+/// The selected item's action panel, reachable with the sidebar hidden.
 struct AOMToolbarActions: View {
     let appState: AppState
     let paletteKeys: String
@@ -220,7 +275,6 @@ struct AOMToolbarActions: View {
     var body: some View {
         let tab = navigation.selected
         let context = contexts.contexts[tab]
-        // 7.16 (GPT V09): one toolbar item; Search is its own item (`AOMToolbarSearch`).
         Button { showsActions.toggle() } label: { Label("Actions", systemImage: "ellipsis.circle") }
             .help("Every action for \(tab.title)")
             // Changing page closes the panel instead of showing another page's actions (V01/V04).
@@ -248,7 +302,7 @@ struct AOMToolbarActions: View {
 
     private func panelSections(tab: AOMMainTab, context: AOMBarContext?) -> [AOMBarActionSection] {
         var sections = AOMActionBarModel.sections(for: tab, appState: appState, paletteKeys: paletteKeys,
-                                                  openPalette: { showingCommandPalette = true },
+                                                  openPalette: { AOMLauncherController.shared.show() },
                                                   openSettings: { openSettings() })
         if let context, !context.actions.isEmpty {
             sections.insert(AOMBarActionSection(title: context.title ?? "Selection", actions: context.actions), at: 0)
@@ -263,15 +317,17 @@ private struct AOMBarButton: View {
     let keys: String?
     let primary: Bool
     var key: SwiftUI.KeyboardShortcut? = nil
+    var role: ButtonRole? = nil
     let run: () -> Void
     @State private var hovering = false
 
     var body: some View {
-        Button(action: run) {
+        Button(role: role, action: run) {
             HStack(spacing: AOMSpace.x1 + AOMSpace.x0_5) {
                 Text(title)
                     .font(AOMFont.callout.weight(primary ? .semibold : .medium))
-                    .foregroundStyle(primary ? AOMColor.accent : (hovering ? AOMColor.text : AOMColor.textSecondary))
+                    .foregroundStyle(role == .destructive ? AOMColor.dangerText
+                                     : primary ? AOMColor.accent : (hovering ? AOMColor.text : AOMColor.textSecondary))
                 if let keys, !keys.isEmpty { AOMKeycap(text: keys) }
             }
             .padding(.horizontal, AOMSpace.x2)
