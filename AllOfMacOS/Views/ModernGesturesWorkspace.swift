@@ -21,6 +21,7 @@ struct ModernGesturesWorkspace: View {
     @State private var showingBrowseActions = false
     @State private var selectedDeviceCategory: TriggerCategory = .all
     @State private var searchQuery = ""
+    @State private var expandedDeviceGroups: Set<String> = []
     @State private var searchPresented = false
     @FocusState private var listFocused: Bool
     @State private var runStates: [AutomationEditorID: AOMRunState] = [:]
@@ -100,7 +101,8 @@ struct ModernGesturesWorkspace: View {
         var triggers = scopedTriggers.filter { trigger in
             if selectedDeviceCategory != .all && trigger.input.category != selectedDeviceCategory { return false }
             guard !query.isEmpty else { return true }
-            return trigger.displayName.lowercased().contains(query)
+            return (Self.deviceGroup(for: trigger)?.lowercased().contains(query) ?? false)
+                || trigger.displayName.lowercased().contains(query)
                 || trigger.input.displayName.lowercased().contains(query)
                 || trigger.actions.contains { $0.displayName.lowercased().contains(query) }
         }
@@ -187,7 +189,13 @@ struct ModernGesturesWorkspace: View {
         if let explicitTrigger { return explicitTrigger }
         if let requested = appState.selectedTrigger?.id,
            let trigger = visible.first(where: { $0.id == requested }) { return trigger }
-        return searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? visible.first : nil
+        guard searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        if viewMode == .list {
+            return visible.first { trigger in
+                Self.deviceGroup(for: trigger).map { expandedDeviceGroups.contains($0) } ?? true
+            }
+        }
+        return visible.first
     }
 
     private func identity(_ trigger: Trigger) -> AutomationEditorID {
@@ -516,6 +524,7 @@ struct ModernGesturesWorkspace: View {
                 Button("Export Preset…") { appState.presentPresetExport() }
                 Divider()
                 Button("Edit Activation Groups…") { showingGroupsEditor = true }
+                Button("Add Storage Shortcuts (⌥T / ⌥Y)") { appState.installStorageShortcuts() }
             }
         }
     }
@@ -555,6 +564,15 @@ struct ModernGesturesWorkspace: View {
     }
 
 
+    // Presentation only: never combine, rewrite or re-order the underlying triggers.
+    static func deviceGroup(for trigger: Trigger) -> String? {
+        let name = trigger.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let folder = trigger.folder?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        if name.hasPrefix("ulanzi ") || name == "ulanzi" || ["ulanzi", "ulanzi deck"].contains(folder) { return "Ulanzi Deck" }
+        if name.hasPrefix("ugreen ") || name == "ugreen" || ["ugreen", "ugreen mouse"].contains(folder) { return "UGREEN Mouse" }
+        return nil
+    }
+
     private var list: some View {
         let selectedID = appState.selectedTrigger?.id
         let stats = GestureStatistics.shared
@@ -570,19 +588,53 @@ struct ModernGesturesWorkspace: View {
         // 6.2: a custom list — readable rows that never cut the name, a
         // raised selection card, the switch on hover — with ↑↓ and Delete.
         let current = rows
+        let groups = Dictionary(grouping: current.filter { Self.deviceGroup(for: $0) != nil },
+                                by: { Self.deviceGroup(for: $0) ?? "" })
+        let searching = !searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let visible = ["Ulanzi Deck", "UGREEN Mouse"].flatMap { group -> [Trigger] in
+            guard searching || expandedDeviceGroups.contains(group) else { return [] }
+            return groups[group] ?? []
+        } + current.filter { Self.deviceGroup(for: $0) == nil }
         return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 2) {
-                    ForEach(current) { trigger in
-                        AutomationListRow(trigger: trigger, isSelected: selectedID == trigger.id,
-                                          lastRun: stats.lastFired(trigger.input.displayName),
-                                          scope: scope(trigger),
-                                          setEnabled: { appState.setTriggerEnabled($0, triggerID: trigger.id) })
-                            .equatable()
-                            .modifier(FiredFlash(triggerID: trigger.id))
-                            .id(trigger.id)
-                            .onTapGesture { selection.wrappedValue = trigger.id; listFocused = true }
-                            .contextMenu { triggerMenu(trigger) }
+                    ForEach(["Ulanzi Deck", "UGREEN Mouse"], id: \.self) { group in
+                        if let members = groups[group], !members.isEmpty {
+                            let expanded = searching || expandedDeviceGroups.contains(group)
+                            Button {
+                                if searching { return }
+                                if expanded {
+                                    expandedDeviceGroups.remove(group)
+                                    if let selected = explicitTrigger, Self.deviceGroup(for: selected) == group {
+                                        selection.wrappedValue = nil
+                                    }
+                                } else { expandedDeviceGroups.insert(group) }
+                            } label: {
+                                HStack(spacing: AOMSpace.x2) {
+                                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                                        .font(AOMFont.caption).frame(width: 12)
+                                    Image(systemName: group == "Ulanzi Deck" ? "square.grid.3x3" : "computermouse")
+                                    Text(group).font(AOMFont.callout.weight(.semibold))
+                                    Spacer()
+                                    Text("\(members.filter(\.isEnabled).count)/\(members.count)")
+                                        .font(AOMFont.caption.monospacedDigit()).foregroundStyle(.secondary)
+                                }
+                                .padding(.horizontal, AOMSpace.x2).frame(height: 32)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .help(expanded ? "Collapse device automations" : "Expand device automations")
+                            .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+                            if expanded {
+                                ForEach(members) { trigger in
+                                    automationListRow(trigger, selectedID: selectedID, scope: scope(trigger), stats: stats)
+                                        .padding(.leading, AOMSpace.x3)
+                                }
+                            }
+                        }
+                    }
+                    ForEach(current.filter { Self.deviceGroup(for: $0) == nil }) { trigger in
+                        automationListRow(trigger, selectedID: selectedID, scope: scope(trigger), stats: stats)
                     }
                 }
                 .padding(.horizontal, AOMSpace.x2)
@@ -592,14 +644,30 @@ struct ModernGesturesWorkspace: View {
             .focusable()
             .focusEffectDisabled()
             .focused($listFocused)
-            .onKeyPress(.downArrow) { moveSelection(1, in: current, proxy: proxy); return .handled }
-            .onKeyPress(.upArrow) { moveSelection(-1, in: current, proxy: proxy); return .handled }
+            .onKeyPress(.downArrow) { moveSelection(1, in: visible, proxy: proxy); return .handled }
+            .onKeyPress(.upArrow) { moveSelection(-1, in: visible, proxy: proxy); return .handled }
             .onChange(of: selectedID) { _, id in
-                if let id { withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id, anchor: nil) } }
+                if let id {
+                    if let trigger = current.first(where: { $0.id == id }), let group = Self.deviceGroup(for: trigger) {
+                        expandedDeviceGroups.insert(group)
+                    }
+                    DispatchQueue.main.async { withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id, anchor: nil) } }
+                }
             }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Automations")
+    }
+
+    private func automationListRow(_ trigger: Trigger, selectedID: UUID?, scope: String?, stats: GestureStatistics) -> some View {
+        AutomationListRow(trigger: trigger, isSelected: selectedID == trigger.id,
+                          lastRun: stats.lastFired(trigger.input.displayName), scope: scope,
+                          setEnabled: { appState.setTriggerEnabled($0, triggerID: trigger.id) })
+            .equatable()
+            .modifier(FiredFlash(triggerID: trigger.id))
+            .id(trigger.id)
+            .onTapGesture { selection.wrappedValue = trigger.id; listFocused = true }
+            .contextMenu { triggerMenu(trigger) }
     }
 
     private func moveSelection(_ step: Int, in list: [Trigger], proxy: ScrollViewProxy) {
@@ -636,6 +704,10 @@ struct ModernGesturesWorkspace: View {
             }
             .width(min: 140, ideal: 180)
             // An unnamed automation is titled by its input; don't repeat it.
+            TableColumn("Device") { trigger in
+                Text(Self.deviceGroup(for: trigger) ?? "—").foregroundStyle(.secondary)
+            }
+            .width(min: 76, ideal: 100)
             TableColumn("Input", value: \.input.displayName) { trigger in
                 Text(trigger.aomHasCustomName
                      ? (trigger.requiredModifiers != nil ? "\(trigger.modifierLabel) \(trigger.input.displayName)" : trigger.input.displayName)

@@ -303,11 +303,16 @@ class TrackpadMonitor {
          "error": source.error ?? ""]
     }
 
-    private func writeDiagnostics() {
+    private static let diagnosticsURL: URL? = {
         let args = ProcessInfo.processInfo.arguments
-        guard let index = args.firstIndex(of: "--aom-diagnostics"), args.indices.contains(index + 1),
+        guard let index = args.firstIndex(of: "--aom-diagnostics"), args.indices.contains(index + 1) else { return nil }
+        return URL(fileURLWithPath: args[index + 1])
+    }()
+
+    private func writeDiagnostics() {
+        guard let url = Self.diagnosticsURL,
               let data = try? JSONSerialization.data(withJSONObject: diagnosticSnapshot(), options: [.prettyPrinted, .sortedKeys]) else { return }
-        try? data.write(to: URL(fileURLWithPath: args[index + 1]), options: .atomic)
+        try? data.write(to: url, options: .atomic)
     }
 
     func processTouchFrame(_ points: [TouchPoint], count: Int, timestamp: Double,

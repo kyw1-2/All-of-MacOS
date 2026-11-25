@@ -39,6 +39,7 @@ class GestureStatistics: ObservableObject {
         let start: Date
         let recentEvents: [GestureEvent]
         let summary: [String: GestureStatEntry]
+        var detectionOnlyCounts: Bool? = nil
     }
 
     init(defaults: UserDefaults?) {
@@ -57,8 +58,7 @@ class GestureStatistics: ObservableObject {
 
     private func aggregate(_ event: GestureEvent) {
         var entry = summary[event.gesture] ?? GestureStatEntry(gesture: event.gesture, totalCount: 0, firedCount: 0)
-        entry.totalCount += 1
-        entry.firedCount += event.fired ? 1 : 0
+        if event.fired { entry.firedCount += 1 } else { entry.totalCount += 1 }
         entry.lastDetected = max(entry.lastDetected ?? .distantPast, event.timestamp)
         summary[event.gesture] = entry
     }
@@ -128,7 +128,7 @@ class GestureStatistics: ObservableObject {
     }
 
     private var currentSnapshot: Snapshot {
-        Snapshot(total: totalGestures, fired: totalFired, start: sessionStart, recentEvents: events, summary: summary)
+        Snapshot(total: totalGestures, fired: totalFired, start: sessionStart, recentEvents: events, summary: summary, detectionOnlyCounts: true)
     }
 
     private func persistSnapshot() {
@@ -166,6 +166,16 @@ class GestureStatistics: ObservableObject {
             sessionStart = saved.start
             events = Array(saved.recentEvents.suffix(Self.recentEventLimit))
             summary = saved.summary
+            // v2 snapshots counted both the detection and fire events in totalCount.
+            // Keep both raw event types; correct the persisted aggregate exactly once.
+            if saved.detectionOnlyCounts != true {
+                for key in Array(summary.keys) {
+                    guard var entry = summary[key] else { continue }
+                    entry.totalCount = max(0, entry.totalCount - entry.firedCount)
+                    summary[key] = entry
+                }
+                scheduleSave()
+            }
             return
         }
         // Keep the original archive untouched during migration. The new schema

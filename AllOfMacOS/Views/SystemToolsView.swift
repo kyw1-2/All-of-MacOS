@@ -130,6 +130,9 @@ struct SystemToolsView: View {
         // Which tools exist is checked again at most every 30 s of selections.
         .aomPageLifecycle(minimumInterval: 30, onActivate: { SystemToolAvailability.shared.invalidate() })
         // ⌘K's "Uninstall…" on an app row starts the same review as the tile.
+        .onReceive(SystemToolsRequests.shared.$pendingFreeUpSpace.filter { $0 }.receive(on: DispatchQueue.main)) { _ in
+            if SystemToolsRequests.shared.takeFreeUpSpace() { model.selectCleanup(.folderSizes); model.showFreeUpSpace = true }
+        }
         .onReceive(SystemToolsRequests.shared.$pendingUninstall.compactMap { $0 }.receive(on: DispatchQueue.main)) { _ in
             if let app = SystemToolsRequests.shared.takeUninstall() { model.reviewUninstall(app) }
         }

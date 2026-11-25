@@ -9,6 +9,13 @@ import UniformTypeIdentifiers
 final class SystemToolsRequests: ObservableObject {
     static let shared = SystemToolsRequests()
     @Published private(set) var pendingUninstall: URL?
+    @Published private(set) var pendingFreeUpSpace = false
+
+    func requestFreeUpSpace() { pendingFreeUpSpace = true }
+    func takeFreeUpSpace() -> Bool {
+        defer { pendingFreeUpSpace = false }
+        return pendingFreeUpSpace
+    }
 
     func requestUninstall(_ app: URL) { pendingUninstall = app }
 

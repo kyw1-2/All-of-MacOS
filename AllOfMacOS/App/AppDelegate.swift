@@ -16,6 +16,7 @@ enum AOMCaptureDeepLink: Equatable {
     case openClipboard
     /// aom://open-launcher toggles the ⌘K launcher panel (a deck key, Raycast).
     case openLauncher
+    case openFreeUpSpace
     /// aom://audio-reconnect rebuilds AOM's app audio (HomePod silent while
     /// the app's controls work): the mixer's Reconnect for every app.
     case reconnectAudio
@@ -66,6 +67,7 @@ enum AOMCaptureDeepLink: Equatable {
         case "open-clipboard" where exact(): return .openClipboard
         case "audio-reconnect" where exact(): return .reconnectAudio
         case "open-launcher" where exact(): return .openLauncher
+        case "open-free-up-space" where exact(): return .openFreeUpSpace
         case "show-keystrokes" where exact(): return .keystrokes(.toggle)
         case "show-keystrokes" where exact(["mode"]):
             guard let mode = KeystrokeLinkMode(rawValue: params["mode"]?.lowercased() ?? ""), mode != .toggle else { return nil }
@@ -409,6 +411,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case .openClipboard: ClipboardPanelController.shared.toggle()
         case .reconnectAudio: AudioRecovery.reconnect()
         case .openLauncher: AOMLauncherController.shared.toggle()
+        case .openFreeUpSpace:
+            appState?.selectedMainTab = .tools
+            showMainWindow()
+            SystemToolsRequests.shared.requestFreeUpSpace()
         case .keystrokes(let mode):
             let overlay = KeystrokeOverlay.shared
             let target: Bool? = switch mode {
