@@ -13,29 +13,41 @@ struct FolderRulesPage: View {
     @State private var inspectorWidth = Double(AOMSize.inspectorIdeal)
     @Environment(\.undoManager) private var undoManager
     @State private var pageWidth: CGFloat = 0
+    /// Whether the inspector fits now (Workbench 2 D02/D27): decided from
+    /// the measured width with the shared policy, with hysteresis, so a
+    /// window resized across the threshold doesn't flip it on every point.
+    @State private var inspectorFits = false
 
     private static let inspectorRange = Double(AOMSize.inspectorWidth.lowerBound)...Double(AOMSize.inspectorWidth.upperBound)
-    /// What one resize divider takes in the row (a hairline and its padding).
-    private static let dividerAllowance = 2 * AOMSpace.x1
 
+    /// The stored list width, checked (D04) and shrunk while the detail
+    /// needs the room; the stored value itself only changes by dragging.
     private var clampedListWidth: CGFloat {
-        CGFloat(min(AOMSize.moduleListRange.upperBound, max(AOMSize.moduleListRange.lowerBound, listWidth)))
+        AOMPaneWidth.effective(stored: listWidth, range: AOMSize.moduleListRange, fallback: AOMSize.moduleListIdeal,
+                               available: pageWidth,
+                               reserved: AOMSize.detailMinimum + AOMWorkbenchPolicy.dividerAllowance)
     }
 
     /// The width left for the inspector beside the list and a 420 pt detail.
     private var inspectorRoom: CGFloat {
-        pageWidth - clampedListWidth - AOMSize.detailMinimum - 2 * Self.dividerAllowance
+        AOMWorkbenchPolicy.inspectorRoom(available: pageWidth, list: clampedListWidth, detailMinimum: AOMSize.detailMinimum)
     }
 
     /// The inspector only opens when the list, a 420 pt detail and the
     /// inspector all fit; in a narrower window the preview shows in the detail.
-    private var inspectorFits: Bool { pageWidth > 0 && inspectorRoom >= AOMSize.inspectorWidth.lowerBound }
+    private func updateInspectorFits() {
+        let fits = AOMWorkbenchPolicy.inspectorFits(available: pageWidth, list: clampedListWidth,
+                                                    detailMinimum: AOMSize.detailMinimum,
+                                                    inspectorMinimum: AOMSize.inspectorWidth.lowerBound,
+                                                    current: inspectorFits)
+        if fits != inspectorFits { inspectorFits = fits }
+    }
 
     private var isInspectorShown: Bool { showsInspector && inspectorFits }
 
     private var shownInspectorWidth: CGFloat {
-        let wanted = CGFloat(min(Self.inspectorRange.upperBound, max(Self.inspectorRange.lowerBound, inspectorWidth)))
-        return max(AOMSize.inspectorWidth.lowerBound, min(wanted, inspectorRoom))
+        AOMPaneWidth.effective(stored: inspectorWidth, range: Self.inspectorRange, fallback: Double(AOMSize.inspectorIdeal),
+                               available: inspectorRoom, reserved: 0)
     }
 
     private func showPreview() {
@@ -55,8 +67,8 @@ struct FolderRulesPage: View {
             .background {
                 GeometryReader { proxy in
                     Color.clear
-                        .onAppear { pageWidth = proxy.size.width }
-                        .onChange(of: proxy.size.width) { _, width in pageWidth = width }
+                        .onAppear { pageWidth = proxy.size.width; updateInspectorFits() }
+                        .onChange(of: proxy.size.width) { _, width in pageWidth = width; updateInspectorFits() }
                 }
             }
             .onChange(of: inspectorFits) { _, fits in if fits { model.showsInlinePreview = false } }
@@ -93,12 +105,15 @@ struct FolderRulesPage: View {
             FolderRulesListColumn(model: model, engine: engine)
                 .frame(width: clampedListWidth)
                 .frame(maxHeight: .infinity)
-            AOMResizeDivider(width: $listWidth, range: AOMSize.moduleListRange, paneEdge: .leading)
+            AOMResizeDivider(width: $listWidth, range: AOMSize.moduleListRange, paneEdge: .leading,
+                             displayed: clampedListWidth,
+                             maximum: pageWidth > 0 ? pageWidth - AOMSize.detailMinimum - AOMWorkbenchPolicy.dividerAllowance : nil)
             FolderRulesDetail(model: model, engine: engine, showPreview: showPreview)
                 .frame(minWidth: AOMSize.detailMinimum, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             if isInspectorShown {
                 HStack(spacing: 0) {
-                    AOMResizeDivider(width: $inspectorWidth, range: Self.inspectorRange, paneEdge: .trailing)
+                    AOMResizeDivider(width: $inspectorWidth, range: Self.inspectorRange, paneEdge: .trailing,
+                                     displayed: shownInspectorWidth, maximum: inspectorRoom)
                     FolderRulesInspector(model: model, engine: engine)
                         .frame(width: shownInspectorWidth)
                         .frame(maxHeight: .infinity)

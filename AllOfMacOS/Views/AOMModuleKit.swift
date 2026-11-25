@@ -169,9 +169,9 @@ struct AOMFlowLayout: Layout {
 
 /// The template for rule and editor pages (design-3.4.0 b.3): a list column
 /// on the leading side, a resizable hairline, the detail for the selection,
-/// and an optional trailing inspector (the system inspector column, toggled
-/// with a toolbar button or ⌥⌘I). The list width is the caller's
-/// `@AppStorage("AOM<Module>ListWidth")` so it survives relaunch.
+/// and an optional trailing inspector (toggled with a toolbar button or
+/// ⌥⌘I). The list width is the caller's `@AppStorage("AOM<Module>ListWidth")`
+/// so it survives relaunch.
 ///
 ///     AOMListDetail(listWidth: $listWidth, showsInspector: $inspector) {
 ///         AOMListColumn(…) { List(selection: $selection) { … } }
@@ -180,12 +180,28 @@ struct AOMFlowLayout: Layout {
 ///     } inspector: {
 ///         AOMInspector { AOMInspectorSection("Preview") { … } }
 ///     }
+///
+/// Workbench 2 (D02–D04): plain columns, as Folder Rules has drawn them since
+/// 3.4.0 (the system `.inspector` inset and blurred the first row under a
+/// page header). The page measures the width it has; the list is drawn at
+/// the stored width only while the detail keeps `detailMinimum`, and the
+/// inspector sits beside the detail only while all three fit (with 20 pt of
+/// hysteresis). Otherwise an open inspector floats over the detail's
+/// trailing edge, so the detail never drops below its minimum. Neither the
+/// stored list width nor the selection changes when the window does.
 struct AOMListDetail<ListContent: View, Detail: View, InspectorContent: View>: View {
     @Binding var listWidth: Double
     var showsInspector: Binding<Bool>?
     @ViewBuilder var list: ListContent
     @ViewBuilder var detail: Detail
     @ViewBuilder var inspector: InspectorContent
+    @State private var available: CGFloat = 0
+    @State private var inspectorBeside = false
+    @State private var inspectorWidth = Double(AOMSize.inspectorIdeal)
+
+    private static var inspectorRange: ClosedRange<Double> {
+        Double(AOMSize.inspectorWidth.lowerBound)...Double(AOMSize.inspectorWidth.upperBound)
+    }
 
     init(listWidth: Binding<Double>, showsInspector: Binding<Bool>? = nil,
          @ViewBuilder list: () -> ListContent,
@@ -198,33 +214,74 @@ struct AOMListDetail<ListContent: View, Detail: View, InspectorContent: View>: V
         self.inspector = inspector()
     }
 
-    var body: some View {
-        // The system inspector only when a page passes one: an always-attached
-        // `.inspector(isPresented: false)` inset the first row under the
-        // toolbar and blurred it (B, C and D's pages, 3.4.0).
-        if let showsInspector {
-            columns
-                .inspector(isPresented: showsInspector) {
-                    inspector
-                        .inspectorColumnWidth(min: AOMSize.inspectorWidth.lowerBound, ideal: AOMSize.inspectorIdeal,
-                                              max: AOMSize.inspectorWidth.upperBound)
-                }
-        } else {
-            columns
-        }
+    private var inspectorRequested: Bool { showsInspector?.wrappedValue ?? false }
+
+    private var shownListWidth: CGFloat {
+        AOMPaneWidth.effective(stored: listWidth, range: AOMSize.moduleListRange, fallback: AOMSize.moduleListIdeal,
+                               available: available,
+                               reserved: AOMSize.detailMinimum + AOMWorkbenchPolicy.dividerAllowance)
     }
 
-    private var columns: some View {
+    private var shownInspectorWidth: CGFloat {
+        let room = AOMWorkbenchPolicy.inspectorRoom(available: available, list: shownListWidth,
+                                                    detailMinimum: AOMSize.detailMinimum)
+        return AOMPaneWidth.effective(stored: inspectorWidth, range: Self.inspectorRange,
+                                      fallback: Double(AOMSize.inspectorIdeal),
+                                      available: room, reserved: 0)
+    }
+
+    private func updateArrangement() {
+        let fits = inspectorRequested && AOMWorkbenchPolicy.inspectorFits(
+            available: available, list: shownListWidth, detailMinimum: AOMSize.detailMinimum,
+            inspectorMinimum: AOMSize.inspectorWidth.lowerBound, current: inspectorBeside)
+        if fits != inspectorBeside { inspectorBeside = fits }
+    }
+
+    var body: some View {
+        let listShown = shownListWidth
         HStack(spacing: 0) {
             list
-                .frame(width: CGFloat(min(AOMSize.moduleListRange.upperBound,
-                                          max(AOMSize.moduleListRange.lowerBound, listWidth))))
+                .frame(width: listShown)
                 .frame(maxHeight: .infinity)
-            AOMResizeDivider(width: $listWidth, range: AOMSize.moduleListRange, paneEdge: .leading)
+            AOMResizeDivider(width: $listWidth, range: AOMSize.moduleListRange, paneEdge: .leading,
+                             displayed: listShown,
+                             maximum: available > 0 ? available - AOMSize.detailMinimum - AOMWorkbenchPolicy.dividerAllowance : nil)
             detail
                 .frame(minWidth: AOMSize.detailMinimum, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            if inspectorRequested && inspectorBeside {
+                AOMResizeDivider(width: $inspectorWidth, range: Self.inspectorRange, paneEdge: .trailing,
+                                 displayed: shownInspectorWidth)
+                inspector
+                    .frame(width: shownInspectorWidth)
+                    .frame(maxHeight: .infinity)
+                    .accessibilityElement(children: .contain)
+                    .accessibilityLabel("Inspector")
+            }
+        }
+        .overlay(alignment: .trailing) {
+            // Asked for but no room beside the detail: over its trailing edge.
+            if inspectorRequested && !inspectorBeside && available > 0 {
+                inspector
+                    .frame(width: AOMSize.inspectorWidth.lowerBound)
+                    .frame(maxHeight: .infinity)
+                    .background(AOMColor.raised)
+                    .overlay(alignment: .leading) { AOMDivider(axis: .vertical) }
+                    .aomElevation(.raised)
+                    .accessibilityElement(children: .contain)
+                    .accessibilityLabel("Inspector")
+            }
         }
         .background(AOMPageTint())
+        // The row's own width, which the inspector doesn't change (the
+        // detail gives way), so the decision can't feed back into itself.
+        .background {
+            GeometryReader { proxy in
+                Color.clear
+                    .onAppear { available = proxy.size.width; updateArrangement() }
+                    .onChange(of: proxy.size.width) { _, width in available = width; updateArrangement() }
+            }
+        }
+        .onChange(of: inspectorRequested) { _, _ in updateArrangement() }
     }
 }
 

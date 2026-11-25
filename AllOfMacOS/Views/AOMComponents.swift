@@ -152,6 +152,20 @@ struct AOMPageHeader<Trailing: View>: View {
         }
     }
 
+    /// Workbench 2 (D06): the page's own header doesn't repeat what the
+    /// window already shows — a pill the sentence already says ("is on" +
+    /// "On"), or a subtitle that is the toolbar's title or subtitle.
+    private var shownStatus: AOMStatus? {
+        guard let status, AOMHeaderDedup.pill(title: title, status: status.text) != nil else { return nil }
+        return status
+    }
+
+    private var shownSubtitle: String? {
+        guard identity, let pageTab else { return subtitle }
+        return AOMHeaderDedup.subtitle(subtitle, toolbarTitle: pageTab.title,
+                                       toolbarSubtitle: AOMToolbarSubtitles.shared.values[pageTab])
+    }
+
     private var headerText: some View {
         VStack(alignment: .leading, spacing: AOMSpace.x1) {
             HStack(spacing: AOMSpace.x2) {
@@ -159,9 +173,9 @@ struct AOMPageHeader<Trailing: View>: View {
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityAddTraits(.isHeader).help(help ?? "")
-                if let status { AOMStatusPill(status.text, tone: status.tone, symbol: status.symbol) }
+                if let status = shownStatus { AOMStatusPill(status.text, tone: status.tone, symbol: status.symbol) }
             }
-            if let subtitle, !subtitle.isEmpty {
+            if let subtitle = shownSubtitle, !subtitle.isEmpty {
                 Text(subtitle).font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -179,7 +193,7 @@ struct AOMPageHeader<Trailing: View>: View {
                     Text(title).font(AOMFont.pageTitle).foregroundStyle(AOMColor.text)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityAddTraits(.isHeader).help(help ?? "")
-                    if let status { AOMStatusPill(status.text, tone: status.tone, symbol: status.symbol) }
+                    if let status = shownStatus { AOMStatusPill(status.text, tone: status.tone, symbol: status.symbol) }
                 }
                 if let subtitle, !subtitle.isEmpty {
                     Text(subtitle).font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)

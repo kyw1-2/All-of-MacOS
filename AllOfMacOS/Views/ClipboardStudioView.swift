@@ -324,10 +324,11 @@ struct ClipboardStudioView: View {
                 }
                 .background(AOMPageTint())
             } else {
-                // The list + detail template (b.2) without `AOMListDetail`: its
-                // `.inspector` gives the panes a toolbar inset, which blurred the
-                // first row here, where the panes sit under the header.
-                HStack(spacing: 0) {
+                // The list + detail template (b.2). Workbench 2: `AOMListDetail`
+                // draws plain columns now (no `.inspector` inset under the
+                // header), and keeps the detail at its minimum in a narrow
+                // window by drawing the list narrower than its stored width.
+                AOMListDetail(listWidth: $listWidth) {
                     AOMListColumn(rows: {
                         List(selection: $selectedEntryID) {
                             ForEach(entries) { entry in libraryRow(entry) }
@@ -361,31 +362,39 @@ struct ClipboardStudioView: View {
                                 .disabled(!store.entries.contains { $0.pinboardIDs.isEmpty })
                         }
                     })
-                    .frame(width: CGFloat(min(AOMSize.moduleListRange.upperBound,
-                                              max(AOMSize.moduleListRange.lowerBound, listWidth))))
-                    AOMResizeDivider(width: $listWidth, range: AOMSize.moduleListRange, paneEdge: .leading)
+                } detail: {
                     Group {
                         if let entry = entries.first(where: { $0.id == selectedEntryID }) {
                             detailPane(entry)
                         } else {
                             AOMEmptyState("No Item Selected", systemImage: "doc.on.clipboard",
-                                          message: "Select an item to see all of it, copy it or pin it.")
+                                          message: isNarrowed && !entries.isEmpty
+                                              ? "Select an item in these results to see all of it, copy it or pin it."
+                                              : "Select an item to see all of it, copy it or pin it.")
                         }
                     }
-                    .frame(minWidth: AOMSize.detailMinimum, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 }
-                .background(AOMPageTint())
-                // The detail always shows the highlighted row: the first item
-                // is selected until another one is (and after a delete).
-                .onAppear { selectFirstIfNeeded(entries) }
-                .onChange(of: entries.map(\.id)) { _, _ in selectFirstIfNeeded(entries) }
+                // The detail shows the highlighted row: the first item is
+                // selected on arrival and when the library isn't narrowed.
+                // Workbench 2 (D03, D05): a search or filter that hides the
+                // selected item leaves nothing selected (Return and ⌫ do
+                // nothing) instead of moving to whatever is first now.
+                .onAppear { reconcileSelection(entries, arriving: true) }
+                .onChange(of: entries.map(\.id)) { _, _ in reconcileSelection(entries, arriving: false) }
             }
         }
     }
 
-    private func selectFirstIfNeeded(_ entries: [ClipboardEntry]) {
-        guard !entries.contains(where: { $0.id == selectedEntryID }) else { return }
-        selectedEntryID = entries.first?.id
+    /// Whether a search or filter (not the board, which is a place) narrows the library.
+    private var isNarrowed: Bool {
+        !search.query.trimmingCharacters(in: .whitespaces).isEmpty || search.kind != nil
+            || search.source != nil || search.recentDays != 0
+    }
+
+    private func reconcileSelection(_ entries: [ClipboardEntry], arriving: Bool) {
+        let next = AOMStableSelection.reconcile(selectedEntryID, visible: entries.map(\.id),
+                                                autoSelectFirst: arriving || !isNarrowed)
+        if next != selectedEntryID { selectedEntryID = next }
     }
 
     /// Two lines per item, like a Mail or Notes list: the title in Body over

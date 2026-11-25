@@ -48,6 +48,10 @@ struct ModernGesturesWorkspace: View {
     @StateObject private var toast = AOMToastModel()
     /// Narrow windows: whether the editor replaces the list.
     @State private var compactShowsEditor = false
+    /// Workbench 2 (D02, D03): the arrangement, decided from the measured
+    /// width with 20 pt of hysteresis, so resizing across the threshold
+    /// doesn't rebuild the panes (and drop their scroll position) each point.
+    @State private var compactLayout = false
     /// The editor title reads as a heading, so it edits on click — a hoverable
     /// text field this large would put the I-beam over the whole header.
     @State private var editingName = false
@@ -211,11 +215,10 @@ struct ModernGesturesWorkspace: View {
 
     var body: some View {
         GeometryReader { geometry in
-            let compact = geometry.size.width < CGFloat(AOMSize.listColumnRange.lowerBound) + AOMSize.editorMinimum
             Group {
                 if scopedTriggers.isEmpty {
                     onboardingView
-                } else if compact {
+                } else if compactLayout {
                     if compactShowsEditor, selectedTrigger != nil {
                         editorPane(compact: true)
                     } else {
@@ -226,6 +229,8 @@ struct ModernGesturesWorkspace: View {
                 }
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
+            .onAppear { updateArrangement(geometry.size.width) }
+            .onChange(of: geometry.size.width) { _, width in updateArrangement(width) }
         }
         .aomPane()
         .aomToolbarSubtitle(subtitle)
@@ -328,13 +333,26 @@ struct ModernGesturesWorkspace: View {
         }
     }
 
+    /// List and editor side by side while both minimums fit (the threshold
+    /// 7.x used), one at a time below it; back only with 20 pt to spare.
+    private func updateArrangement(_ width: CGFloat) {
+        let minimum = CGFloat(AOMSize.listColumnRange.lowerBound) + AOMSize.editorMinimum
+        let compact = !AOMWorkbenchPolicy.sideBySide(available: width, minimum: minimum, current: !compactLayout)
+        if compact != compactLayout { compactLayout = compact }
+    }
+
     private func split(totalWidth: CGFloat) -> some View {
         let stored = viewMode == .table ? tableWidth : listWidth
         let range = viewMode == .table ? Self.tableWidthRange : AOMSize.listColumnRange
-        let width = min(CGFloat(stored), max(CGFloat(range.lowerBound), totalWidth - AOMSize.editorMinimum))
+        let fallback = viewMode == .table ? Self.tableWidthRange.lowerBound : AOMSize.listColumnIdeal
+        // D04: the stored width checked and drawn narrower while the editor
+        // needs the room; it is only written by dragging, so it comes back.
+        let width = AOMPaneWidth.effective(stored: stored, range: range, fallback: fallback,
+                                           available: totalWidth, reserved: AOMSize.editorMinimum)
         return HStack(spacing: 0) {
             listPane.frame(width: width)
-            AOMResizeDivider(width: viewMode == .table ? $tableWidth : $listWidth, range: range, paneEdge: .leading)
+            AOMResizeDivider(width: viewMode == .table ? $tableWidth : $listWidth, range: range, paneEdge: .leading,
+                             displayed: width, maximum: totalWidth - AOMSize.editorMinimum)
             editorPane(compact: false).frame(maxWidth: .infinity)
         }
     }
@@ -344,11 +362,25 @@ struct ModernGesturesWorkspace: View {
         appState.showingAddTrigger = true
     }
 
+    /// Workbench 2 (D03, D05): a visible selection stays. Switching scope or
+    /// input (or arriving) highlights the first automation; while a search is
+    /// typed, an automation the search hides leaves nothing selected, so ⌘↩
+    /// and ⌫ never move to a different automation.
     private func reconcileSelection() {
-        if !filteredTriggers.contains(where: { $0.id == appState.selectedTrigger?.id }) {
-            appState.selectedTrigger = filteredTriggers.first
-            appState.selectedAction = nil
-        }
+        let visible = filteredTriggers
+        let searching = !searchQuery.trimmingCharacters(in: .whitespaces).isEmpty
+        let next = AOMStableSelection.reconcile(appState.selectedTrigger?.id, visible: visible.map(\.id),
+                                                autoSelectFirst: !searching)
+        guard next != appState.selectedTrigger?.id else { return }
+        appState.selectedTrigger = next.flatMap { id in visible.first { $0.id == id } }
+        appState.selectedAction = nil
+    }
+
+    /// The automation a bar button may act on: still in the preset and still
+    /// one of the rows on screen (not hidden by the search since).
+    private func actionable(_ id: UUID) -> Trigger? {
+        guard AOMStableSelection.actionTarget(id, visible: filteredTriggers.map(\.id)) != nil else { return nil }
+        return latest(id)
     }
 
     /// Summary first (6.1): an automation opens with its steps as one-line
@@ -605,21 +637,21 @@ struct ModernGesturesWorkspace: View {
         if !trigger.actions.isEmpty, ActionTree.problem(trigger.actions) == nil {
             actions.append(AOMBarAction(id: "auto.test", title: runStates[trigger.id] == .running ? "Running…" : "Run",
                                         identity: AOMIdentity(symbol: "play.fill", color: hue),
-                                        run: { if let now = latest(id), !now.actions.isEmpty, ActionTree.problem(now.actions) == nil { test(now) } },
+                                        run: { if let now = actionable(id), !now.actions.isEmpty, ActionTree.problem(now.actions) == nil { test(now) } },
                                         key: SwiftUI.KeyboardShortcut(.return, modifiers: .command)))
         }
         actions.append(AOMBarAction(id: "auto.toggle", title: trigger.isEnabled ? "Turn Off" : "Turn On",
                                     identity: AOMIdentity(symbol: trigger.isEnabled ? "pause.fill" : "play.circle", color: hue),
-                                    run: { if let now = latest(id) { appState.toggleTrigger(now) } }))
+                                    run: { if let now = actionable(id) { appState.toggleTrigger(now) } }))
         actions.append(AOMBarAction(id: "auto.duplicate", title: "Duplicate",
                                     identity: AOMIdentity(symbol: "plus.square.on.square", color: hue),
-                                    run: { if let now = latest(id) { duplicate(now) } }))
+                                    run: { if let now = actionable(id) { duplicate(now) } }))
         actions.append(AOMBarAction(id: "auto.pin", title: trigger.isFavorite ? "Unpin from Workspace" : "Pin to Workspace",
                                     identity: AOMIdentity(symbol: trigger.isFavorite ? "pin.slash" : "pin", color: hue),
-                                    run: { if let now = latest(id) { appState.toggleFavorite(now) } }))
+                                    run: { if let now = actionable(id) { appState.toggleFavorite(now) } }))
         actions.append(AOMBarAction(id: "auto.delete", title: "Delete",
                                     identity: AOMIdentity(symbol: "trash", color: AOMColor.danger),
-                                    shortcut: "⌫", run: { if let now = latest(id) { delete(now) } }))
+                                    shortcut: "⌫", run: { if let now = actionable(id) { delete(now) } }))
         return AOMBarContext(title: trigger.displayName, actions: actions)
     }
 

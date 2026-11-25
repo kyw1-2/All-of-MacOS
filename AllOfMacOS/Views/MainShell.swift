@@ -114,12 +114,18 @@ struct AOMMainShell<Content: View>: View {
                     AOMToolbarSearch(paletteKeys: AOMPaletteShortcut.current(appState.currentPreset).displayString,
                                      showingCommandPalette: $showingCommandPalette)
                 }
+                // Workbench 2 (D01): this opens the diagnostics drawer, not a
+                // selection inspector, so it no longer borrows the inspector's
+                // name and `sidebar.right` symbol. A page's own inspector
+                // (Folder Rules ⌥⌘I, AOMListDetail) is the only "Inspector".
+                // The names match Window › Diagnostics Console / Touch Visualizer.
                 ToolbarItem(placement: .automatic) {
                     Menu {
-                        Toggle("Diagnostics Console", isOn: $showLog)
-                        Toggle("Touch Visualizer", isOn: $showTouchVisualizer)
-                    } label: { Label("Inspect", systemImage: "sidebar.right") }
-                    .help("Diagnostics and touch visualizer")
+                        Toggle(AOMDiagnosticsNames.console, isOn: $showLog)
+                        Toggle(AOMDiagnosticsNames.touchVisualizer, isOn: $showTouchVisualizer)
+                    } label: { Label(AOMDiagnosticsNames.menu, systemImage: AOMDiagnosticsNames.symbol) }
+                    .help(AOMDiagnosticsNames.help)
+                    .accessibilityLabel(AOMDiagnosticsNames.menu)
                 }
             }
         }
@@ -636,14 +642,27 @@ struct AOMShellCommandMenus: Commands {
         }
         CommandGroup(after: .windowArrangement) {
             Divider()
-            Toggle("Diagnostics Console", isOn: Binding(get: { shell?.showLog ?? false },
-                                                        set: { shell?.setShowLog($0) }))
+            Toggle(AOMDiagnosticsNames.console, isOn: Binding(get: { shell?.showLog ?? false },
+                                                              set: { shell?.setShowLog($0) }))
                 .disabled(shell == nil)
-            Toggle("Touch Visualizer", isOn: Binding(get: { shell?.showTouchVisualizer ?? false },
-                                                     set: { shell?.setShowTouchVisualizer($0) }))
+            Toggle(AOMDiagnosticsNames.touchVisualizer, isOn: Binding(get: { shell?.showTouchVisualizer ?? false },
+                                                                      set: { shell?.setShowTouchVisualizer($0) }))
                 .disabled(shell == nil)
         }
     }
+}
+
+/// Workbench 2 (D01): one set of names for the diagnostics drawer, shared by
+/// the toolbar menu, the Window menu and their accessibility labels, and kept
+/// apart from "Inspector" (a page's panel for the selected item).
+enum AOMDiagnosticsNames {
+    static let menu = "Diagnostics"
+    static let console = "Diagnostics Console"
+    static let touchVisualizer = "Touch Visualizer"
+    static let symbol = "stethoscope"
+    static let help = "Diagnostics Console and Touch Visualizer (also in the Window menu)"
+    /// Words a selection inspector uses, which the diagnostics controls must not.
+    static let inspectorWords = ["inspect", "inspector"]
 }
 
 // MARK: - Command palette shortcut
