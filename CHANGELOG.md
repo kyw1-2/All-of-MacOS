@@ -1,3 +1,13 @@
+## [7.20.0] - 2026-11-25 — Mouse navigation, device groups, faster lookups
+
+From the performance audit and the device/storage branch (`aom/device-groups-storage-shortcuts`, 4a770ad, a9991de).
+
+- **Mouse Back/Forward everywhere** (Settings › Automation › Keyboard & mouse, on by default): the side buttons go back and forward in the app under the pointer even when it only understands the keyboard — Finder, System Settings, Music, Notes, Slack, Notion (⌘[ ⌘]), VS Code, Cursor, Windsurf, Sublime (⌃- ⌃⇧-), Xcode (⌃⌘← →), Obsidian (⌘⌥← →). Browsers and JetBrains IDEs keep their own handling; unknown apps, the desktop, secure text fields and buttons you've bound yourself are left alone. The app under the pointer gets the keys even when another app is in front.
+- **Gesture statistics**: each input was counted twice in its per-gesture total, so success rates read 50 %; fixed, and saved totals are corrected once.
+- **Device automations**: Ulanzi Deck (41) and UGREEN (4) automations are grouped; storage shortcuts template — ⌥T Empty Trash (asks first), ⌥Y opens Free Up Space (`aom://open-free-up-space`), added only when the keys are free.
+- **Back/Forward shortcuts in web editors**: AOM presses the app's own Back/Forward menu item while you type, in nested menus too, off the main thread.
+- **Performance**: the menu bar panel refreshes every 5 s instead of every second while open; saving or restoring window layouts asks only apps that own windows and reads three window attributes in one call; PDF date patterns and trackpad diagnostics arguments are built once.
+
 ## [7.19.0] - 2026-11-25 — Calm Workbench, finished
 
 The 7.18 ledger's open items and a second look at the 7.18 screenshots.
