@@ -121,15 +121,25 @@ struct FolderRulesInspector: View {
                 return true
             } isTargeted: { testTargeted = $0 }
             if let result = model.testResult {
+                // D27: match, no match or can't tell, per condition and overall.
+                let verdicts = FolderRulesVerdict.conditions(rule.conditions, results: result.conditionResults, state: result.state)
+                let overall = FolderRulesVerdict.overall(result.state)
+                Label(overall == .match ? "Matches this rule" : (overall == .noMatch ? "Doesn't match this rule" : "The rule can't tell"),
+                      systemImage: overall.symbol)
+                    .font(AOMFont.callout.weight(.semibold))
+                    .foregroundStyle(tint(overall))
                 ForEach(Array(rule.conditions.enumerated()), id: \.element.id) { index, condition in
-                    let passed = result.conditionResults.indices.contains(index) && result.conditionResults[index]
+                    let verdict = verdicts.indices.contains(index) ? verdicts[index] : .unknown
                     Label {
                         Text(FolderRulesText.sentence(condition)).font(AOMFont.callout)
                     } icon: {
-                        Image(systemName: passed ? "checkmark.circle.fill" : "xmark.circle.fill")
-                            .foregroundStyle(passed ? AOMColor.success : AOMColor.danger)
+                        Image(systemName: verdict.symbol).foregroundStyle(tint(verdict))
                     }
-                    .accessibilityLabel("\(FolderRulesText.sentence(condition)): \(passed ? "matches" : "doesn't match")")
+                    .accessibilityLabel("\(FolderRulesText.sentence(condition)): \(verdict.spoken)")
+                }
+                if case .needsReview(let reason) = result.state {
+                    Text(reason).font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Text(result.state == .noMatch ? "The rule wouldn't act on this item." : "The rule would:")
                     .font(AOMFont.callout.weight(.medium))
@@ -139,6 +149,14 @@ struct FolderRulesInspector: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+        }
+    }
+
+    private func tint(_ verdict: FolderRulesVerdict) -> Color {
+        switch verdict {
+        case .match: return AOMColor.success
+        case .noMatch: return AOMColor.danger
+        case .unknown: return AOMColor.warningText
         }
     }
 

@@ -306,3 +306,18 @@ final class AOMWorkbench2FilesTests: XCTestCase {
         XCTAssertEqual(FilesBreadcrumb.crumbs(for: URL(fileURLWithPath: "/"), home: home).map(\.name), ["/"])
     }
 }
+
+/// D27: per-condition verdicts, with "can't tell" for unreadable PDFs.
+final class AOMWorkbench2FolderVerdictTests: XCTestCase {
+    func testVerdicts() {
+        let conditions = [FolderRuleCondition.kind(.image), FolderRuleCondition(attribute: .pdfText, values: ["청구서"])]
+        XCTAssertEqual(FolderRulesVerdict.conditions(conditions, results: [true, false], state: .noMatch), [.match, .noMatch])
+        XCTAssertEqual(FolderRulesVerdict.conditions(conditions, results: [true, false], state: .needsReview("Scanned PDF")),
+                       [.match, .unknown])
+        XCTAssertEqual(FolderRulesVerdict.conditions(conditions, results: [true], state: .willRun), [.match, .unknown],
+                       "a missing result is unknown, never a match")
+        XCTAssertEqual(FolderRulesVerdict.overall(.noMatch), .noMatch)
+        XCTAssertEqual(FolderRulesVerdict.overall(.needsReview("x")), .unknown)
+        XCTAssertEqual(FolderRulesVerdict.overall(.willRun), .match)
+    }
+}

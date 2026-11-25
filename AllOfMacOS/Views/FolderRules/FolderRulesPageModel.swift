@@ -452,3 +452,48 @@ enum FolderRulesPreviewFreshness {
         picked > 0 && !loading && !stale
     }
 }
+
+/// Workbench 2 (D27): what each condition says about a tested item — it
+/// matches, it doesn't, or the rule can't tell (a PDF whose text it can't
+/// read) — and the item's overall verdict.
+enum FolderRulesVerdict: Equatable {
+    case match, noMatch, unknown
+
+    var symbol: String {
+        switch self {
+        case .match: return "checkmark.circle.fill"
+        case .noMatch: return "xmark.circle.fill"
+        case .unknown: return "questionmark.circle.fill"
+        }
+    }
+
+    var spoken: String {
+        switch self {
+        case .match: return "matches"
+        case .noMatch: return "doesn't match"
+        case .unknown: return "can't tell"
+        }
+    }
+
+    /// One verdict per condition. A condition with no result, or one that
+    /// reads a PDF's text while the item needs review, is unknown.
+    static func conditions(_ conditions: [FolderRuleCondition], results: [Bool],
+                           state: FolderRulePreviewItem.State) -> [FolderRulesVerdict] {
+        let undecided: Bool
+        if case .needsReview = state { undecided = true } else { undecided = false }
+        return conditions.indices.map { index in
+            if undecided && conditions[index].attribute == .pdfText { return .unknown }
+            guard results.indices.contains(index) else { return .unknown }
+            return results[index] ? .match : .noMatch
+        }
+    }
+
+    /// The item as a whole.
+    static func overall(_ state: FolderRulePreviewItem.State) -> FolderRulesVerdict {
+        switch state {
+        case .noMatch: return .noMatch
+        case .needsReview: return .unknown
+        default: return .match
+        }
+    }
+}
