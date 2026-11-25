@@ -298,3 +298,50 @@ struct AOMFocusFirstControl: NSViewRepresentable {
         }
     }
 }
+
+// MARK: - Automation editor status (D14)
+
+/// The one state line under an automation's name: whether it can run, and
+/// why not. Edits apply as they are made, so "saved" is always true; what
+/// varies is whether it will run.
+enum AOMAutomationEditorStatus: Equatable {
+    case ready
+    case off
+    case noSteps
+    case invalidInput(String)
+    case invalidSteps(String)
+
+    static func resolve(isEnabled: Bool, stepCount: Int, inputProblem: String?, stepsProblem: String?) -> AOMAutomationEditorStatus {
+        if let inputProblem { return .invalidInput(inputProblem) }
+        if stepCount == 0 { return .noSteps }
+        if let stepsProblem { return .invalidSteps(stepsProblem) }
+        return isEnabled ? .ready : .off
+    }
+
+    var text: String {
+        switch self {
+        case .ready: return "On · changes are saved as you make them"
+        case .off: return "Off · saved, won't run until turned on"
+        case .noSteps: return "Add a step for this automation to do something"
+        case .invalidInput(let problem): return "Can't start: \(problem)"
+        case .invalidSteps(let problem): return "Can't run: \(problem)"
+        }
+    }
+
+    var tone: AOMTone {
+        switch self {
+        case .ready: return .success
+        case .off, .noSteps: return .neutral
+        case .invalidInput, .invalidSteps: return .warning
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .ready: return "checkmark.circle"
+        case .off: return "pause.circle"
+        case .noSteps: return "plus.circle"
+        case .invalidInput, .invalidSteps: return "exclamationmark.triangle"
+        }
+    }
+}

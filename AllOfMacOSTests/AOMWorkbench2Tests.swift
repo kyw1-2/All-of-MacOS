@@ -321,3 +321,17 @@ final class AOMWorkbench2FolderVerdictTests: XCTestCase {
         XCTAssertEqual(FolderRulesVerdict.overall(.willRun), .match)
     }
 }
+
+/// D14: one status for the automation editor, problems first.
+final class AOMWorkbench2AutomationStatusTests: XCTestCase {
+    func testStatusOrder() {
+        XCTAssertEqual(AOMAutomationEditorStatus.resolve(isEnabled: true, stepCount: 2, inputProblem: nil, stepsProblem: nil), .ready)
+        XCTAssertEqual(AOMAutomationEditorStatus.resolve(isEnabled: false, stepCount: 2, inputProblem: nil, stepsProblem: nil), .off)
+        XCTAssertEqual(AOMAutomationEditorStatus.resolve(isEnabled: true, stepCount: 0, inputProblem: nil, stepsProblem: nil), .noSteps)
+        XCTAssertEqual(AOMAutomationEditorStatus.resolve(isEnabled: true, stepCount: 0, inputProblem: "needs a modifier", stepsProblem: nil),
+                       .invalidInput("needs a modifier"), "an input problem comes first")
+        XCTAssertEqual(AOMAutomationEditorStatus.resolve(isEnabled: false, stepCount: 1, inputProblem: nil, stepsProblem: "empty group"),
+                       .invalidSteps("empty group"), "a broken step outranks off")
+        XCTAssertEqual(AOMAutomationEditorStatus.invalidSteps("x").tone, .warning)
+    }
+}

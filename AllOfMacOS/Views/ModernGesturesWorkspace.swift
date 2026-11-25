@@ -824,6 +824,7 @@ struct ModernGesturesWorkspace: View {
                         .aomShortcut("[")
                     }
                     editorHeader(current)
+                    editorStatus(current)
                     whenSection(current)
                     doSection(current)
                     optionsSection(current)
@@ -842,6 +843,21 @@ struct ModernGesturesWorkspace: View {
             AOMEmptyState("No Automation Selected", systemImage: "bolt",
                           message: "Select an automation to edit what starts it and what it does.")
         }
+    }
+
+    /// D14: one state line for the automation — on, off, nothing to do, or
+    /// why it can't start or run — instead of the reason being spread over
+    /// the input, the steps and the Run button.
+    private func editorStatus(_ trigger: Trigger) -> some View {
+        let status = AOMAutomationEditorStatus.resolve(
+            isEnabled: trigger.isEnabled, stepCount: trigger.actions.count,
+            inputProblem: TriggerValidation.problem(for: trigger.input, requiredModifiers: trigger.requiredModifiers),
+            stepsProblem: ActionTree.problem(trigger.actions))
+        return Label(status.text, systemImage: status.symbol)
+            .font(AOMFont.callout)
+            .foregroundStyle(status.tone == .warning ? AOMColor.warningText : AOMColor.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityLabel("Status: \(status.text)")
     }
 
     /// Name, App scope, Enabled — and the item menu.
