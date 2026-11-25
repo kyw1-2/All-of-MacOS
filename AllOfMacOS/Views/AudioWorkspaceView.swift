@@ -17,21 +17,58 @@ struct AudioWorkspaceView: View {
     /// When the apps were last re-read on selecting the page.
     @State private var refreshClock = AOMRefreshClock()
     private static let refreshInterval: TimeInterval = 5
+    /// D17/D18: the mixer on the left, the selected app's effects in a
+    /// trailing inspector when the page has room for both.
+    @AppStorage("AOMAudioInspector") private var showsInspector = true
+    @State private var inspectorFits = false
+    @State private var selectedBundleID: String?
+
+    private var inspectorShown: Bool { showsInspector && inspectorFits && service.isSupported }
+
+    /// Every app the list shows, in its order (favorites, active, other, hidden).
+    private var listedApps: [AppAudioState] {
+        let lists = service.listedApps(matching: searchText)
+        return lists.favorites + lists.active + lists.other + service.hiddenListed(matching: searchText)
+    }
+
+    private var selectedApp: AppAudioState? {
+        guard let id = selectedBundleID else { return nil }
+        return listedApps.first { $0.bundleID == id }
+    }
 
     var body: some View {
-        AOMPage {
-            header
-            notices
-            devicesCard
-            // The microphone mute section sits under the input device it
-            // mutes (drawn by its module).
-            applicationsCard
-            MicMuteSection()
-            // Output-wide effects follow the devices (and the output
-            // equalizer inside them), before the per-app list.
-            HeadphoneEQCard()
-            AudioUnitEffectCard()
+        HStack(spacing: 0) {
+            AOMPage {
+                header
+                notices
+                devicesCard
+                // The microphone mute section sits under the input device it
+                // mutes (drawn by its module).
+                applicationsCard
+                MicMuteSection()
+                // Output-wide effects follow the devices (and the output
+                // equalizer inside them), before the per-app list.
+                HeadphoneEQCard()
+                AudioUnitEffectCard()
+            }
+            if inspectorShown {
+                AOMDivider(axis: .vertical)
+                audioInspector
+                    .frame(width: AOMSize.inspectorIdeal)
+                    .frame(maxHeight: .infinity)
+                    .accessibilityElement(children: .contain)
+                    .accessibilityLabel("Inspector")
+            }
         }
+        .background {
+            GeometryReader { proxy in
+                Color.clear
+                    .onAppear { updateInspectorFits(proxy.size.width) }
+                    .onChange(of: proxy.size.width) { _, width in updateInspectorFits(width) }
+            }
+        }
+        .onChange(of: listedApps.map(\.bundleID)) { _, ids in reconcileSelection(ids) }
+        .onAppear { reconcileSelection(listedApps.map(\.bundleID)) }
         .aomPage("Audio")
         .aomPageToolbar {
             toolbarContent
@@ -47,6 +84,54 @@ struct AudioWorkspaceView: View {
             if refreshClock.remaining(of: Self.refreshInterval) == 0 {
                 refreshClock.mark()
                 service.refresh()
+            }
+        }
+    }
+
+    // MARK: Inspector (D18)
+
+    /// The mixer keeps at least this much beside the inspector.
+    private static let mixerMinimum: CGFloat = 600
+
+    private func updateInspectorFits(_ width: CGFloat) {
+        let fits = AOMWorkbenchPolicy.sideBySide(
+            available: width, minimum: Self.mixerMinimum + AOMSize.inspectorIdeal + AOMWorkbenchPolicy.dividerAllowance,
+            current: inspectorFits)
+        if fits != inspectorFits { inspectorFits = fits }
+    }
+
+    /// The selected app stays while it is listed; the filter never moves it
+    /// to another app (D05). Without a filter the first listed app is shown.
+    private func reconcileSelection(_ ids: [String]) {
+        let next = AOMStableSelection.reconcile(selectedBundleID, visible: ids.filter { !$0.isEmpty },
+                                                autoSelectFirst: searchText.trimmingCharacters(in: .whitespaces).isEmpty)
+        if next != selectedBundleID { selectedBundleID = next }
+    }
+
+    private var audioInspector: some View {
+        AOMInspector {
+            if let app = selectedApp {
+                AOMInspectorSection(app.name, showsDivider: false) {
+                    AOMInspectorRow("Status", text: app.muted ? "Muted" : (app.isPlaying ? "Playing" : "Silent"))
+                    AOMInspectorRow("Volume", text: "\(Int((min(max(app.gain, 0), 1) * app.overdrive * 100).rounded()))%")
+                    AOMInspectorRow("Magic Boost", text: app.magicBoost ? "On" : "Off")
+                    AOMInspectorRow("Output", text: app.outputDeviceUID == nil ? "System Default" : "Routed to its own output")
+                    if let ends = service.timedMuteEnds[app.bundleID] {
+                        AOMInspectorRow("Muted until", text: ends.formatted(date: .omitted, time: .shortened))
+                    }
+                }
+                AOMInspectorSection("Effects") {
+                    ApplicationAudioEffects(app: app, stacked: true)
+                        .id(app.bundleID)
+                }
+            } else {
+                AOMInspectorSection("Effects", showsDivider: false) {
+                    Text(listedApps.isEmpty ? "Apps appear here while they play."
+                                            : "Select an app to adjust its effects and output.")
+                        .font(AOMFont.callout)
+                        .foregroundStyle(AOMColor.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
     }
@@ -94,6 +179,14 @@ struct AudioWorkspaceView: View {
                 Label("Floating Mixer", systemImage: "slider.horizontal.3")
             }
             .help("Open the floating per-app audio mixer panel")
+            Button {
+                withAnimation(AOMMotion.panel) { showsInspector.toggle() }
+            } label: {
+                Label(showsInspector ? "Hide Inspector" : "Show Inspector", systemImage: "sidebar.trailing")
+            }
+            .keyboardShortcut("i", modifiers: [.command, .option])
+            .help(showsInspector ? "Hide the selected app's effects (⌥⌘I)"
+                                 : "Show the selected app's effects beside the mixer when the window has room (⌥⌘I)")
             Menu {
                 Button("Add Application…", systemImage: "plus") { pickAndAddApplication() }
                 Toggle("Show All Running Apps", isOn: $service.showAllApps)
@@ -207,7 +300,8 @@ struct AudioWorkspaceView: View {
                     .accessibilityAddTraits(.isHeader)
             }
             ForEach(rows) { app in
-                ApplicationAudioRow(app: app)
+                ApplicationAudioRow(app: app, isSelected: selectedBundleID == app.bundleID, inspectorShown: inspectorShown,
+                                    onSelect: { selectedBundleID = app.bundleID })
                 if app.id != rows.last?.id { AOMRowDivider(inset: AOMSpace.rowSymbolInset) }
             }
         }
@@ -745,16 +839,20 @@ private struct ApplicationAudioRow: View {
     @EnvironmentObject private var toast: AOMToastModel
     @Environment(\.undoManager) private var undoManager
     let app: AppAudioState
+    /// D18: the app shown in the page's inspector, and whether the inspector
+    /// is on screen (then the chevron selects instead of expanding).
+    var isSelected = false
+    var inspectorShown = false
+    var onSelect: () -> Void = {}
     @State private var gain: Float
-    @State private var balance: Float
     @State private var expanded = false
-    @State private var showEQ = false
-    @State private var availableOutputs: [AudioOutputDevice] = []
 
-    init(app: AppAudioState) {
+    init(app: AppAudioState, isSelected: Bool = false, inspectorShown: Bool = false, onSelect: @escaping () -> Void = {}) {
         self.app = app
+        self.isSelected = isSelected
+        self.inspectorShown = inspectorShown
+        self.onSelect = onSelect
         _gain = State(initialValue: min(max(app.gain, 0), 1))
-        _balance = State(initialValue: AudioBalance.clamp(app.balance))
     }
 
     var body: some View {
@@ -797,28 +895,38 @@ private struct ApplicationAudioRow: View {
                 // This app's Magic Boost preset, next to its switch.
                 AudioBoostPresetPicker(bundleID: app.bundleID, style: .menu)
                     .disabled(!app.magicBoost || app.bundleID.isEmpty)
-                DisclosureButton(expanded: $expanded, label: "Effects for \(app.name)")
+                if inspectorShown {
+                    // D18: the effects are in the inspector; this shows them there.
+                    Button(action: onSelect) {
+                        Image(systemName: "sidebar.trailing")
+                            .foregroundStyle(isSelected ? AOMColor.accent : AOMColor.textSecondary)
+                            .frame(width: AudioRowMetrics.buttonWidth, height: AudioRowMetrics.buttonHeight)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("Effects for \(app.name) in the inspector")
+                    .help("Show \(app.name)'s effects in the inspector")
+                } else {
+                    DisclosureButton(expanded: $expanded, label: "Effects for \(app.name)")
+                }
             }
             .audioRowPadding()
             .contentShape(Rectangle())
+            .background {
+                if inspectorShown && isSelected {
+                    RoundedRectangle(cornerRadius: AOMCraftRadius.row, style: .continuous)
+                        .fill(AOMColor.accent.opacity(0.10))
+                }
+            }
             .aomCalmHover(radius: AOMCraftRadius.row)
+            // Clicking a row (or a control on it) makes it the inspected app.
+            .simultaneousGesture(TapGesture().onEnded { if inspectorShown { onSelect() } })
             .contextMenu { contextMenu }
+            .accessibilityAddTraits(inspectorShown && isSelected ? .isSelected : [])
 
-            if expanded { effects }
-        }
-        .sheet(isPresented: $showEQ) {
-            EqualizerSheet(title: "Equalizer", subtitle: app.name,
-                           enabled: Binding(get: { service.appEQEnabled(app.bundleID) },
-                                            set: { service.setAppEQEnabled($0, bundleID: app.bundleID) }),
-                           preset: Binding(get: { service.appEQPreset(app.bundleID) },
-                                           set: { service.setAppEQPreset($0, bundleID: app.bundleID) }),
-                           gains: service.appEQGains(app.bundleID),
-                           onBand: { service.setAppBand($0, gain: $1, bundleID: app.bundleID) },
-                           onDone: { showEQ = false })
+            if expanded && !inspectorShown { ApplicationAudioEffects(app: app) }
         }
         .onChange(of: app.gain) { _, value in gain = min(max(value, 0), 1) }
-        .onChange(of: app.balance) { _, value in balance = AudioBalance.clamp(value) }
-        .onChange(of: expanded) { _, shown in if shown { availableOutputs = AudioOutputService.devices() } }
     }
 
     /// 0…4 split as "Set App Volume" does: volume up to 1, overdrive beyond (5 % steps).
@@ -864,7 +972,9 @@ private struct ApplicationAudioRow: View {
         }
         Menu("Timed Mute") { timedMuteItems }
         Divider()
-        Button("Reset Effects") { resetEffects() }
+        Button("Reset Effects") {
+            ApplicationAudioEffects.reset(app, service: service, undoManager: undoManager, toast: toast)
+        }
         if app.pid > 0 && service.soundEnabled {
             Button("Reconnect") { reconnect() }
         }
@@ -885,24 +995,57 @@ private struct ApplicationAudioRow: View {
         }
     }
 
-    /// The app's effects, one label column wide, under its name.
-    private var effects: some View {
-        VStack(alignment: .leading, spacing: AOMSpace.x2) {
-            HStack(spacing: AOMSpace.x3) {
-                PanelLabel("Volume Overdrive")
+    /// The app's icon in the 20 pt row-symbol column, so app names start
+    /// where the device titles do.
+    @ViewBuilder private var appIcon: some View {
+        if let icon = app.icon {
+            Image(nsImage: icon).resizable().aspectRatio(contentMode: .fit)
+                .frame(width: AOMIcon.row, height: AOMIcon.row)
+                .accessibilityHidden(true)
+        } else {
+            DeviceGlyph(symbol: "app.dashed")
+        }
+    }
+}
+
+// MARK: - Application effects (inline and in the inspector)
+
+/// One app's effects: Volume Overdrive, balance, equalizer, output, timed
+/// mute, favorite and reset. Drawn under the app's row (label column beside
+/// the controls) or in the page's inspector (D18: labels above, controls the
+/// inspector's width). The audio engine and its lifecycle are unchanged.
+private struct ApplicationAudioEffects: View {
+    @ObservedObject private var service = AppAudioMixerService.shared
+    @EnvironmentObject private var toast: AOMToastModel
+    @Environment(\.undoManager) private var undoManager
+    let app: AppAudioState
+    var stacked = false
+    @State private var balance: Float
+    @State private var showEQ = false
+    @State private var availableOutputs: [AudioOutputDevice] = []
+
+    init(app: AppAudioState, stacked: Bool = false) {
+        self.app = app
+        self.stacked = stacked
+        _balance = State(initialValue: AudioBalance.clamp(app.balance))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: stacked ? AOMSpace.x3 : AOMSpace.x2) {
+            row("Volume Overdrive") {
                 Slider(value: Binding(get: { Double(app.overdrive) },
                                       set: { service.setOverdrive(Float($0), bundleID: app.bundleID) }),
                        in: 1...Double(AudioVolumeOverdrive.maximum), step: 0.05)
                 .controlSize(.small)
-                .frame(width: AOMRowControlMetrics.sliderWidth)
+                .frame(width: sliderWidth)
+                .frame(maxWidth: stacked ? .infinity : nil)
                 .accessibilityLabel("Volume Overdrive for \(app.name)")
                 .accessibilityValue("\(Int((app.overdrive * 100).rounded())) percent")
                 .help("Up to 400%, limited so loud audio never clips")
                 RowValue(text: "\(Int((app.overdrive * 100).rounded()))%")
-                Spacer(minLength: 0)
+                if !stacked { Spacer(minLength: 0) }
             }
-            HStack(spacing: AOMSpace.x3) {
-                PanelLabel("Balance")
+            row("Balance") {
                 HStack(spacing: AOMSpace.x1) {
                     BalanceEnd("L")
                     Slider(value: Binding(get: { Double(balance) }, set: { newValue in
@@ -915,7 +1058,8 @@ private struct ApplicationAudioRow: View {
                     .accessibilityAction(named: "Center") { centerBalance() }
                     BalanceEnd("R")
                 }
-                .frame(width: AOMRowControlMetrics.sliderWidth)
+                .frame(width: sliderWidth)
+                .frame(maxWidth: stacked ? .infinity : nil)
                 RowValue(text: AudioBalance.shortLabel(balance))
                     .accessibilityHidden(true)
                 Button("Center") { centerBalance() }
@@ -923,10 +1067,9 @@ private struct ApplicationAudioRow: View {
                     .disabled(balance == 0)
                     .accessibilityLabel("Center balance for \(app.name)")
                     .help("Equal left and right")
-                Spacer(minLength: 0)
+                if !stacked { Spacer(minLength: 0) }
             }
-            HStack(spacing: AOMSpace.x3) {
-                PanelLabel("Equalizer")
+            row("Equalizer") {
                 Toggle("Equalizer for \(app.name)", isOn: Binding(get: { service.appEQEnabled(app.bundleID) },
                                                                     set: { service.setAppEQEnabled($0, bundleID: app.bundleID) }))
                     .labelsHidden().toggleStyle(.switch).controlSize(.small)
@@ -941,8 +1084,7 @@ private struct ApplicationAudioRow: View {
                     .accessibilityLabel("Edit the equalizer for \(app.name)")
                 Spacer(minLength: 0)
             }
-            HStack(spacing: AOMSpace.x3) {
-                PanelLabel("Output")
+            row("Output") {
                 Picker("Output for \(app.name)", selection: Binding(
                     get: { app.outputDeviceUID ?? "" },
                     set: { service.setOutputRoute(uid: $0.isEmpty ? nil : $0, bundleID: app.bundleID) })) {
@@ -952,45 +1094,109 @@ private struct ApplicationAudioRow: View {
                     }
                     ForEach(availableOutputs) { Text($0.name).tag($0.uid) }
                 }
-                .labelsHidden().controlSize(.small).fixedSize()
+                .labelsHidden().controlSize(.small)
+                .fixedSize(horizontal: !stacked, vertical: false)
                 Spacer(minLength: AOMSpace.x2)
-                Menu("Timed Mute") { timedMuteItems }
-                    .controlSize(.small).fixedSize()
-                Button(service.isFavorite(app.bundleID) ? "Unfavorite" : "Favorite",
-                       systemImage: service.isFavorite(app.bundleID) ? "star.fill" : "star") {
-                    service.toggleFavorite(app.bundleID)
-                }
-                .controlSize(.small)
-                Button("Reset") { resetEffects() }.controlSize(.small)
-                    .help("Volume 100%, balance centered, no overdrive, boost or equalizer")
+                if !stacked { commands }
+            }
+            if stacked {
+                HStack(spacing: AOMSpace.x2) { commands; Spacer(minLength: 0) }
             }
             if let error = app.error {
                 HStack(spacing: AOMSpace.x2) {
                     Label(error, systemImage: "exclamationmark.triangle")
                         .font(AOMFont.caption)
                         .foregroundStyle(AOMColor.warningText)
+                        .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: AOMSpace.x2)
-                    Button("Reconnect") { reconnect() }.controlSize(.small)
-                        .disabled(app.pid <= 0 || !service.soundEnabled)
+                    Button("Reconnect") {
+                        service.reconnect(pid: app.pid)
+                        toast.show("Reconnecting \(app.name)", tone: .info)
+                    }
+                    .controlSize(.small)
+                    .disabled(app.pid <= 0 || !service.soundEnabled)
                 }
             } else if service.soundEnabled {
                 Text(app.processingStatus)
                     .font(AOMFont.caption)
                     .foregroundStyle(AOMColor.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(.leading, AOMSpace.rowSymbolInset)
-        .padding(.trailing, AOMSpace.rowInset)
-        .padding(.bottom, AOMSpace.x3)
+        .padding(.leading, stacked ? 0 : AOMSpace.rowSymbolInset)
+        .padding(.trailing, stacked ? 0 : AOMSpace.rowInset)
+        .padding(.bottom, stacked ? 0 : AOMSpace.x3)
+        .sheet(isPresented: $showEQ) {
+            EqualizerSheet(title: "Equalizer", subtitle: app.name,
+                           enabled: Binding(get: { service.appEQEnabled(app.bundleID) },
+                                            set: { service.setAppEQEnabled($0, bundleID: app.bundleID) }),
+                           preset: Binding(get: { service.appEQPreset(app.bundleID) },
+                                           set: { service.setAppEQPreset($0, bundleID: app.bundleID) }),
+                           gains: service.appEQGains(app.bundleID),
+                           onBand: { service.setAppBand($0, gain: $1, bundleID: app.bundleID) },
+                           onDone: { showEQ = false })
+        }
+        // The output list is read once when the effects appear (as before,
+        // when a row expanded), not polled.
+        .onAppear { availableOutputs = AudioOutputService.devices() }
+        .onChange(of: app.bundleID) { _, _ in availableOutputs = AudioOutputService.devices() }
+        .onChange(of: app.balance) { _, value in balance = AudioBalance.clamp(value) }
+    }
+
+    private var sliderWidth: CGFloat? { stacked ? nil : AOMRowControlMetrics.sliderWidth }
+
+    /// A label and its controls: beside each other under a row, the label
+    /// above them in the inspector.
+    @ViewBuilder private func row<Controls: View>(_ label: String, @ViewBuilder _ controls: () -> Controls) -> some View {
+        let built = controls()
+        if stacked {
+            VStack(alignment: .leading, spacing: AOMSpace.x1) {
+                Text(label).font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary).accessibilityHidden(true)
+                HStack(spacing: AOMSpace.x2) { built }
+            }
+        } else {
+            HStack(spacing: AOMSpace.x3) {
+                PanelLabel(label)
+                built
+            }
+        }
+    }
+
+    @ViewBuilder private var commands: some View {
+        Menu("Timed Mute") {
+            Button("30 Seconds") { service.timedMute(bundleID: app.bundleID, seconds: 30) }
+            Button("1 Minute") { service.timedMute(bundleID: app.bundleID, seconds: 60) }
+            Button("2 Minutes") { service.timedMute(bundleID: app.bundleID, seconds: 120) }
+            if service.timedMuteEnds[app.bundleID] != nil {
+                Divider()
+                Button("End Timed Mute") { service.cancelTimedMute(bundleID: app.bundleID) }
+            }
+        }
+        .controlSize(.small).fixedSize()
+        Button(service.isFavorite(app.bundleID) ? "Unfavorite" : "Favorite",
+               systemImage: service.isFavorite(app.bundleID) ? "star.fill" : "star") {
+            service.toggleFavorite(app.bundleID)
+        }
+        .controlSize(.small)
+        Button("Reset") { Self.reset(app, service: service, undoManager: undoManager, toast: toast) }
+            .controlSize(.small)
+            .help("Volume 100%, balance centered, no overdrive, boost or equalizer")
+    }
+
+    private func centerBalance() {
+        balance = 0
+        service.setBalance(0, bundleID: app.bundleID)
     }
 
     /// Reset is one undoable step (design-3.4.0 b.4): the toast offers Undo
-    /// and Edit › Undo Reset Effects brings every value back.
-    private func resetEffects() {
+    /// and Edit › Undo Reset Effects brings every value back. The values to
+    /// restore come from the app's stored state, so the row, its context
+    /// menu and the inspector share one implementation.
+    @MainActor
+    static func reset(_ app: AppAudioState, service: AppAudioMixerService, undoManager: UndoManager?, toast: AOMToastModel) {
         let bundleID = app.bundleID
-        let before = (gain: gain, overdrive: app.overdrive, balance: balance, boost: app.magicBoost,
-                      eq: service.appEQEnabled(bundleID))
-        let service = service
+        let before = (gain: min(max(app.gain, 0), 1), overdrive: app.overdrive, balance: AudioBalance.clamp(app.balance),
+                      boost: app.magicBoost, eq: service.appEQEnabled(bundleID))
         let apply: @MainActor () -> Void = {
             service.setGain(1, bundleID: bundleID)
             service.setOverdrive(1, bundleID: bundleID)
@@ -1009,30 +1215,10 @@ private struct ApplicationAudioRow: View {
             }
             service.setAppEQEnabled(before.eq, bundleID: bundleID)
         }
-        gain = 1
-        balance = 0
-        let manager = undoManager
-        AOMUndo.perform("Reset Effects", undoManager: manager, perform: apply, revert: revert)
+        AOMUndo.perform("Reset Effects", undoManager: undoManager, perform: apply, revert: revert)
         toast.show("Reset effects for \(app.name)", action: {
-            if manager?.canUndo == true { manager?.undo() } else { revert() }
+            if undoManager?.canUndo == true { undoManager?.undo() } else { revert() }
         })
-    }
-
-    private func centerBalance() {
-        balance = 0
-        service.setBalance(0, bundleID: app.bundleID)
-    }
-
-    /// The app's icon in the 20 pt row-symbol column, so app names start
-    /// where the device titles do.
-    @ViewBuilder private var appIcon: some View {
-        if let icon = app.icon {
-            Image(nsImage: icon).resizable().aspectRatio(contentMode: .fit)
-                .frame(width: AOMIcon.row, height: AOMIcon.row)
-                .accessibilityHidden(true)
-        } else {
-            DeviceGlyph(symbol: "app.dashed")
-        }
     }
 }
 
