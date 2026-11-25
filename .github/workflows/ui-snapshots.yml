@@ -1,0 +1,32 @@
+name: AOM UI snapshots
+
+on:
+  workflow_dispatch:
+    inputs:
+      sizes:
+        description: 'Window sizes'
+        default: '980x600 1320x860'
+      tabs:
+        description: 'Tab numbers (1-13)'
+        default: '1 2 3 4 5 6 7 8 9 10 11 12 13'
+
+permissions:
+  contents: read
+
+jobs:
+  snapshots:
+    runs-on: xcode-27
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build debug binary
+        run: swift build -j 3
+      - name: Render preview matrix
+        run: |
+          BIN="$(swift build --show-bin-path)/AllOfMacOS"
+          bash scripts/ui-snapshot-matrix.sh "$BIN" "$RUNNER_TEMP/aom-snapshots" "${{ inputs.sizes }}" "${{ inputs.tabs }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aom-ui-snapshots
+          path: ${{ runner.temp }}/aom-snapshots
+          retention-days: 14
