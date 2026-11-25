@@ -72,7 +72,7 @@ struct MenuBarLayoutEditor: View {
                 // 7.18: one line; the full explanation sits behind ⓘ.
                 HStack(spacing: AOMSpace.x1) {
                     Text("Menu Bar Items").font(AOMFont.title)
-                    AOMInfoButton(text: Self.help, topic: "Arranging menu bar items", textStyle: AOMFont.title)
+                    AOMInfoButton(Self.help, topic: "Arranging menu bar items", textStyle: AOMFont.title)
                 }
                 Text("Drag icons between sections, or ⌘-drag them in the menu bar.")
                     .font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)

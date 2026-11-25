@@ -271,7 +271,7 @@ struct ModernWindowSnappingView: View {
                 subtitle: "\(appState.effectiveSnapZones.filter(\.isEnabled).count) active zones",
                 symbol: "rectangle.split.3x3"
             ) {
-                showingSnapZones = true
+                editZones(for: selectedDisplayID ?? AOMMonitorCanvas.readScreens().first(where: \.isMain)?.id)
             }
             quickZoneButton(
                 title: "Display Profiles",
@@ -819,7 +819,7 @@ struct ModernWindowSnappingView: View {
     private var zonesSection: some View {
         AOMSection("Zones & layouts", detail: "\(appState.effectiveSnapZones.count) saved") {
             navigationRow("Edit Snap Zones", detail: "Draw your own zones",
-                          symbol: "rectangle.split.3x3") { showingSnapZones = true }
+                          symbol: "rectangle.split.3x3") { editZones(for: selectedDisplayID ?? AOMMonitorCanvas.readScreens().first(where: \.isMain)?.id) }
             navigationRow("Display Profiles", detail: appState.activeSnapProfile?.name ?? "Per-monitor layouts",
                           symbol: "display.2") { showingProfiles = true }
             navigationRow("Saved Windows", detail: "Window layouts and undo",
