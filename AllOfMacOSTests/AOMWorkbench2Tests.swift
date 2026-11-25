@@ -159,3 +159,38 @@ final class AOMWorkbench2Tests: XCTestCase {
         XCTAssertNotEqual(AOMDiagnosticsNames.symbol, "sidebar.trailing")
     }
 }
+
+/// D27: a Folder Rules preview made for an older version of the rule.
+final class AOMWorkbench2FolderRulesTests: XCTestCase {
+    func testPreviewFreshness() {
+        let rule = FolderRule(folderID: UUID(), name: "Images", conditions: [.kind(.image)],
+                              actions: [FolderRuleAction(kind: .moveToTrash)])
+        XCTAssertFalse(FolderRulesPreviewFreshness.isStale(previewFor: rule, draft: rule))
+        var renamed = rule
+        renamed.name = "Pictures"
+        renamed.isEnabled = true
+        XCTAssertFalse(FolderRulesPreviewFreshness.isStale(previewFor: rule, draft: renamed), "name and switch don't change the answer")
+        var edited = rule
+        edited.includeSubfolders = true
+        XCTAssertTrue(FolderRulesPreviewFreshness.isStale(previewFor: rule, draft: edited))
+        var noActions = rule
+        noActions.actions = []
+        XCTAssertTrue(FolderRulesPreviewFreshness.isStale(previewFor: rule, draft: noActions))
+        let other = FolderRule(folderID: rule.folderID, name: "Images", conditions: [.kind(.image)])
+        XCTAssertTrue(FolderRulesPreviewFreshness.isStale(previewFor: rule, draft: other), "another rule")
+        XCTAssertFalse(FolderRulesPreviewFreshness.isStale(previewFor: nil, draft: rule))
+    }
+}
+
+/// D31: a settings search result leads to its own pane and row.
+final class AOMWorkbench2SettingsTests: XCTestCase {
+    func testRevealTarget() {
+        let general = SettingsSearchReveal.target(category: .general, rowID: "launchAtLogin", sheetOpen: false)
+        XCTAssertEqual(general, .init(category: .general, rowID: "launchAtLogin"))
+        XCTAssertNil(SettingsSearchReveal.target(category: .general, rowID: "launchAtLogin", sheetOpen: true),
+                     "never moves the pane under an open sheet")
+        let permissions = SettingsSearchReveal.target(category: .permissions, rowID: "accessibility", sheetOpen: false)
+        XCTAssertEqual(permissions?.category, .permissions)
+        XCTAssertNil(permissions?.rowID, "dashboard panes open at the top")
+    }
+}

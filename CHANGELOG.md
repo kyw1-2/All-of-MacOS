@@ -1,3 +1,15 @@
+## [Unreleased] — Native Workbench 2 (first pass)
+
+From the 7.16.1 design binary review (`AOM-7.16.1-상용앱19종-디자인-바이너리검수-2026-11-25.md`, D01–D32). Status of every item: `docs/design-7.17-workbench2.md`. Not released.
+
+- **Shared pane rules** (D02–D05): list + detail pages measure the width they have. A narrow window draws the list narrower without forgetting your width; NaN, negative or out-of-range saved widths are ignored; dragging a divider starts from what is on screen. Layout switches have 20 pt of hysteresis.
+- **Selection** (D03, D05): a search that hides the selected automation or clipboard item now leaves nothing selected, instead of moving ⌘↩ / Return / ⌫ to whatever row is first. Bar buttons act only on a row that is still shown.
+- **Clipboard** uses the shared list + detail template (plain columns, no inset band).
+- **Diagnostics** (D01): the toolbar menu is "Diagnostics", no longer "Inspect" with the inspector symbol.
+- **Headers** (D06): a status pill the sentence already says, or a subtitle that repeats the toolbar, isn't drawn twice.
+- **Folder Rules** (D27): a preview made before an unapplied edit is marked "Out of date" and its picked items can't be run until it is refreshed.
+- **Settings search** (D31): "Show in <Category>" opens the setting's pane, scrolls to it and marks it.
+
 ## [7.16.0] - 2026-11-24
 
 Fixes from GPT's independent review of 7.15 (`~/Downloads/AOM-7.15-독립검수-75refs-2026-11-24.md`, V01–V16). Status of every item: `docs/design-7.16.md`. The per-page restructuring (Inspector, Automation, Audio, Clipboard, Capture, Window Tiling) is not in this release.
