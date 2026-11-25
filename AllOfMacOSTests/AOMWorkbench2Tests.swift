@@ -411,3 +411,28 @@ final class AOMWorkbench2SidebarTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(AOMSidebarDensity.minimum(compact: true), 200, "labels need 200 pt at 13 pt")
     }
 }
+
+/// D22: the restore plan says what moves and why the rest is skipped.
+final class AOMWorkbench2RestorePlanTests: XCTestCase {
+    func testPlanReasons() {
+        let unit = CGRect(x: 0, y: 0, width: 0.5, height: 1)
+        let safari = SavedWindowPlacement(bundleID: "com.apple.Safari", title: "Docs", identifier: "1", displayID: "A", normalizedFrame: unit)
+        let notes = SavedWindowPlacement(bundleID: "com.apple.Notes", title: "Notes", identifier: "2", displayID: "B", normalizedFrame: unit)
+        let mail = SavedWindowPlacement(bundleID: "com.apple.mail", title: "Inbox", identifier: "3", displayID: "A", normalizedFrame: unit)
+        var broken = safari
+        broken.normalizedFrame = CGRect(x: 0, y: 0, width: 0, height: 1)
+        let plan = SavedWindowRestorePlan.make([safari, notes, mail], candidates: [safari, notes],
+                                               displayIDs: ["A"], visibleFrames: [CGRect(x: 0, y: 25, width: 1440, height: 875)])
+        XCTAssertEqual(plan.moves.map(\.placement), [0])
+        XCTAssertEqual(plan.skipped, [.init(placement: 1, reason: .displayMissing), .init(placement: 2, reason: .windowNotFound)])
+        let frame = plan.moves[0].frame
+        XCTAssertGreaterThanOrEqual(frame.minX, 0)
+        XCTAssertLessThanOrEqual(frame.maxX, 1440 + 0.001)
+        let twice = SavedWindowRestorePlan.make([safari, safari], candidates: [safari], displayIDs: ["A"],
+                                                visibleFrames: [CGRect(x: 0, y: 25, width: 1440, height: 875)])
+        XCTAssertEqual(twice.skipped.map(\.reason), [.alreadyMatched])
+        let bad = SavedWindowRestorePlan.make([broken], candidates: [safari], displayIDs: ["A"],
+                                              visibleFrames: [CGRect(x: 0, y: 25, width: 1440, height: 875)])
+        XCTAssertEqual(bad.skipped.map(\.reason), [.invalidGeometry])
+    }
+}

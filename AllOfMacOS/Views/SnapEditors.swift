@@ -547,6 +547,9 @@ struct WindowLayoutsEditor: View {
     @ObservedObject private var manager = WindowManager.shared
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
+    /// D22: the layout whose restore plan is shown, and that plan.
+    @State private var previewing: String?
+    @State private var plan: SavedWindowRestorePlan?
     var body: some View {
         VStack(spacing: 0) {
             // Titled like the "Saved Windows" row that opens it.
@@ -563,6 +566,15 @@ struct WindowLayoutsEditor: View {
                         Text(layout.name).font(AOMFont.bodyEmphasis)
                         Text("\(layout.windows.count) windows").font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
                         Spacer()
+                        Button("Preview…") {
+                            plan = manager.restorePreview(name: layout.name)
+                            previewing = layout.name
+                        }
+                        .help("What Restore would move now, and what it would skip")
+                        .popover(isPresented: Binding(get: { previewing == layout.name },
+                                                      set: { if !$0 { previewing = nil } }), arrowEdge: .bottom) {
+                            restorePreview(layout)
+                        }
                         Button("Restore") { manager.restoreLayout(name: layout.name) { _ in } }
                         Button("Remove") { manager.removeLayout(layout.id) }
                     }.disabled(manager.layoutBusy)
@@ -579,5 +591,55 @@ struct WindowLayoutsEditor: View {
             .padding(AOMSpace.x4)
         }
         .frame(width: AOMSize.readableText)
+    }
+
+    /// The plan: each saved window that would move (and to which display),
+    /// then each one that would be skipped and why — current state on the
+    /// left of the arrow, the saved target on the right.
+    private func restorePreview(_ layout: SavedWindowLayout) -> some View {
+        VStack(alignment: .leading, spacing: AOMSpace.x2) {
+            if let plan {
+                Text("Restore “\(layout.name)”").font(AOMFont.headline)
+                Text("\(plan.moves.count) of \(layout.windows.count) windows move · \(plan.skipped.count) skipped")
+                    .font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: AOMSpace.x1) {
+                        ForEach(plan.moves, id: \.placement) { move in
+                            let window = layout.windows[move.placement]
+                            Label("\(Self.windowName(window)) → display \(move.display + 1), \(Int(move.frame.width)) × \(Int(move.frame.height))",
+                                  systemImage: "arrow.right.circle")
+                                .font(AOMFont.callout)
+                        }
+                        ForEach(plan.skipped, id: \.placement) { skip in
+                            Label("\(Self.windowName(layout.windows[skip.placement])) — \(skip.reason.text)",
+                                  systemImage: "minus.circle")
+                                .font(AOMFont.callout)
+                                .foregroundStyle(AOMColor.warningText)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: SnapEditorMetrics.sheetListHeight)
+                HStack {
+                    Spacer()
+                    Button("Cancel") { previewing = nil }
+                    Button("Restore") {
+                        previewing = nil
+                        manager.restoreLayout(name: layout.name) { _ in }
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(plan.moves.isEmpty || manager.layoutBusy)
+                }
+            } else {
+                Text("This layout is gone.").font(AOMFont.callout)
+            }
+        }
+        .padding(AOMSpace.x4)
+        .frame(width: AOMSize.helpPopoverWidth + AOMSpace.x12 * 2)
+    }
+
+    private static func windowName(_ window: SavedWindowPlacement) -> String {
+        let app = window.bundleID.split(separator: ".").last.map(String.init) ?? window.bundleID
+        return window.title.isEmpty ? app : "\(app): \(window.title)"
     }
 }
