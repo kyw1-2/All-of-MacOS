@@ -46,7 +46,7 @@ struct FilesItemInfo: Equatable {
         let keys: Set<URLResourceKey> = [.localizedTypeDescriptionKey, .fileSizeKey, .totalFileAllocatedSizeKey,
                                          .creationDateKey, .contentModificationDateKey, .isDirectoryKey]
         guard let values = try? url.resourceValues(forKeys: keys) else { return FilesItemInfo(exists: false) }
-        let size = values.isDirectory == true ? nil : (values.fileSize ?? values.totalFileAllocatedSize).map(Int64.init)
+        let size = values.isDirectory == true ? nil : (values.fileSize ?? values.totalFileAllocatedSize).map { Int64($0) }
         return FilesItemInfo(kind: values.localizedTypeDescription, bytes: size,
                              created: values.creationDate, modified: values.contentModificationDate)
     }

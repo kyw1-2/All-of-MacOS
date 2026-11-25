@@ -113,7 +113,7 @@ struct CaptureStudioView: View {
             // The file's size for the inspector, read off the main thread once per selection.
             guard let url = selectedEntry?.fileURL else { selectedFileBytes = nil; return }
             let bytes = await Task.detached(priority: .utility) {
-                (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init)
+                (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map { Int64($0) }
             }.value
             guard !Task.isCancelled else { return }
             selectedFileBytes = bytes
@@ -160,7 +160,7 @@ struct CaptureStudioView: View {
                 AOMInspectorSection(entry.displayName, showsDivider: false) {
                     AOMInspectorRow("Kind", text: entry.kind.displayName)
                     AOMInspectorRow("Pixels", text: "\(Int(entry.pixelSize.width)) × \(Int(entry.pixelSize.height))")
-                    AOMInspectorRow("Points", text: "\(Int(entry.pointSize.width)) × \(Int(entry.pointSize.height)) @\(entry.scale.formatted(.number.precision(.fractionLength(0...1))))x")
+                    AOMInspectorRow("Points", text: "\(Int(entry.pointSize.width)) × \(Int(entry.pointSize.height)) @\(Double(entry.scale).formatted(.number.precision(.fractionLength(0...1))))x")
                     AOMInspectorRow("Captured", text: entry.capturedAt.formatted(date: .abbreviated, time: .shortened))
                     AOMInspectorRow("Kept", text: entry.isPinned ? "Yes — past the history limits" : "No")
                 }
