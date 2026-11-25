@@ -54,12 +54,31 @@ class MouseButtonMonitor {
     var onFire: ((Entry) -> Void)?
     var globalEnabled: () -> Bool = { AutomationGate.isOn }
     var needsSideButtonHID: Bool {
+        // The assist alone never starts the HID reader: that would ask for Input
+        // Monitoring; the event tap sees the side buttons of ordinary mice.
         entries.contains { !$0.spec.kind.isScroll && (3...4).contains($0.spec.button) }
     }
+    /// 7.20: the last registration, replayed when the Back/Forward assist is switched.
+    private var lastRegistration: (triggers: [Trigger], groups: [ActivationGroup])?
+    private var assistObservation: NSKeyValueObservation?
+
+    /// Whether anything needs the tap: triggers, a swallowed release, or the assist.
+    private var needsTap: Bool { !entries.isEmpty || !suppressedButtons.isEmpty || MouseNavigationAssist.isEnabled }
 
     func registerTriggers(_ triggers: [Trigger], groups: [ActivationGroup] = []) {
+        lastRegistration = (triggers, groups)
+        if assistObservation == nil, !PresetManager.isRunningTests, !PresetManager.isUIPreview {
+            assistObservation = UserDefaults.standard.observe(\.AOMMouseNavigationAssist, options: [.new]) { [weak self] _, _ in
+                DispatchQueue.main.async {
+                    guard let self, let last = self.lastRegistration else { return }
+                    self.removeTap()
+                    self.sideHID.stop()
+                    self.registerTriggers(last.triggers, groups: last.groups)
+                }
+            }
+        }
         registerEntries(triggers, groups: groups)
-        guard !entries.isEmpty || !suppressedButtons.isEmpty else { return }
+        guard needsTap else { return }
         observeRecovery()
         installTap()
         sideHID.onEvent = { [weak self] button, down in
@@ -145,6 +164,14 @@ class MouseButtonMonitor {
                 if legacy.contains(where: \.suppressClick) { swallow = true }
             }
             if suppresses(button: event.button, modifiers: event.modifiers, front: front) { swallow = true }
+            // 7.20: Back/Forward for apps that only take them from the keyboard,
+            // sent to the app under the pointer — only when no trigger of yours
+            // uses this button and no modifier is held.
+            if !swallow, (3...4).contains(event.button), (event.modifiers & TriggerResolver.modifierMask) == 0,
+               !entries.contains(where: { !$0.spec.kind.isScroll && $0.spec.button == event.button }),
+               MouseNavigationAssist.handle(button: event.button, at: CGPoint(x: event.x, y: event.y)) {
+                swallow = true
+            }
             if swallow { suppressedButtons.insert(event.button) }
             outputs = recognizer.buttonDown(event.button, x: event.x, y: event.y, time: event.time, modifiers: event.modifiers)
         case .up:
@@ -267,7 +294,7 @@ class MouseButtonMonitor {
                     self.tapWasDisabled()
                     self.removeTap()
                 } else {
-                    guard !self.entries.isEmpty || !self.suppressedButtons.isEmpty else { return }
+                    guard self.needsTap else { return }
                     if let tap = self.eventTap, !CFMachPortIsValid(tap) { self.removeTap() }
                     if self.eventTap == nil { self.installTap() }
                     if let tap = self.eventTap, !CGEvent.tapIsEnabled(tap: tap) {
@@ -303,7 +330,7 @@ class MouseButtonMonitor {
         var mask: CGEventMask = 0
         func add(_ type: CGEventType) { mask |= (1 << type.rawValue) }
         // Legacy triggers are the extra buttons 3…7 only.
-        if entries.contains(where: \.isLegacy) { add(.otherMouseDown); add(.otherMouseUp) }
+        if entries.contains(where: \.isLegacy) || MouseNavigationAssist.isEnabled { add(.otherMouseDown); add(.otherMouseUp) }
         for button in Set(specs.filter { !$0.kind.isScroll }.map(\.button)).union(suppressedButtons) {
             switch button {
             case 0: add(.leftMouseDown); add(.leftMouseUp); add(.leftMouseDragged)

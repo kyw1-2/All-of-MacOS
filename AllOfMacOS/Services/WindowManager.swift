@@ -235,22 +235,39 @@ final class WindowManager: ObservableObject {
         guard AXUIElementCopyAttributeValue(target.window, attribute as CFString, &value) == .success else { return "" }
         return value as? String ?? ""
     }
+    /// Processes owning a layer-0 window on any Space; nil if the window
+    /// server can't be read (then every app is asked, as before).
+    static func windowOwnerPIDs() -> Set<pid_t>? {
+        guard let list = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
+        else { return nil }
+        var pids = Set<pid_t>()
+        for window in list where (window[kCGWindowLayer as String] as? Int) == 0 {
+            if let pid = window[kCGWindowOwnerPID as String] as? pid_t { pids.insert(pid) }
+        }
+        return pids
+    }
+
     private func visibleWindows() -> [(Target, SavedWindowPlacement)] {
         let screens = self.screens()
         let ids = NSScreen.screens.map { DisplayTopology.identifier($0) ?? "" }
         var result: [(Target, SavedWindowPlacement)] = []
+        // 7.20: one window-server call names the processes that own any
+        // ordinary window (any Space); apps without one are not asked over AX.
+        let owners = Self.windowOwnerPIDs()
         for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular && app.bundleIdentifier != "com.kyw.allofmacos" && !app.isHidden {
-            guard let bundle = app.bundleIdentifier else { continue }
+            guard let bundle = app.bundleIdentifier, owners?.contains(app.processIdentifier) ?? true else { continue }
             var list: CFTypeRef?
             guard AXUIElementCopyAttributeValue(AXUIElementCreateApplication(app.processIdentifier), kAXWindowsAttribute as CFString, &list) == .success,
                   let windows = list as? [AXUIElement] else { continue }
             for window in windows {
                 let target = Target(window: window, pid: app.processIdentifier)
-                var minimized: CFTypeRef?; var fullscreen: CFTypeRef?
-                _ = AXUIElementCopyAttributeValue(window, kAXMinimizedAttribute as CFString, &minimized)
-                _ = AXUIElementCopyAttributeValue(window, "AXFullScreen" as CFString, &fullscreen)
-                guard minimized as? Bool != true, fullscreen as? Bool != true,
-                      text(target, kAXSubroleAttribute) == kAXStandardWindowSubrole,
+                // Minimized, full screen and subrole in one round trip (was three).
+                var values: CFArray?
+                let names = [kAXMinimizedAttribute, "AXFullScreen", kAXSubroleAttribute] as CFArray
+                guard AXUIElementCopyMultipleAttributeValues(window, names, AXCopyMultipleAttributeOptions(rawValue: 0), &values) == .success,
+                      let fields = values as? [Any], fields.count == 3 else { continue }
+                guard fields[0] as? Bool != true, fields[1] as? Bool != true,
+                      fields[2] as? String == kAXStandardWindowSubrole,
                       let frame = frame(of: target), frame.width > 0, frame.height > 0,
                       let index = WindowGeometry.screenIndex(for: frame, screens: screens.map(\.frame)), !ids[index].isEmpty else { continue }
                 let visible = screens[index].visible

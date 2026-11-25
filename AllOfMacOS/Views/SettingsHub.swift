@@ -552,7 +552,7 @@ enum SettingsCatalog {
         "clipboardQuickModifier": "Pasting", "clipboardPlainModifier": "Pasting",
         "clipboardStorage": "History",
         "gestures": "Automations", "bttPreset": "Import", "forceTouchStageHysteresis": "Force Touch",
-        "hyperKey": "Keyboard & mouse", "keyRemaps": "Keyboard & mouse", "reverseWheel": "Keyboard & mouse",
+        "hyperKey": "Keyboard & mouse", "keyRemaps": "Keyboard & mouse", "reverseWheel": "Keyboard & mouse", "mouseNavigationAssist": "Keyboard & mouse",
         "permissions": "Access", "privacySettings": "Access",
         "backups": "Your data", "reset": "Your data", "tutorial": "Help",
     ]
@@ -680,6 +680,7 @@ enum SettingsCatalog {
             item("hyperKey", .automation, "Hyper key", "Hold Caps Lock or another key for ⌃⌥⇧⌘", ["hyper", "caps lock", "캡스락", "하이퍼", "modifier"], AnyView(HyperKeyRow())),
             item("keyRemaps", .automation, "Remap keys", "Turn one key into another", ["remap", "리맵", "키 변경", "karabiner", "키보드"], AnyView(KeyRemapRow())),
             item("reverseWheel", .automation, "Reverse mouse wheel", "Flip a wheel mouse, keep the trackpad natural", ["scroll", "스크롤", "휠", "마우스", "reverse", "natural"], AnyView(ReverseWheelRow())),
+            item("mouseNavigationAssist", .automation, "Mouse Back and Forward everywhere", "The mouse's side buttons go back and forward in Finder, VS Code, Xcode, Slack and other apps that only take Back/Forward from the keyboard — in the app under the pointer", ["mouse", "마우스", "back", "forward", "뒤로", "앞으로", "side button", "사이드 버튼", "button 4", "navigation"], AnyView(HubToggleRow(icon: "arrow.left.arrow.right.circle", tint: .blue, title: "Mouse Back and Forward everywhere", subtitle: "Side buttons work in Finder, VS Code, Xcode, Slack… under the pointer", key: MouseNavigationAssist.enabledKey, fallback: true))),
             item("pointerEngine", .automation, "Mouse movement", "Linear acceleration and smooth wheel scrolling", ["mouse", "pointer", "linear", "smooth", "가속도", "마우스"], AnyView(PointerOptionsRow())),
         ]
     }

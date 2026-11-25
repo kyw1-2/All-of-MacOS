@@ -153,7 +153,9 @@ struct AOMMenuBarPanel: View {
         .aomButtonDefaults()
         .onAppear { model.refresh(); battery.refreshBattery() }
         .onChange(of: model.hasActiveSessions) { _, _ in DispatchQueue.main.async { actions.resized() } }
-        .onReceive(Timer.publish(every: 1, tolerance: 0.2, on: .main, in: .common).autoconnect()) { _ in model.refresh() }
+        // 7.20: every 5 s (was 1 s) — the panel's own buttons refresh at once; this only
+        // catches changes made elsewhere (a hotkey, Keep Awake counting down in minutes).
+        .onReceive(Timer.publish(every: 5, tolerance: 1, on: .main, in: .common).autoconnect()) { _ in model.refresh() }
     }
 
     private var liveSessions: [AOMMenuBarCraftPanel.LiveSession] {
