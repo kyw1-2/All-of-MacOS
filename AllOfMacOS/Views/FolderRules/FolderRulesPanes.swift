@@ -31,11 +31,8 @@ struct FolderRulesInspector: View {
         HStack {
             if model.previewLoading, model.preview == nil {
                 Text("…").font(AOMFont.body).foregroundStyle(AOMColor.textSecondary)
-            } else if let preview = model.preview {
-                Text(previewSummary(preview))
-                    .font(AOMFont.callout)
-                    .foregroundStyle(AOMColor.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
+            } else if model.preview == nil {
+                Text("No preview yet.").font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
             }
             Spacer(minLength: AOMSpace.x1)
             AOMIconButton("arrow.clockwise", label: "Refresh Preview") { model.refreshPreview() }
@@ -58,6 +55,8 @@ struct FolderRulesInspector: View {
             .accessibilityElement(children: .combine)
         }
         if let preview = model.preview {
+            AOMInspectorRow("Scanned", text: preview.scanned.formatted())
+            AOMInspectorRow("Would run", text: preview.willRun.count.formatted())
             if let problem = preview.folderState.problem {
                 Label(problem, systemImage: "exclamationmark.triangle")
                     .font(AOMFont.callout)
@@ -97,10 +96,6 @@ struct FolderRulesInspector: View {
         }
     }
 
-    private func previewSummary(_ preview: FolderRulePreview) -> String {
-        FolderRulesText.previewSummary(preview)
-    }
-
     @ViewBuilder private func test(_ rule: FolderRule) -> some View {
         VStack(alignment: .leading, spacing: AOMSpace.x2) {
             HStack(spacing: AOMSpace.x2) {
@@ -124,10 +119,10 @@ struct FolderRulesInspector: View {
                 // D27: match, no match or can't tell, per condition and overall.
                 let verdicts = FolderRulesVerdict.conditions(rule.conditions, results: result.conditionResults, state: result.state)
                 let overall = FolderRulesVerdict.overall(result.state)
-                Label(overall == .match ? "Matches this rule" : (overall == .noMatch ? "Doesn't match this rule" : "The rule can't tell"),
-                      systemImage: overall.symbol)
-                    .font(AOMFont.callout.weight(.semibold))
-                    .foregroundStyle(tint(overall))
+                AOMInspectorRow("Result") {
+                    Label(overall.spoken.capitalized, systemImage: overall.symbol)
+                        .foregroundStyle(tint(overall))
+                }
                 ForEach(Array(rule.conditions.enumerated()), id: \.element.id) { index, condition in
                     let verdict = verdicts.indices.contains(index) ? verdicts[index] : .unknown
                     Label {

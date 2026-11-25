@@ -72,7 +72,7 @@ final class FolderRulesPageModel: ObservableObject {
 
     // MARK: Lookups
 
-    var config: FolderRulesConfig { engine.config }
+    var config: FolderRulesConfig { FolderRulesPageSamples.enabled ? FolderRulesPageSamples.config : engine.config }
 
     func rules(in folder: UUID) -> [FolderRule] { config.rules(in: folder) }
 
@@ -245,6 +245,12 @@ final class FolderRulesPageModel: ObservableObject {
     func refreshPreview() {
         previewTask?.cancel()
         guard let rule = draft else { preview = nil; previewRule = nil; previewLoading = false; return }
+        if FolderRulesPageSamples.enabled {
+            previewRule = rule
+            preview = FolderRulesPageSamples.preview(rule)
+            previewLoading = false
+            return
+        }
         previewLoading = true
         previewTask = Task { [weak self] in
             guard let self else { return }

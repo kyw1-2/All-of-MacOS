@@ -28,18 +28,34 @@ struct FilesPage: View {
 
     private var isOn: Bool { settings.dialogHelper || settings.shakeOpensShelf || settings.shiftOpensShelf }
 
-    /// D25: the file selected in a list, shown in the trailing inspector
-    /// while the page has room beside it.
-    @State private var inspectedFile: URL?
-    @State private var inspectorFits = false
+    @State private var selection: FilesLocationSelection?
+    @State private var arrangement: AOMWorkbenchArrangement = .listDetail
+    @State private var available: CGFloat = 0
+    @State private var illustrationExpanded: Bool?
     @AppStorage("AOMFilesInspector") private var showsInspector = true
-    private static let pageMinimum: CGFloat = 600
+    @AppStorage("AOMFilesInspectorWidth") private var inspectorWidth = Double(AOMSize.inspectorIdeal)
+    private static let pageMinimum: CGFloat = 440
+    private static let inspectorRange = Double(AOMSize.inspectorWidth.lowerBound)...Double(AOMSize.inspectorWidth.upperBound)
 
-    private func updateInspectorFits(_ width: CGFloat) {
-        let fits = AOMWorkbenchPolicy.sideBySide(
-            available: width, minimum: Self.pageMinimum + AOMSize.inspectorIdeal + AOMWorkbenchPolicy.dividerAllowance,
-            current: inspectorFits)
-        if fits != inspectorFits { inspectorFits = fits }
+    private var inspectorReserved: CGFloat { Self.pageMinimum + 2 * AOMWorkbenchPolicy.dividerAllowance }
+
+    private func updateArrangement() {
+        guard available > 0 else { return }
+        arrangement = AOMWorkbenchArrangement.resolve(
+            available: available, listMinimum: 0, detailMinimum: Self.pageMinimum,
+            inspectorMinimum: AOMSize.inspectorWidth.lowerBound,
+            inspectorRequested: showsInspector, current: arrangement)
+    }
+
+    private var favorites: [String] { FilesPageSamples.enabled ? FilesPageSamples.favorites : settings.favorites }
+
+    private var currentSelection: FilesLocationSelection? {
+        selection ?? (FilesPageSamples.enabled ? .favorite(FilesPageSamples.favorites[0]) : nil)
+    }
+
+    private var illustrationBinding: Binding<Bool> {
+        Binding(get: { illustrationExpanded ?? !(settings.dialogHelper || FilesPageSamples.enabled) },
+                set: { illustrationExpanded = $0 })
     }
 
     private var page: some View {
@@ -69,35 +85,51 @@ struct FilesPage: View {
                     excludedSection
                 }
             }
+            FilesRecentSection(recent: recent, toast: toast, quickLook: quickLook,
+                               selection: currentSelection, onSelect: { selection = $0 })
             FilesShelfSection(settings: settings, shelf: shelf, toast: toast, openShortcutSettings: openShortcutSettings,
                               quickLook: quickLook)
             FilesActivitySection(log: FilesActivityLog.shared)
-            FilesRecentSection(recent: recent, toast: toast, quickLook: quickLook,
-                               onSelect: { inspectedFile = $0 })
             diskImageSection
         }
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            page
-            if showsInspector, inspectorFits, let url = inspectedFile {
-                AOMDivider(axis: .vertical)
-                FilesInfoInspector(url: url, quickLook: { quickLook([url], 0) }, close: { inspectedFile = nil })
-                    .frame(width: AOMSize.inspectorIdeal)
-                    .frame(maxHeight: .infinity)
-                    .accessibilityElement(children: .contain)
-                    .accessibilityLabel("Inspector")
+        let inspectorURL = showsInspector ? currentSelection?.url : nil
+        let width = AOMPaneWidth.effective(stored: inspectorWidth, range: Self.inspectorRange,
+                                           fallback: Double(AOMSize.inspectorIdeal),
+                                           available: available, reserved: inspectorReserved)
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                page
+                if arrangement.showsInspectorBeside, let inspectorURL {
+                    AOMResizeDivider(width: $inspectorWidth, range: Self.inspectorRange,
+                                     displayed: width, maximum: available - inspectorReserved)
+                    inspector(inspectorURL)
+                        .frame(width: width)
+                        .frame(maxHeight: .infinity)
+                }
+            }
+            if !arrangement.showsInspectorBeside, let inspectorURL {
+                AOMDivider()
+                inspector(inspectorURL).frame(height: 180)
             }
         }
-        .background {
-            GeometryReader { proxy in
-                Color.clear
-                    .onAppear { updateInspectorFits(proxy.size.width) }
-                    .onChange(of: proxy.size.width) { _, width in updateInspectorFits(width) }
-            }
+        .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width in
+            available = width
+            updateArrangement()
         }
+        .onChange(of: showsInspector) { _, _ in updateArrangement() }
         .aomPage("Files")
+        .aomPageToolbar {
+            ToolbarItem(placement: .automatic) {
+                Button { showsInspector.toggle() } label: {
+                    Label(showsInspector ? "Hide Inspector" : "Show Inspector", systemImage: "sidebar.trailing")
+                }
+                .keyboardShortcut("i", modifiers: [.command, .option])
+                .help("Show or hide information about the selected path (⌥⌘I)")
+            }
+        }
         .aomToast(toast)
         .quickLookPreview($quickLookURL, in: quickLookItems)
         // When the page is selected (at most every 30 s; returning to AOM
@@ -108,9 +140,16 @@ struct FilesPage: View {
             refreshFavoriteInfo(ifStale: true)
             Task { await refreshFinderPermission() }
         })
-        .onChange(of: settings.favorites) { _, _ in refreshFavoriteInfo() }
+        .onChange(of: settings.favorites) { _, paths in
+            if case .favorite(let path) = selection, !paths.contains(path) { selection = nil }
+            refreshFavoriteInfo()
+        }
+        .onChange(of: settings.dialogHelper) { _, enabled in
+            if enabled { illustrationExpanded = false }
+        }
         // The recent lists watch their folders while the page is selected and on screen.
         .aomOnPageVisibilityChange { visible in
+            guard !FilesPageSamples.enabled else { return }
             if visible { recent.beginWatching() } else { recent.endWatching() }
         }
         .onReceive(NotificationCenter.default.publisher(for: PermissionWatchdog.accessibilityRecovered)) { _ in
@@ -127,6 +166,14 @@ struct FilesPage: View {
         }
     }
 
+    private func inspector(_ url: URL) -> some View {
+        FilesInfoInspector(url: url, sampleInfo: FilesPageSamples.info(for: url),
+                           quickLook: { quickLook([url], 0) }, close: { showsInspector = false })
+            .id(url)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Selected Path Inspector")
+    }
+
     /// Written only on a change, so a hidden page is not re-rendered.
     private func refreshAccessibility() {
         let trusted = AXIsProcessTrusted()
@@ -136,6 +183,7 @@ struct FilesPage: View {
     /// `ifStale`: skipped while the favorites are the ones last read and the
     /// read is less than 30 s old.
     private func refreshFavoriteInfo(ifStale: Bool = false) {
+        guard !FilesPageSamples.enabled else { return }
         if ifStale, Set(favoriteInfo.keys) == Set(settings.favorites),
            favoriteInfoClock.remaining(of: Self.favoriteInfoInterval) > 0 { return }
         favoriteInfoClock.mark()
@@ -204,9 +252,13 @@ struct FilesPage: View {
             AOMToggleRow("Show folders beside Open and Save dialogs",
                          detail: "Finder windows, favorites, recent folders and the clipboard's path",
                          symbol: "macwindow.on.rectangle", isOn: $settings.dialogHelper)
-            FilesDialogIllustration(active: settings.dialogHelper)
-                .padding(.horizontal, AOMSpace.rowInset)
-                .padding(.vertical, AOMSpace.x2)
+            DisclosureGroup("See the dialog panel", isExpanded: illustrationBinding) {
+                FilesDialogIllustration(active: settings.dialogHelper)
+                    .padding(.vertical, AOMSpace.x2)
+            }
+            .font(AOMFont.callout)
+            .padding(.horizontal, AOMSpace.rowInset)
+            .padding(.vertical, AOMSpace.x2)
             Group {
                 AOMToggleRow("Finder windows", detail: "The folders open in the Finder, front to back", indent: true,
                              isOn: $settings.showsFinderWindows)
@@ -250,17 +302,18 @@ struct FilesPage: View {
     // MARK: Favorites
 
     private var favoritesSection: some View {
-        AOMSection("Favorites", detail: settings.favorites.isEmpty ? nil : "\(settings.favorites.count)",
+        AOMSection("Favorites", detail: favorites.isEmpty ? nil : "\(favorites.count)",
                    help: "The dialog panel lists these folders in this order. With the shortcut option on, ⌘⌥1 goes to the first, ⌘⌥2 to the second and so on.") {
-            if settings.favorites.isEmpty {
-                AOMInlineEmpty(symbol: "star", message: "No favorites yet. Drag a folder here.", actionTitle: "Add Folder…") { addFavorite() }
+            if favorites.isEmpty {
+                AOMInlineEmpty(symbol: "star", message: "No favorites yet. Drag a folder here.")
             }
-            ForEach(Array(settings.favorites.enumerated()), id: \.element) { index, path in
-                // A path added since the last refresh is read once here.
-                FilesFavoriteRow(path: path, info: favoriteInfo[path] ?? FilesPathInfo(placeholder: path),
-                                 index: index, count: settings.favorites.count,
+            ForEach(Array(favorites.enumerated()), id: \.element) { index, path in
+                FilesFavoriteRow(path: path, info: favoriteInfo[path] ?? FilesPathInfo(placeholder: path,
+                                    exists: !FilesPageSamples.enabled || path != FilesPageSamples.favorites.last),
+                                 index: index, count: favorites.count,
                                  shortcut: settings.favoriteShortcuts && index < 9 ? "⌘⌥\(index + 1)" : nil,
-                                 move: { settings.moveFavorite(from: index, to: $0) },
+                                 selected: currentSelection == .favorite(path), select: { selection = .favorite(path) },
+                                 move: { if !FilesPageSamples.enabled { settings.moveFavorite(from: index, to: $0) } },
                                  insert: { folders in insertFavorites(folders, at: index) },
                                  remove: { removeFavorite(path) })
             }
@@ -272,7 +325,7 @@ struct FilesPage: View {
                     settings.resetFavorites()
                     toast.show("Favorites restored", action: { settings.favorites = previous })
                 }
-                .disabled(settings.favorites == FilesPath.defaultFavorites())
+                .disabled(FilesPageSamples.enabled || settings.favorites == FilesPath.defaultFavorites())
             }
             .padding(.horizontal, AOMSpace.rowInset)
             .padding(.vertical, AOMSpace.x2)
@@ -286,6 +339,7 @@ struct FilesPage: View {
     /// Adds dropped Finder folders (a file adds its folder) at `index`.
     @discardableResult
     private func insertFavorites(_ urls: [URL], at index: Int) -> Bool {
+        guard !FilesPageSamples.enabled else { return false }
         let folders = urls.compactMap { FilesPath.jumpFolder(for: $0.path) }
             .filter { !settings.isFavorite($0.path) }
         guard !folders.isEmpty else { return false }
@@ -314,7 +368,7 @@ struct FilesPage: View {
     }
 
     private func removeFavorite(_ path: String) {
-        guard let index = settings.favorites.firstIndex(of: path) else { return }
+        guard !FilesPageSamples.enabled, let index = settings.favorites.firstIndex(of: path) else { return }
         let restore: @MainActor () -> Void = {
             guard !settings.favorites.contains(path) else { return }
             var list = settings.favorites

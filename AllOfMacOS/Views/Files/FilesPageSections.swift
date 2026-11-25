@@ -14,6 +14,8 @@ struct FilesFavoriteRow: View {
     let index: Int
     let count: Int
     let shortcut: String?
+    let selected: Bool
+    let select: () -> Void
     /// Moves this favorite so it ends up before the item at the index given.
     let move: (Int) -> Void
     let insert: ([URL]) -> Bool
@@ -25,23 +27,27 @@ struct FilesFavoriteRow: View {
 
     var body: some View {
         HStack(spacing: AOMSpace.x2) {
-            Image(nsImage: FilesIcons.icon(path))
-                .resizable()
-                .interpolation(.high)
-                .frame(width: AOMIcon.row + AOMSpace.x1, height: AOMIcon.row + AOMSpace.x1)
-                .opacity(exists ? 1 : 0.4)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(name).font(AOMFont.body).foregroundStyle(AOMColor.text).lineLimit(1).truncationMode(.middle)
-                Text(info.abbreviated)
-                    .font(AOMFont.callout)
-                    .foregroundStyle(AOMColor.textSecondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .help(path)
+            Button(action: select) {
+                HStack(spacing: AOMSpace.x2) {
+                    Image(systemName: exists ? "folder" : "questionmark.folder")
+                        .foregroundStyle(selected ? Color.white : AOMColor.textSecondary)
+                        .frame(width: AOMIcon.row + AOMSpace.x1)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(name).font(AOMFont.body).lineLimit(1).truncationMode(.middle)
+                        Text(info.abbreviated).font(AOMFont.callout).lineLimit(1).truncationMode(.middle)
+                            .foregroundStyle(selected ? Color.white.opacity(0.85) : AOMColor.textSecondary)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(AOMSpace.x1)
+                .foregroundStyle(selected ? Color.white : AOMColor.text)
+                .background(selected ? AOMColor.selection : .clear, in: RoundedRectangle(cornerRadius: AOMRadius.well))
+                .contentShape(Rectangle())
             }
-            .layoutPriority(1)
-            Spacer(minLength: AOMSpace.x2)
+            .buttonStyle(.plain)
+            .help(path)
+            .accessibilityAddTraits(selected ? .isSelected : [])
             if !exists { AOMStatusPill("Missing", tone: .warning) }
             if let shortcut {
                 Text(shortcut)
@@ -60,6 +66,7 @@ struct FilesFavoriteRow: View {
         .dropDestination(for: URL.self) { urls, _ in insert(urls) } isTargeted: { targeted = $0 }
         .contextMenu {
             Button("Show in Finder") { FilesFileActions.reveal([URL(fileURLWithPath: path)]) }
+                .disabled(!exists || FilesPageSamples.enabled)
             Button("Copy Path") { FilesFileActions.copyPaths([URL(fileURLWithPath: path)]) }
             Divider()
             Button("Move Up") { move(index - 1) }.disabled(index == 0)
@@ -67,9 +74,8 @@ struct FilesFavoriteRow: View {
             Divider()
             Button("Remove", role: .destructive, action: remove)
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(name), \(info.abbreviated)")
-        .accessibilityValue(shortcut.map { "Shortcut \($0)" } ?? "")
+        .accessibilityElement(children: .contain)
+        .accessibilityValue([exists ? nil : "Missing", shortcut.map { "Shortcut \($0)" }].compactMap { $0 }.joined(separator: ", "))
         .accessibilityAction(named: "Move Up") { if index > 0 { move(index - 1) } }
         .accessibilityAction(named: "Move Down") { if index < count - 1 { move(index + 2) } }
         .accessibilityAction(named: "Remove", remove)
@@ -241,8 +247,18 @@ struct FilesRecentSection: View {
     @ObservedObject var recent: FilesRecentModel
     let toast: AOMToastModel
     let quickLook: ([URL], Int) -> Void
-    /// D25: a click or arrow key on a file shows it in the page's inspector.
-    var onSelect: (URL) -> Void = { _ in }
+    let selection: FilesLocationSelection?
+    let onSelect: (FilesLocationSelection) -> Void
+
+    private var selectedDownload: URL? {
+        if case .download(let url) = selection { return url }
+        return nil
+    }
+
+    private var selectedScreenshot: URL? {
+        if case .screenshot(let url) = selection { return url }
+        return nil
+    }
 
     var body: some View {
         FilesAdaptiveColumns(minimumColumnWidth: 400) {
@@ -252,29 +268,34 @@ struct FilesRecentSection: View {
     }
 
     private var downloads: some View {
-        AOMSection("Recent downloads", detail: FilesPath.abbreviated(recent.downloadsFolder.path),
+        AOMSection("Recent downloads", detail: FilesPath.abbreviated((FilesPageSamples.enabled ? FilesPageSamples.downloadsFolder : recent.downloadsFolder).path),
                    help: "The newest items in Downloads by the date they arrived. Drag one out, press Space for Quick Look, double-click to open.") {
             refreshButton
         } content: {
-            FilesRecentList(files: recent.downloads, loaded: recent.loaded, readable: recent.downloadsReadable,
+            FilesRecentList(files: FilesPageSamples.enabled ? FilesPageSamples.downloads : recent.downloads,
+                            loaded: FilesPageSamples.enabled || recent.loaded, readable: FilesPageSamples.enabled || recent.downloadsReadable,
                             emptyMessage: "No downloads yet.", emptySymbol: "arrow.down.circle",
-                            toast: toast, quickLook: quickLook, refresh: { recent.refresh() }, onSelect: onSelect)
+                            toast: toast, quickLook: quickLook, refresh: { recent.refresh() },
+                            selection: selectedDownload, onSelect: { onSelect(.download($0)) })
         }
     }
 
     private var screenshots: some View {
-        AOMSection("Recent screenshots", detail: FilesPath.abbreviated(recent.screenshotFolder.path),
+        AOMSection("Recent screenshots", detail: FilesPath.abbreviated((FilesPageSamples.enabled ? FilesPageSamples.screenshotFolder : recent.screenshotFolder).path),
                    help: "Screenshots in the folder the Screenshot app saves to (Options › Save to), or the Desktop. Files are recognised by the screenshot mark macOS gives them.") {
             EmptyView()
         } content: {
-            FilesRecentList(files: recent.screenshots, loaded: recent.loaded, readable: true,
+            FilesRecentList(files: FilesPageSamples.enabled ? FilesPageSamples.screenshots : recent.screenshots,
+                            loaded: FilesPageSamples.enabled || recent.loaded, readable: true,
                             emptyMessage: "No screenshots here yet.", emptySymbol: "camera.viewfinder",
-                            toast: toast, quickLook: quickLook, refresh: { recent.refresh() }, onSelect: onSelect)
+                            toast: toast, quickLook: quickLook, refresh: { recent.refresh() },
+                            selection: selectedScreenshot, onSelect: { onSelect(.screenshot($0)) })
         }
     }
 
     private var refreshButton: some View {
         AOMIconButton("arrow.clockwise", label: "Refresh") { recent.refresh() }
+            .disabled(FilesPageSamples.enabled)
     }
 }
 
@@ -289,8 +310,8 @@ struct FilesRecentList: View {
     let toast: AOMToastModel
     let quickLook: ([URL], Int) -> Void
     let refresh: () -> Void
-    var onSelect: (URL) -> Void = { _ in }
-    @State private var selection: String?
+    let selection: URL?
+    let onSelect: (URL) -> Void
     @FocusState private var focused: Bool
 
     private var shown: [FilesRecentFile] { Array(files.prefix(8)) }
@@ -310,9 +331,9 @@ struct FilesRecentList: View {
                 AOMInlineEmpty(symbol: emptySymbol, message: emptyMessage)
             } else {
                 ForEach(Array(shown.enumerated()), id: \.element.id) { index, file in
-                    FilesRecentRow(file: file, selected: selection == file.id && focused, showsDivider: index > 0,
-                                   select: { selection = file.id; focused = true },
-                                   open: { FilesFileActions.open([file.url]) },
+                    FilesRecentRow(file: file, selected: selection == file.url, showsDivider: index > 0,
+                                   select: { onSelect(file.url); focused = true },
+                                   open: { if !FilesPageSamples.enabled { FilesFileActions.open([file.url]) } },
                                    quickLook: { lookAt(file) },
                                    trash: { trash(file) })
                 }
@@ -328,28 +349,26 @@ struct FilesRecentList: View {
             return .handled
         }
         .onKeyPress(.return) {
-            guard let file = selected else { return .ignored }
+            guard !FilesPageSamples.enabled, let file = selected else { return .ignored }
             FilesFileActions.open([file.url])
             return .handled
         }
         .onKeyPress(.downArrow) { step(1) }
         .onKeyPress(.upArrow) { step(-1) }
-        .onChange(of: selection) { _, id in
-            if let file = shown.first(where: { $0.id == id }) { onSelect(file.url) }
-        }
     }
 
-    private var selected: FilesRecentFile? { shown.first { $0.id == selection } }
+    private var selected: FilesRecentFile? { shown.first { $0.url == selection } }
 
     private func step(_ delta: Int) -> KeyPress.Result {
         guard !shown.isEmpty else { return .ignored }
-        let index = shown.firstIndex { $0.id == selection } ?? (delta > 0 ? -1 : shown.count)
+        let index = shown.firstIndex { $0.url == selection } ?? (delta > 0 ? -1 : shown.count)
         let next = min(max(index + delta, 0), shown.count - 1)
-        selection = shown[next].id
+        onSelect(shown[next].url)
         return .handled
     }
 
     private func lookAt(_ file: FilesRecentFile) {
+        guard !FilesPageSamples.enabled else { return }
         let urls = shown.map(\.url)
         quickLook(urls, urls.firstIndex(of: file.url) ?? 0)
     }
@@ -395,7 +414,14 @@ struct FilesRecentRow: View {
 
     var body: some View {
         HStack(spacing: AOMSpace.x2) {
-            FilesThumbnail(url: file.url, size: AOMIcon.row + AOMSpace.x2)
+            if FilesPageSamples.enabled {
+                Image(systemName: file.url.pathExtension == "png" ? "photo" : "doc.text")
+                    .foregroundStyle(selected ? Color.white : AOMColor.textSecondary)
+                    .frame(width: AOMIcon.row + AOMSpace.x2)
+                    .accessibilityHidden(true)
+            } else {
+                FilesThumbnail(url: file.url, size: AOMIcon.row + AOMSpace.x2)
+            }
             VStack(alignment: .leading, spacing: 1) {
                 Text(file.name)
                     .font(AOMFont.body)
@@ -440,7 +466,8 @@ struct FilesRecentRow: View {
         .accessibilityLabel(file.name)
         .accessibilityValue(detail)
         .accessibilityAddTraits(selected ? [.isSelected, .isButton] : .isButton)
-        .accessibilityAction(.default, open)
+        .accessibilityAction(.default, select)
+        .accessibilityAction(named: "Open", open)
         .accessibilityAction(named: "Quick Look", quickLook)
         .accessibilityAction(named: "Show in Finder") { FilesFileActions.reveal([file.url]) }
         .accessibilityAction(named: "Move to Trash", trash)

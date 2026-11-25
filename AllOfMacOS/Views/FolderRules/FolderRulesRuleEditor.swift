@@ -51,7 +51,7 @@ struct FolderRulesRuleEditor: View {
     private func savedEnabled(_ rule: FolderRule) -> Bool { model.draftBase?.isEnabled ?? rule.isEnabled }
 
     private func subtitle(_ rule: FolderRule) -> String {
-        let folder = engine.config.folder(rule.folderID)?.name ?? "No folder"
+        let folder = model.config.folder(rule.folderID)?.name ?? "No folder"
         return "In \(folder) · " + (rule.includeSubfolders ? "includes subfolders" : "top level only")
     }
 
@@ -253,10 +253,8 @@ struct FolderRulesTurnOnPreview: View {
             HStack(spacing: AOMSpace.x2) {
                 Spacer()
                 Button("Cancel") { model.cancelTurnOn() }
-                    .keyboardShortcut(.cancelAction)
                 Button(ready.isEmpty ? "Turn On" : "Turn On and Run") { model.confirmTurnOn() }
                     .aomPrimaryButton()
-                    .keyboardShortcut(.defaultAction).buttonStyle(AOMPrimaryButtonStyle())
                     .disabled(preview.folderState.problem != nil)
             }
             .padding(AOMSpace.rowInset)
