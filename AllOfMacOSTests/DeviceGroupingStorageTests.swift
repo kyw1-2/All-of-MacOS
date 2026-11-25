@@ -28,6 +28,26 @@ final class DeviceGroupingStorageTests: XCTestCase {
         XCTAssertEqual(triggers[1].actions.first?.parameters.url, "aom://open-free-up-space")
     }
 
+    func testEditableWebRolesAndNavigationScope() {
+        XCTAssertTrue(ShortcutMenuPress.isTypingRole("AXTextField", editable: false, hasSelectionRange: false))
+        XCTAssertTrue(ShortcutMenuPress.isTypingRole("AXWebArea", editable: true, hasSelectionRange: false))
+        XCTAssertTrue(ShortcutMenuPress.isTypingRole("AXGroup", editable: false, hasSelectionRange: true))
+        XCTAssertFalse(ShortcutMenuPress.isTypingRole("AXWebArea", editable: false, hasSelectionRange: false))
+        XCTAssertTrue(ShortcutMenuPress.isNavigationShortcut(33, .command))
+        XCTAssertFalse(ShortcutMenuPress.isNavigationShortcut(33, [.command, .shift]))
+        XCTAssertFalse(ShortcutMenuPress.isNavigationShortcut(13, .command))
+    }
+
+    func testDetectionCountExcludesSeparateFireEvent() {
+        let stats = GestureStatistics(defaults: nil)
+        stats.recordDetection("Back")
+        stats.recordFire("Back")
+        XCTAssertEqual(stats.sortedEntries.first?.totalCount, 1)
+        XCTAssertEqual(stats.sortedEntries.first?.firedCount, 1)
+        XCTAssertEqual(stats.totalGestures, 1)
+        XCTAssertEqual(stats.totalFired, 1)
+    }
+
     func testStorageLinkOnlyOpensReviewAndRejectsParameters() {
         XCTAssertEqual(AOMCaptureDeepLink.parse(URL(string: "aom://open-free-up-space")!), .openFreeUpSpace)
         XCTAssertNil(AOMCaptureDeepLink.parse(URL(string: "aom://open-free-up-space?force=1")!))

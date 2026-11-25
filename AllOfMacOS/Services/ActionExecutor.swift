@@ -371,6 +371,13 @@ class ActionExecutor {
         if action.actionType == .sendKeyStroke, action.parameters.targetApplicationBundleID?.isEmpty == false {
             completion(AccessibilityAutomation.sendShortcut(action.parameters)); return
         }
+        if action.actionType == .sendKeyStroke, let keyCode = action.parameters.shortcutKeyCode {
+            let flags = NSEvent.ModifierFlags(rawValue: action.parameters.shortcutModifiers ?? 0)
+            if ShortcutMenuPress.isNavigationShortcut(keyCode, flags) {
+                sendNavigationShortcut(keyCode: keyCode, flags: flags, isCancelled: isCancelled, completion: completion)
+                return
+            }
+        }
         if ExtendedActions.handles(action.actionType) {
             ExtendedActions.perform(action, isCancelled: isCancelled, completion: completion)
             return
@@ -840,6 +847,28 @@ class ActionExecutor {
         guard visible.width > 0, visible.height > 0 else { return nil }
         return CGPoint(x: (point.x - visible.minX) / visible.width,
                        y: (point.y - visible.minY) / visible.height)
+    }
+
+    private static let navigationMenuQueue = DispatchQueue(label: "com.kyw.allofmacos.navigation-menu", qos: .userInitiated)
+
+    private static func sendNavigationShortcut(keyCode: UInt16, flags: NSEvent.ModifierFlags,
+                                               isCancelled: @escaping () -> Bool, completion: @escaping (Bool) -> Void) {
+        onMain {
+            guard !isCancelled(), !IsSecureEventInputEnabled() else { completion(false); return }
+            guard NSApp.keyWindow == nil, let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier else {
+                completion(sendViaCGEvent(keyCode: keyCode, flags: flags, tapPoint: .cgSessionEventTap, label: "navigation")); return
+            }
+            navigationMenuQueue.async {
+                let pressed = ShortcutMenuPress.pressIfTyping(keyCode: keyCode, flags: flags, expectedPID: pid)
+                DispatchQueue.main.async {
+                    if pressed { completion(true); return }
+                    guard !isCancelled(), !IsSecureEventInputEnabled(), NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else {
+                        completion(false); return
+                    }
+                    completion(sendViaCGEvent(keyCode: keyCode, flags: flags, tapPoint: .cgSessionEventTap, label: "navigation"))
+                }
+            }
+        }
     }
 
     @discardableResult

@@ -41,6 +41,9 @@ struct FolderRulePDFContent: Equatable {
 }
 
 enum FolderRulePDFText {
+    private static let numericDateRegex = try! NSRegularExpression(pattern: #"(?<!\d)(\d{4})\s*[-./년]\s*(\d{1,2})\s*[-./월]\s*(\d{1,2})\s*일?(?!\d)"#)
+    private static let englishDateRegex = try! NSRegularExpression(pattern: #"(?i)\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2}),?\s+(\d{4})\b"#)
+    private static let dayFirstDateRegex = try! NSRegularExpression(pattern: #"(?i)\b(\d{1,2})\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?,?\s+(\d{4})\b"#)
     /// Recognitions done since launch (tests check a text PDF needs none).
     nonisolated(unsafe) static var recognitionCount = 0
     private static let lock = NSLock()
@@ -204,18 +207,18 @@ enum FolderRulePDFText {
             found.append((offset, date))
         }
         let ns = text as NSString
-        let numeric = try! NSRegularExpression(pattern: #"(?<!\d)(\d{4})\s*[-./년]\s*(\d{1,2})\s*[-./월]\s*(\d{1,2})\s*일?(?!\d)"#)
+        let numeric = numericDateRegex
         for match in numeric.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
             add(Int(ns.substring(with: match.range(at: 1))) ?? 0, Int(ns.substring(with: match.range(at: 2))) ?? 0,
                 Int(ns.substring(with: match.range(at: 3))) ?? 0, at: match.range.location)
         }
         let months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
-        let english = try! NSRegularExpression(pattern: #"(?i)\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2}),?\s+(\d{4})\b"#)
+        let english = englishDateRegex
         for match in english.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
             let month = (months.firstIndex(of: ns.substring(with: match.range(at: 1)).lowercased()) ?? -1) + 1
             add(Int(ns.substring(with: match.range(at: 3))) ?? 0, month, Int(ns.substring(with: match.range(at: 2))) ?? 0, at: match.range.location)
         }
-        let dayFirst = try! NSRegularExpression(pattern: #"(?i)\b(\d{1,2})\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?,?\s+(\d{4})\b"#)
+        let dayFirst = dayFirstDateRegex
         for match in dayFirst.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
             let month = (months.firstIndex(of: ns.substring(with: match.range(at: 2)).lowercased()) ?? -1) + 1
             add(Int(ns.substring(with: match.range(at: 3))) ?? 0, month, Int(ns.substring(with: match.range(at: 1))) ?? 0, at: match.range.location)

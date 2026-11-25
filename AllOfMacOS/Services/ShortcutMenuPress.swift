@@ -58,33 +58,64 @@ enum ShortcutMenuPress {
         return (value as! AXUIElement) // swiftlint:disable:this force_cast
     }
 
-    /// Chooses the front app's menu command for this shortcut when a text
-    /// field there has the focus. True when a command was chosen.
-    static func pressIfTyping(keyCode: UInt16, flags: NSEvent.ModifierFlags) -> Bool {
+    /// Web editors expose editable state independently of their AX role.
+    static func isTypingRole(_ role: String?, editable: Bool, hasSelectionRange: Bool) -> Bool {
+        if editable { return true }
+        guard let role else { return false }
+        if textRoles.contains(role) { return true }
+        return ["AXWebArea", "AXGroup", "AXUnknown", "AXLayoutArea"].contains(role) && hasSelectionRange
+    }
+
+    /// For navigation shortcuts, prefer a menu command when the editor has
+    /// focus. Do not broaden the behavior to every application or shortcut.
+    static func isNavigationShortcut(_ keyCode: UInt16, _ flags: NSEvent.ModifierFlags) -> Bool {
+        [33, 30].contains(keyCode) && menuModifiers(flags) == 0 && !flags.contains(.function)
+    }
+
+    /// Chooses a menu command in the front app when a text field has focus.
+    /// Bounded depth, work and AX timeout; no menu expansion or UI mutation.
+    static func pressIfTyping(keyCode: UInt16, flags: NSEvent.ModifierFlags, expectedPID: pid_t? = nil) -> Bool {
         guard AXIsProcessTrusted(), let modifiers = menuModifiers(flags), let character = character(for: keyCode),
               let front = NSWorkspace.shared.frontmostApplication,
-              front.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return false }
+              front.processIdentifier != ProcessInfo.processInfo.processIdentifier,
+              expectedPID == nil || expectedPID == front.processIdentifier else { return false }
         let app = AXUIElementCreateApplication(front.processIdentifier)
-        AXUIElementSetMessagingTimeout(app, 0.2)
-        guard let focused = element(attribute(app, kAXFocusedUIElementAttribute)),
-              let role = attribute(focused, kAXRoleAttribute) as? String, textRoles.contains(role),
-              let bar = element(attribute(app, kAXMenuBarAttribute)) else { return false }
+        AXUIElementSetMessagingTimeout(app, 0.08)
         let deadline = ProcessInfo.processInfo.systemUptime + 0.35
-        for barItem in (attribute(bar, kAXChildrenAttribute) as? [AXUIElement] ?? []).dropFirst() {
-            guard ProcessInfo.processInfo.systemUptime < deadline else { return false }
-            guard let menu = (attribute(barItem, kAXChildrenAttribute) as? [AXUIElement])?.first else { continue }
-            for item in attribute(menu, kAXChildrenAttribute) as? [AXUIElement] ?? [] {
-                guard matches(cmdChar: attribute(item, "AXMenuItemCmdChar") as? String,
-                              cmdModifiers: (attribute(item, "AXMenuItemCmdModifiers") as? NSNumber)?.intValue,
-                              character: character, modifiers: modifiers) else { continue }
-                guard (attribute(item, kAXEnabledAttribute) as? Bool) != false else { return false }
-                let ok = AXUIElementPerformAction(item, kAXPressAction as CFString) == .success
-                if ok {
-                    let title = attribute(item, kAXTitleAttribute) as? String ?? "?"
-                    GestureLog.shared.logFromAnyThread("Shortcut chose “\(title)” in \(front.localizedName ?? "the front app") (a text field had the focus)", level: .action)
-                }
-                return ok
+        guard let focused = element(attribute(app, kAXFocusedUIElementAttribute)) else { return false }
+        AXUIElementSetMessagingTimeout(focused, 0.08)
+        let role = attribute(focused, kAXRoleAttribute) as? String
+        let native = role.map { textRoles.contains($0) } ?? false
+        if !native {
+            guard isNavigationShortcut(keyCode, flags) else { return false }
+            let editable = (attribute(focused, "AXEditable") as? Bool) == true
+            let hasRange = attribute(focused, kAXSelectedTextRangeAttribute) != nil
+            guard isTypingRole(role, editable: editable, hasSelectionRange: hasRange) else { return false }
+        }
+        guard let bar = element(attribute(app, kAXMenuBarAttribute)) else { return false }
+        AXUIElementSetMessagingTimeout(bar, 0.08)
+        var remaining = 120
+        func walk(_ node: AXUIElement, depth: Int) -> Bool {
+            guard depth <= 4, remaining > 0, ProcessInfo.processInfo.systemUptime < deadline else { return false }
+            remaining -= 1
+            AXUIElementSetMessagingTimeout(node, 0.08)
+            if matches(cmdChar: attribute(node, "AXMenuItemCmdChar") as? String,
+                       cmdModifiers: (attribute(node, "AXMenuItemCmdModifiers") as? NSNumber)?.intValue,
+                       character: character, modifiers: modifiers),
+               (attribute(node, kAXEnabledAttribute) as? Bool) == true,
+               NSWorkspace.shared.frontmostApplication?.processIdentifier == front.processIdentifier {
+                return AXUIElementPerformAction(node, kAXPressAction as CFString) == .success
             }
+            guard ProcessInfo.processInfo.systemUptime < deadline else { return false }
+            for child in attribute(node, kAXChildrenAttribute) as? [AXUIElement] ?? [] {
+                if walk(child, depth: depth + 1) { return true }
+                if remaining <= 0 || ProcessInfo.processInfo.systemUptime >= deadline { break }
+            }
+            return false
+        }
+        for item in (attribute(bar, kAXChildrenAttribute) as? [AXUIElement] ?? []).dropFirst() {
+            if walk(item, depth: 0) { return true }
+            if remaining <= 0 || ProcessInfo.processInfo.systemUptime >= deadline { break }
         }
         return false
     }
