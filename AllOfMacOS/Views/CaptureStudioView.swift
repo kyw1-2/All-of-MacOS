@@ -87,6 +87,7 @@ struct CaptureStudioView: View {
     var body: some View {
         HStack(spacing: 0) {
             library
+                .task { CapturePreviewSamples.seedIfRequested(into: history) }
             if inspectorShown {
                 AOMDivider(axis: .vertical)
                 captureInspector
@@ -476,6 +477,8 @@ struct CaptureStudioView: View {
                 Image(systemName: "square.grid.3x3").tag(0).help("Small thumbnails")
                 Image(systemName: "square.grid.2x2").tag(1).help("Medium thumbnails")
                 Image(systemName: "rectangle.grid.1x2").tag(2).help("Large thumbnails")
+                // 7.19 (D19): a list — name, kind, size and time beside a small thumbnail.
+                Image(systemName: "list.bullet").tag(3).help("List")
             }
             .pickerStyle(.segmented)
             .labelsHidden()
@@ -536,8 +539,10 @@ struct CaptureStudioView: View {
 
     // MARK: - Gallery Section
 
+    private var showsList: Bool { density == 3 }
+
     private var columnCount: Int {
-        guard galleryWidth > 0 else { return 1 }
+        guard galleryWidth > 0, !showsList else { return 1 }
         return max(1, Int((galleryWidth + AOMSpace.tileGap) / (gridMinimum + AOMSpace.tileGap)))
     }
 
@@ -547,12 +552,24 @@ struct CaptureStudioView: View {
         if entries.isEmpty {
             emptyGallery
         } else {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: gridMinimum,
-                                                   maximum: gridMinimum * CaptureGalleryMetrics.columnStretch),
-                                         spacing: AOMSpace.tileGap)],
-                      spacing: AOMSpace.tileGap) {
-                ForEach(entries) { entry in
-                    card(entry)
+            Group {
+                if showsList {
+                    LazyVStack(spacing: 0) {
+                        ForEach(entries) { entry in
+                            listRow(entry)
+                            if entry.id != entries.last?.id { AOMRowDivider(inset: AOMSpace.rowInset + 64 + AOMSpace.x3) }
+                        }
+                    }
+                    .aomCard(padding: 0)
+                } else {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: gridMinimum,
+                                                           maximum: gridMinimum * CaptureGalleryMetrics.columnStretch),
+                                                 spacing: AOMSpace.tileGap)],
+                              spacing: AOMSpace.tileGap) {
+                        ForEach(entries) { entry in
+                            card(entry)
+                        }
+                    }
                 }
             }
             .background {
@@ -598,6 +615,58 @@ struct CaptureStudioView: View {
             }
             .frame(minHeight: CaptureGalleryMetrics.emptyMinHeight)
         }
+    }
+
+    /// 7.19 (D19): one capture as a list row.
+    private func listRow(_ entry: CaptureHistoryEntry) -> some View {
+        let selected = selectedEntryID == entry.id
+        return HStack(spacing: AOMSpace.x3) {
+            Image(nsImage: entry.thumbnail)
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .frame(width: 64, height: 40)
+                .clipShape(RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous)
+                    .strokeBorder(AOMColor.hairline, lineWidth: 0.5))
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
+                Text(entry.displayName).font(AOMFont.bodyEmphasis).lineLimit(1).truncationMode(.middle)
+                Text("\(entry.kind.displayName) · \(entry.pixelWidth) × \(entry.pixelHeight)")
+                    .font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary).lineLimit(1)
+            }
+            Spacer(minLength: AOMSpace.x2)
+            if entry.isPinned {
+                Image(systemName: "pin.fill").font(AOMFont.caption).foregroundStyle(AOMColor.textTertiary)
+                    .accessibilityLabel("Kept")
+            }
+            Text(entry.capturedAt, style: .relative)
+                .font(AOMFont.timestamp).foregroundStyle(AOMColor.textTertiary).lineLimit(1)
+                .frame(minWidth: 72, alignment: .trailing)
+        }
+        .padding(.horizontal, AOMSpace.rowInset)
+        .padding(.vertical, AOMSpace.x2)
+        .background {
+            if selected {
+                RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous)
+                    .fill(AOMColor.accent.opacity(galleryFocused ? 0.16 : 0.08))
+                    .padding(.horizontal, AOMSpace.x1)
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2) { QuickAccessExpandedPreview.shared.open(entry: entry) }
+        .onTapGesture { selectedEntryID = entry.id; galleryFocused = true }
+        .contextMenu {
+            Button("Open & Annotate") { CapturePreviewActions.edit(entry) }
+            Button("Copy") { copy(entry) }
+            if let url = entry.fileURL {
+                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+            }
+            Button(entry.isPinned ? "Don't Keep" : "Keep in History") { history.togglePin(entry) }
+            Divider()
+            Button("Delete", role: .destructive) { remove(entry) }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
     }
 
     private func card(_ entry: CaptureHistoryEntry) -> some View {

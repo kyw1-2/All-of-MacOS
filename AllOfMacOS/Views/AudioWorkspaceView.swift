@@ -176,7 +176,7 @@ struct AudioWorkspaceView: View {
             Button {
                 service.showPanel()
             } label: {
-                Label("Floating Mixer", systemImage: "slider.horizontal.3")
+                Label("Floating Mixer", systemImage: "slider.vertical.3")
             }
             .help("Open the floating per-app audio mixer panel")
             Button {
@@ -201,7 +201,7 @@ struct AudioWorkspaceView: View {
                     }
                 }
                 Divider()
-                Button("Open Mixer Panel", systemImage: "slider.horizontal.3") { service.showPanel() }
+                Button("Open Mixer Panel", systemImage: "slider.vertical.3") { service.showPanel() }
             } label: {
                 Label("Audio Options", systemImage: "slider.horizontal.3")
             }
@@ -278,6 +278,10 @@ struct AudioWorkspaceView: View {
                 }
             } else {
                 VStack(spacing: 0) {
+                    // 7.19 (D17): the mixer reads as a table — every column
+                    // is titled once, above rows that share its widths.
+                    AudioMixerHeader(inspectorShown: inspectorShown)
+                    AOMRowDivider()
                     section("Favorites", lists.favorites)
                     section(lists.favorites.isEmpty ? nil : "Playing & adjusted", lists.active)
                     section("Other running apps", lists.other)
@@ -330,6 +334,39 @@ struct AudioWorkspaceView: View {
 
 /// Sizes the device and application rows share, so every row's trailing
 /// controls line up. No design token covers them.
+/// 7.19 (D17): the titles of the app rows' columns, laid out with the same
+/// fixed widths and spacing as `ApplicationAudioRow`, so each title sits over
+/// its column (app · mute · volume · Magic Boost · effects).
+private struct AudioMixerHeader: View {
+    var inspectorShown: Bool
+
+    var body: some View {
+        HStack(spacing: AOMSpace.x3) {
+            title("Application")
+                .frame(minWidth: AudioRowMetrics.nameMinWidth + AOMIcon.row + AOMSpace.x2, alignment: .leading)
+            Spacer(minLength: AOMSpace.x2)
+            title("Mute").frame(width: AudioRowMetrics.buttonWidth)
+            title("Volume")
+                .frame(minWidth: AudioRowMetrics.sliderMinWidth, maxWidth: AudioRowMetrics.sliderMaxWidth, alignment: .leading)
+            Color.clear.frame(width: AOMRowControlMetrics.valueWidth, height: 1)
+            title("Magic Boost")
+                .frame(width: AudioRowMetrics.buttonWidth + AOMSpace.x3 + AudioBoostPresetPicker.menuWidth, alignment: .leading)
+            title(inspectorShown ? "Inspect" : "Effects").frame(width: AudioRowMetrics.buttonWidth)
+        }
+        .padding(.horizontal, AOMSpace.rowInset)
+        .padding(.vertical, AOMSpace.x1 + AOMSpace.x0_5)
+        .accessibilityHidden(true)
+    }
+
+    private func title(_ text: String) -> some View {
+        Text(text)
+            .font(AOMFont.caption.weight(.medium))
+            .foregroundStyle(AOMColor.textTertiary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+    }
+}
+
 private enum AudioRowMetrics {
     /// Mute, Magic Boost and disclosure buttons: the icon-button hit width
     /// and a small control's height, so rows stay one control tall.

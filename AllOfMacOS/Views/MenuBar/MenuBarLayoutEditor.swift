@@ -76,6 +76,13 @@ struct MenuBarLayoutEditor: View {
                 }
                 Text("Drag icons between sections, or ⌘-drag them in the menu bar.")
                     .font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
+                // 7.19 (N08): how fresh the picture of the menu bar is.
+                if !model.isSample, let read = model.lastRefresh {
+                    (Text("Read ") + Text(read, style: .relative) + Text(" ago")
+                        + Text(model.lastScanComplete ? "" : " · some items couldn't be read"))
+                        .font(AOMFont.caption)
+                        .foregroundStyle(model.lastScanComplete ? AOMColor.textTertiary : AOMColor.warningText)
+                }
                 if let status = model.status {
                     Text(status).font(AOMFont.caption).foregroundStyle(AOMColor.accent).lineLimit(2).padding(.top, 2)
                 }
@@ -182,10 +189,19 @@ struct MenuBarLayoutEditor: View {
                         Spacer(minLength: 0)
                         if items.isEmpty {
                             Text(isTarget ? "Drop here" : "Drag icons here")
-                                .font(.system(size: 11.5)).foregroundStyle(laneInk.opacity(0.6))
+                                .font(AOMFont.caption).foregroundStyle(AOMColor.textTertiary)
                                 .padding(.horizontal, 12)
+                        } else {
+                            // 7.19: the bar's own colour only behind the icons — a
+                            // small strip of menu bar on a calm lane — so captured
+                            // icons keep the background they were drawn for.
+                            HStack(spacing: 2) { ForEach(items) { entry in icon(entry) } }
+                                .padding(.horizontal, 6)
+                                .frame(height: 34)
+                                .background(laneColor, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .strokeBorder(Color.black.opacity(0.08), lineWidth: 0.5))
                         }
-                        ForEach(items) { entry in icon(entry) }
                     }
                     .padding(.horizontal, 10)
                     .frame(minWidth: geometry.size.width, minHeight: geometry.size.height, alignment: .trailing)
@@ -193,9 +209,9 @@ struct MenuBarLayoutEditor: View {
                 // Like the menu bar, the right end shows first (Gemini 7.10).
                 .defaultScrollAnchor(.trailing)
             }
-            .frame(height: 60)
-            .background(laneColor, in: shape)
-            .overlay(shape.strokeBorder(isTarget ? AOMColor.accent : Color.black.opacity(0.1), lineWidth: isTarget ? 2 : 0.5))
+            .frame(height: 50)
+            .background(isTarget ? AOMColor.dropWash : AOMColor.sunken, in: shape)
+            .overlay(shape.strokeBorder(isTarget ? AOMColor.accent : AOMColor.hairline, lineWidth: isTarget ? 2 : 0.5))
             .clipShape(shape)
             .dropDestination(for: String.self) { ids, _ in
                 guard let id = ids.first else { return false }

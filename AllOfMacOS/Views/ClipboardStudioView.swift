@@ -701,13 +701,16 @@ struct ClipboardStudioView: View {
             .layoutPriority(1)
             Spacer(minLength: AOMSpace.x2)
             // The section's one prominent action (design-336 b.6).
-            Button { copy(expecting: entry.id) } label: { Label("Copy", systemImage: "doc.on.doc") }
+            // 7.19: pressing Copy on the item you are looking at is an explicit
+            // choice of that item, so it works on an auto-highlighted preview too
+            // (it still resolves the live, visible row by id).
+            Button { copy(addressedTo: entry.id) } label: { Label("Copy", systemImage: "doc.on.doc") }
                 .buttonStyle(AOMPrimaryButtonStyle())
-                .disabled(liveEntry(expecting: entry.id) == nil)
+                .disabled(liveEntry(addressedTo: entry.id) == nil)
                 .aomShortcut("c", modifiers: [.command, .shift])
-                .help("Select a row to copy it (⇧⌘C, or press Return in the list)")
+                .help("Copy this item (⇧⌘C, or press Return in the list)")
             Menu {
-                entryMenu(entry, fromRow: false)
+                entryMenu(entry, fromRow: true)
             } label: {
                 Image(systemName: "ellipsis.circle")
             }
@@ -716,7 +719,7 @@ struct ClipboardStudioView: View {
             .fixedSize()
             .tint(AOMColor.textSecondary)
             .frame(width: AOMIcon.hitArea, height: AOMIcon.hitArea)
-            .disabled(liveEntry(expecting: entry.id) == nil)
+            .disabled(liveEntry(addressedTo: entry.id) == nil)
             .help("More actions for this item")
             .accessibilityLabel("More actions")
         }

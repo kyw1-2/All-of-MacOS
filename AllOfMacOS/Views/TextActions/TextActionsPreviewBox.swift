@@ -60,6 +60,7 @@ struct TextActionsPreviewPane: View {
                     }
                     .labelsHidden()
                     .fixedSize()
+                    .layoutPriority(1)
                 }
             }
             TextActionsPreviewBox(settings: settings, sample: sample)

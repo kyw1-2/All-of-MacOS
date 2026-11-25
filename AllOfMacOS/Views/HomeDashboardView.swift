@@ -464,6 +464,11 @@ struct AOMHomeView: View {
                 overviewCard(shown, snapshot)
                     .fixedSize(horizontal: false, vertical: true)
                     .id(shown)
+                // 7.19 (R10): when these figures were read.
+                (Text("As of ") + Text(Date(), style: .time))
+                    .font(AOMFont.caption)
+                    .foregroundStyle(AOMColor.textTertiary)
+                    .padding(.leading, AOMSpace.rowInset)
             }
         }
     }
@@ -1573,12 +1578,17 @@ private struct WorkspacePermissionChips: View {
             .accessibilityLabel("\(permission.title), check manually")
             .accessibilityHint("Opens System Settings")
         } else {
+            // 7.19 (N07): never asked and turned off read differently.
+            let asked = status == .denied
             Button { _ = permission.openSettings() } label: {
-                AOMStatusPill(permission.shortTitle, tone: .warning, symbol: "exclamationmark.circle.fill")
+                AOMStatusPill(asked ? "\(permission.shortTitle): off" : "\(permission.shortTitle): not asked yet",
+                              tone: asked ? .warning : .neutral,
+                              symbol: asked ? "exclamationmark.circle.fill" : "questionmark.circle")
             }
             .buttonStyle(.plain)
-            .help("Allow \(permission.title) in System Settings")
-            .accessibilityLabel("\(permission.title), not allowed")
+            .help(asked ? "\(permission.title) is turned off. Allow it in System Settings."
+                        : "AOM hasn't asked for \(permission.title) yet. Allow it in System Settings.")
+            .accessibilityLabel("\(permission.title), \(asked ? "not allowed" : "not requested yet")")
             .accessibilityHint("Opens System Settings")
         }
     }

@@ -895,10 +895,13 @@ struct ModernGesturesWorkspace: View {
                 .foregroundStyle(AOMColor.textSecondary)
                 .lineLimit(1)
             }
+            // 7.19: the name keeps room for a few words before anything beside it.
+            .frame(minWidth: 180, alignment: .leading)
             .layoutPriority(1)
             Spacer(minLength: AOMSpace.x2)
             appScopePicker(trigger)
                 .controlSize(.regular)
+                .labelsHidden()
             Toggle("Enabled", isOn: Binding(get: { trigger.isEnabled },
                                             set: { appState.setTriggerEnabled($0, triggerID: trigger.id) }))
                 .toggleStyle(.switch)
@@ -960,6 +963,7 @@ struct ModernGesturesWorkspace: View {
         }
         .pickerStyle(.menu)
         .fixedSize()
+        .accessibilityLabel("Applies to")
         .help("Where this automation runs. App-specific automations override groups; groups override Every app.")
     }
 

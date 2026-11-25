@@ -792,8 +792,12 @@ struct SettingsHubView: View {
     @State private var revealFocusToken = 0
     @AppStorage("AOMAppearance") private var appearance = "system"
 
+    /// 7.19 (R09): the catalog is built once per window, not on every body —
+    /// each row's view observes its own state, so a cached row stays live.
+    @State private var catalog: [SettingItem] = []
+
     private var allItems: [SettingItem] {
-        SettingsCatalog.items(sheet: $sheet)
+        catalog.isEmpty ? SettingsCatalog.items(sheet: $sheet) : catalog
     }
 
     private var filtered: [SettingItem] {
@@ -877,6 +881,7 @@ struct SettingsHubView: View {
                 }
         }
         .searchable(text: $query, placement: .sidebar, prompt: "Search")
+        .onAppear { if catalog.isEmpty { catalog = SettingsCatalog.items(sheet: $sheet) } }
         .frame(minWidth: SettingsHubMetrics.windowMinWidth, idealWidth: SettingsHubMetrics.windowIdealWidth,
                maxWidth: .infinity, minHeight: SettingsHubMetrics.windowMinHeight,
                idealHeight: SettingsHubMetrics.windowIdealHeight, maxHeight: .infinity)
@@ -1015,7 +1020,22 @@ struct SettingsHubView: View {
                 ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
                     Group {
                         if let revealCategory {
-                            row.content.contextMenu {
+                            // 7.19 (R08): every result has its own way to its place.
+                            HStack(spacing: 0) {
+                                row.content
+                                Button { reveal(row, in: revealCategory) } label: {
+                                    Image(systemName: "arrow.right.circle")
+                                        .foregroundStyle(AOMColor.textSecondary)
+                                        .frame(width: AOMIcon.hitArea, height: AOMIcon.hitArea)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.borderless)
+                                .disabled(sheet != nil)
+                                .help("Show \(row.title) in \(revealCategory.title)")
+                                .accessibilityLabel("Show \(row.title) in \(revealCategory.title)")
+                                .padding(.trailing, AOMSpace.x1)
+                            }
+                            .contextMenu {
                                 Button("Show in \(revealCategory.title)") { reveal(row, in: revealCategory) }
                                     .disabled(sheet != nil)
                             }

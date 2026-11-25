@@ -84,6 +84,8 @@ struct TextActionsBarDetail: View {
                         ForEach(TextActionBarPosition.allCases) { Text($0.title).tag($0) }
                     }
                     .pickerStyle(.menu)
+                    .labelsHidden()
+                    .fixedSize()
                 }
                 AOMSettingRow("Hide after", detail: "Once the pointer is away from the bar") {
                     AOMRowSlider("Hide after", value: $settings.hideDelay, in: TextActionsSettings.hideDelayRange, step: 0.5,

@@ -159,6 +159,14 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
     }
 
     private func reloadApps() {
+        // 7.19: isolated previews with sample data show five made-up apps
+        // (no process, no tap), so the mixer can be reviewed on CI.
+        if let samples = Self.previewSamples {
+            if apps != samples { apps = samples }
+            let now = Date()
+            for app in samples where app.isPlaying { lastActive[app.bundleID] = now }
+            return
+        }
         guard #available(macOS 14.2, *) else { return }
         let engine = AppAudioEngine.shared
         let updated = engine.runningAudioApps()
@@ -252,6 +260,24 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
 
     /// Favourites first (in their order), then apps playing or adjusted,
     /// then — only when asked — everything else that is running.
+    /// Sample rows for `--aom-preview-sample-data` previews only; nil otherwise.
+    static var previewSamples: [AppAudioState]? {
+        guard PresetManager.isUIPreview,
+              ProcessInfo.processInfo.arguments.contains("--aom-preview-sample-data") else { return nil }
+        return [
+            AppAudioState(pid: 0, name: "Music", bundleID: "com.apple.Music", gain: 0.8, muted: false, tapped: false,
+                          magicBoost: true, isPlaying: true, processingStatus: "Processing · Magic Boost"),
+            AppAudioState(pid: 0, name: "Safari", bundleID: "com.apple.Safari", gain: 1, muted: false, tapped: false,
+                          overdrive: 1.5, isPlaying: true, processingStatus: "Processing · Overdrive 150%"),
+            AppAudioState(pid: 0, name: "Zoom", bundleID: "us.zoom.xos", gain: 0.6, muted: true, tapped: false,
+                          isPlaying: true, processingStatus: "Muted"),
+            AppAudioState(pid: 0, name: "Spotify", bundleID: "com.spotify.client", gain: 0.45, muted: false, tapped: false,
+                          isPlaying: true, processingStatus: "Connecting…"),
+            AppAudioState(pid: 0, name: "카카오톡", bundleID: "com.kakao.KakaoTalkMac", gain: 1, muted: false, tapped: false,
+                          isPlaying: true, error: "Can't reach the output device"),
+        ]
+    }
+
     func listedApps(matching query: String = "") -> (favorites: [AppAudioState], active: [AppAudioState], other: [AppAudioState]) {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let pool = Self.partitionHidden(apps, hidden: Set(hiddenApps), query: trimmed).shown
