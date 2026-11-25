@@ -1202,7 +1202,7 @@ struct AOMHomeView: View {
 
     private func copy(_ entry: ClipboardEntry) {
         Task {
-            Group {
+            do {
                 _ = try await clipboard.writeAsync(entryIDs: [entry.id], plainText: false, playSound: true)
                 toast.show("Copied “\(entry.title.prefix(40))”")
             } catch {
