@@ -48,17 +48,8 @@ struct AutomationInputChoice: Identifiable, Hashable {
 }
 
 struct AutomationListHeader: View {
-    let total: Int
-    @Binding var query: String
-    @Binding var focusRequest: Bool
-    let scopes: [AutomationScopeChoice]
-    let scope: AutomationScopeChoice.Kind
-    let selectScope: (AutomationScopeChoice.Kind) -> Void
     let inputs: [AutomationInputChoice]
     @Binding var input: TriggerCategory
-    let editGroups: () -> Void
-
-    @FocusState private var searchFocused: Bool
     @Namespace private var segment
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorSchemeContrast) private var contrast
