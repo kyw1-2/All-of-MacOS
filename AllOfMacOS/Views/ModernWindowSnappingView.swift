@@ -99,15 +99,20 @@ struct ModernWindowSnappingView: View {
         }
     }
 
+    /// D02: one or two columns, with hysteresis (see `updateWide`).
+    @State private var wideLayout = false
+
     var body: some View {
         GeometryReader { geometry in
-            let wide = geometry.size.width >= 900
+            let wide = wideLayout
             ScrollView {
                 // Lazy stacks: only the sections on screen are built, so the
                 // page no longer creates every switch and pop-up (AppKit
                 // controls) of all eleven sections each time it opens.
                 LazyVStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
                     header
+                    // D21: the real displays and the active zones first.
+                    AOMMonitorCanvas(zones: appState.effectiveSnapZones, onEditZones: { showingSnapZones = true })
                     quickZonesBar
                     if wide {
                         HStack(alignment: .top, spacing: AOMSpace.sectionGap) {
@@ -157,6 +162,11 @@ struct ModernWindowSnappingView: View {
             .scrollIndicators(.automatic)
             .defaultScrollAnchor(PreviewScrollAnchor.current)
             .aomScrollEdge()
+            // D02: two columns from 900 pt, back to one below 900 only after
+            // 20 pt of hysteresis, so a resize across it doesn't reorder the
+            // sections on every point.
+            .onAppear { updateWide(geometry.size.width) }
+            .onChange(of: geometry.size.width) { _, width in updateWide(width) }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(AOMPageTint())
@@ -226,6 +236,15 @@ struct ModernWindowSnappingView: View {
             if pageActivity.isActive { refreshReadiness() }
         }
     }
+
+    private func updateWide(_ width: CGFloat) {
+        let next = AOMWorkbenchPolicy.sideBySide(available: width, minimum: Self.wideMinimum - AOMWorkbenchPolicy.hysteresis,
+                                                 current: wideLayout)
+        if next != wideLayout { wideLayout = next }
+    }
+
+    /// Two columns at and above this width (as before 7.17).
+    private static let wideMinimum: CGFloat = 900
 
     // MARK: - Header
 

@@ -252,3 +252,44 @@ final class AOMWorkbench2FollowUpTests: XCTestCase {
         XCTAssertNil(AOMRevealFocus.pick([], in: row))
     }
 }
+
+/// D21: the monitor canvas draws the real arrangement and zones in the usable area.
+final class AOMWorkbench2MonitorCanvasTests: XCTestCase {
+    func testTwoDisplaysSideBySideFitAndFlip() {
+        let main = AOMMonitorInfo(id: 1, name: "Built-in", frame: CGRect(x: 0, y: 0, width: 1512, height: 982),
+                                  visibleFrame: CGRect(x: 0, y: 0, width: 1512, height: 949), isMain: true)
+        let external = AOMMonitorInfo(id: 2, name: "Studio", frame: CGRect(x: 1512, y: 0, width: 2560, height: 1440),
+                                      visibleFrame: CGRect(x: 1512, y: 80, width: 2560, height: 1335), isMain: false)
+        let placed = AOMMonitorCanvasGeometry.layout([main, external], in: CGSize(width: 420, height: 180), padding: 8)
+        XCTAssertEqual(placed.count, 2)
+        let union = placed[0].frame.union(placed[1].frame)
+        XCTAssertLessThanOrEqual(union.maxX, 420 - 8 + 0.001)
+        XCTAssertGreaterThanOrEqual(union.minX, 8 - 0.001)
+        XCTAssertLessThanOrEqual(union.maxY, 180 - 8 + 0.001)
+        XCTAssertEqual(placed[0].frame.maxX, placed[1].frame.minX, accuracy: 0.001, "edges touch as arranged")
+        XCTAssertEqual(placed[0].frame.maxY, placed[1].frame.maxY, accuracy: 0.001, "bottom-aligned in AppKit stays bottom-aligned")
+        // The menu bar is at the top of the drawn display (y down).
+        XCTAssertGreaterThan(placed[0].visibleFrame.minY, placed[0].frame.minY)
+        XCTAssertEqual(placed[0].visibleFrame.maxY, placed[0].frame.maxY, accuracy: 0.001)
+        // The Dock at the bottom of the external display.
+        XCTAssertLessThan(placed[1].visibleFrame.maxY, placed[1].frame.maxY)
+        XCTAssertTrue(AOMMonitorCanvasGeometry.layout([], in: CGSize(width: 420, height: 180), padding: 8).isEmpty)
+        XCTAssertTrue(AOMMonitorCanvasGeometry.layout([main], in: CGSize(width: 10, height: 10), padding: 8).isEmpty)
+    }
+
+    func testZonesStayInsideTheUsableArea() {
+        let visible = CGRect(x: 10, y: 20, width: 200, height: 100)
+        XCTAssertEqual(AOMMonitorCanvasGeometry.zone(x: 0.5, y: 0, width: 0.5, height: 1, in: visible),
+                       CGRect(x: 110, y: 20, width: 100, height: 100))
+        let overflow = AOMMonitorCanvasGeometry.zone(x: 0.8, y: 0.9, width: 0.5, height: 0.5, in: visible)
+        XCTAssertEqual(overflow.maxX, visible.maxX, accuracy: 0.001)
+        XCTAssertEqual(overflow.maxY, visible.maxY, accuracy: 0.001)
+        let bad = AOMMonitorCanvasGeometry.zone(x: .nan, y: -1, width: 2, height: 5, in: visible)
+        XCTAssertEqual(bad, visible)
+        let reserved = AOMMonitorCanvasGeometry.reserved(frame: CGRect(x: 0, y: 0, width: 1512, height: 982),
+                                                         visible: CGRect(x: 0, y: 70, width: 1512, height: 879))
+        XCTAssertEqual(reserved.top, 33)
+        XCTAssertEqual(reserved.bottom, 70)
+        XCTAssertEqual(reserved.leading, 0)
+    }
+}
