@@ -138,14 +138,18 @@ final class AOMWorkbench2Tests: XCTestCase {
 
     // D06: the header doesn't say what the sentence or the toolbar says.
     func testHeaderDedup() {
-        XCTAssertNil(AOMHeaderDedup.pill(title: "Files is on", status: "On"))
+        let on = AOMHeaderContentID.state(module: .files, value: "on")
+        let off = AOMHeaderContentID.state(module: .files, value: "off")
+        let summary = AOMHeaderContentID.summary(module: .folderRules, value: "rule-count")
+        XCTAssertNil(AOMHeaderDedup.visible("On", id: on, alreadyShown: [on]))
+        XCTAssertEqual(AOMHeaderDedup.visible("On", id: on, alreadyShown: [off]), "On")
+        XCTAssertNil(AOMHeaderDedup.visible("Localized summary", id: summary, alreadyShown: [summary]))
+        XCTAssertNil(AOMHeaderDedup.visible("Folder Rules", id: .pageTitle(.folderRules), alreadyShown: [.pageTitle(.folderRules)]))
+        XCTAssertEqual(AOMHeaderDedup.pill(title: "Not Recording", status: "Recording"), "Recording")
         XCTAssertEqual(AOMHeaderDedup.pill(title: "Folder Rules is on", status: "2 errors"), "2 errors")
-        XCTAssertNil(AOMHeaderDedup.pill(title: "Recording the screen", status: "Recording"))
         XCTAssertNil(AOMHeaderDedup.pill(title: "Files is on", status: "  "))
-        XCTAssertNil(AOMHeaderDedup.subtitle("Folder Rules", toolbarTitle: "Folder Rules", toolbarSubtitle: nil))
-        XCTAssertNil(AOMHeaderDedup.subtitle("3 of 5 rules on.", toolbarTitle: "Folder Rules", toolbarSubtitle: "3 of 5 rules on"))
-        XCTAssertEqual(AOMHeaderDedup.subtitle("Watching 2 folders", toolbarTitle: "Folder Rules", toolbarSubtitle: "3 of 5 rules on"),
-                       "Watching 2 folders")
+        XCTAssertEqual(AOMHeaderDedup.subtitle("3 of 5 rules on.", toolbarTitle: "Folder Rules", toolbarSubtitle: "3 of 5 rules on"),
+                       "3 of 5 rules on.", "unidentified text is never deduplicated by wording")
         XCTAssertNil(AOMHeaderDedup.subtitle(nil, toolbarTitle: "Files", toolbarSubtitle: nil))
     }
 

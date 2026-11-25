@@ -51,6 +51,24 @@ enum AOMPaneWidth {
     }
 }
 
+/// One key per module. The binding stores the user's preference, not the
+/// temporary width a window can fit; AOMPaneWidth validates at the draw site.
+struct AOMStoredInspectorWidth<Content: View>: View {
+    @AppStorage private var width: Double
+    private let content: (Binding<Double>) -> Content
+
+    init(moduleID: String, @ViewBuilder content: @escaping (Binding<Double>) -> Content) {
+        _width = AppStorage(wrappedValue: Double(AOMSize.inspectorIdeal), AOMPaneWidth.inspectorKey(moduleID: moduleID))
+        self.content = content
+    }
+
+    var body: some View { content($width) }
+}
+
+extension AOMPaneWidth {
+    static func inspectorKey(moduleID: String) -> String { "AOMInspectorWidth.\(moduleID)" }
+}
+
 // MARK: - Arrangement (D02)
 
 enum AOMWorkbenchPolicy {
@@ -76,14 +94,26 @@ enum AOMWorkbenchPolicy {
     static func inspectorFits(available: CGFloat, list: CGFloat, detailMinimum: CGFloat,
                               inspectorMinimum: CGFloat, current: Bool,
                               hysteresis: CGFloat = hysteresis) -> Bool {
+        inspectorFits(available: available, list: list, detailMinimum: detailMinimum,
+                             inspectorMinimum: inspectorMinimum, current: current,
+                             hysteresis: hysteresis, dividerWidth: dividerAllowance)
+    }
+
+    static func inspectorFits(available: CGFloat, list: CGFloat, detailMinimum: CGFloat,
+                              inspectorMinimum: CGFloat, current: Bool,
+                              hysteresis: CGFloat = hysteresis, dividerWidth: CGFloat) -> Bool {
         guard available.isFinite, available > 0 else { return false }
-        let room = available - list - detailMinimum - 2 * dividerAllowance
+        let room = inspectorRoom(available: available, list: list, detailMinimum: detailMinimum, dividerWidth: dividerWidth)
         return current ? room >= inspectorMinimum : room >= inspectorMinimum + hysteresis
     }
 
     /// The width left for an inspector beside the list and the detail minimum.
     static func inspectorRoom(available: CGFloat, list: CGFloat, detailMinimum: CGFloat) -> CGFloat {
-        available - list - detailMinimum - 2 * dividerAllowance
+        inspectorRoom(available: available, list: list, detailMinimum: detailMinimum, dividerWidth: dividerAllowance)
+    }
+
+    static func inspectorRoom(available: CGFloat, list: CGFloat, detailMinimum: CGFloat, dividerWidth: CGFloat) -> CGFloat {
+        available - list - detailMinimum - 2 * dividerWidth
     }
 }
 
@@ -112,11 +142,24 @@ enum AOMWorkbenchArrangement: Equatable {
         let fits = AOMWorkbenchPolicy.inspectorFits(available: available, list: max(listMinimum, list ?? listMinimum),
                                                     detailMinimum: detailMinimum,
                                                     inspectorMinimum: inspectorMinimum,
-                                                    current: current == .listDetailInspector)
+                                                    current: current == .listDetailInspector, dividerWidth: dividers)
         return fits ? .listDetailInspector : .listDetail
     }
 
     var showsInspectorBeside: Bool { self == .listDetailInspector }
+}
+
+/// Compact navigation is independent of the native list's selection and scroll.
+struct AOMDrillInNavigation {
+    private(set) var showsDetail = false
+    private(set) var returnCount = 0
+
+    mutating func openDetail() { showsDetail = true }
+    mutating func selectionChanged(hasSelection: Bool) { showsDetail = hasSelection }
+    mutating func goBack() {
+        showsDetail = false
+        returnCount &+= 1
+    }
 }
 
 // MARK: - Selection (D03, D05)
@@ -145,64 +188,58 @@ enum AOMStableSelection {
 
 // MARK: - Headers (D06)
 
+enum AOMHeaderContentID: Hashable {
+    case pageTitle(AOMMainTab)
+    case state(module: AOMMainTab, value: String)
+    case summary(module: AOMMainTab, value: String)
+}
+
 enum AOMHeaderDedup {
-    /// The status pill beside a header sentence, unless the sentence already
-    /// says it ("Files is on" with an "On" pill says "on" twice).
+    /// Suppress only an explicitly identified fact already shown elsewhere.
+    static func visible(_ text: String?, id: AOMHeaderContentID?, alreadyShown: [AOMHeaderContentID]) -> String? {
+        guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        if let id, alreadyShown.contains(id) { return nil }
+        return text
+    }
+
+    /// Legacy callers have no semantic IDs. Keep their nonblank content.
     static func pill(title: String, status: String?) -> String? {
-        guard let status = status?.trimmingCharacters(in: .whitespaces), !status.isEmpty else { return nil }
-        let words = title.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
-        let statusWords = status.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
-        guard !statusWords.isEmpty else { return status }
-        // Every word of the pill already in the sentence: drop the pill.
-        return statusWords.allSatisfy(words.contains) ? nil : status
+        visible(status, id: nil, alreadyShown: [])
     }
 
-    /// A header subtitle, unless it repeats the toolbar's title or subtitle
-    /// for the same page (the window shows those already).
     static func subtitle(_ subtitle: String?, toolbarTitle: String, toolbarSubtitle: String?) -> String? {
-        guard let subtitle else { return nil }
-        let text = normalized(subtitle)
-        guard !text.isEmpty, text != normalized(toolbarTitle) else { return nil }
-        if let toolbarSubtitle, text == normalized(toolbarSubtitle) { return nil }
-        return subtitle
-    }
-
-    private static func normalized(_ text: String) -> String {
-        text.trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters)).lowercased()
+        visible(subtitle, id: nil, alreadyShown: [])
     }
 }
 
 // MARK: - Inspector rows (D09)
 
-/// One label/value line in an `AOMInspectorSection`: the label in secondary
-/// text on a fixed leading column, the value (text or a control) after it, so
-/// every inspector's values start on one vertical line. Long values wrap
-/// under themselves, never under the label.
+/// Short read-only labels line up. Long labels and editable values stack,
+/// leaving the full width for the label and the control.
 struct AOMInspectorRow<Value: View>: View {
     let label: String
     @ViewBuilder var value: Value
+    private let readOnly: Bool
 
-    /// Labels end here; values start a divider gap later.
+    /// Alignment target for short read-only labels, not a width limit.
     static var labelWidth: CGFloat { 96 }
 
     init(_ label: String, @ViewBuilder value: () -> Value) {
         self.label = label
         self.value = value()
+        self.readOnly = false
     }
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x2) {
+        AOMInspectorRowLayout(labelWidth: Self.labelWidth, readOnly: readOnly) {
             Text(label)
-                .font(AOMFont.callout)
                 .foregroundStyle(AOMColor.textSecondary)
-                .lineLimit(2)
-                .frame(width: Self.labelWidth, alignment: .leading)
-            value
-                .font(AOMFont.callout)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: AOMSpace.x1) { value }
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .accessibilityElement(children: .combine)
+        .font(AOMFont.callout)
+        .accessibilityElement(children: readOnly ? .combine : .contain)
     }
 }
 
@@ -211,6 +248,50 @@ extension AOMInspectorRow where Value == Text {
     init(_ label: String, text: String) {
         self.label = label
         self.value = Text(text).monospacedDigit()
+        self.readOnly = true
+    }
+}
+
+struct AOMInspectorRowLayout: Layout {
+    let labelWidth: CGFloat
+    let readOnly: Bool
+
+    private var gap: CGFloat { AOMSpace.x2 }
+
+    func stacks(label: CGFloat, available: CGFloat) -> Bool {
+        !readOnly || label > labelWidth || available < 2 * labelWidth + gap
+    }
+
+    private func measure(_ width: CGFloat, _ views: Subviews) -> (CGPoint, ProposedViewSize, ProposedViewSize, CGFloat) {
+        let stacked = stacks(label: views[0].sizeThatFits(.unspecified).width, available: width)
+        let labelProposal = ProposedViewSize(width: stacked ? width : labelWidth, height: nil)
+        let valueProposal = ProposedViewSize(width: stacked ? width : max(0, width - labelWidth - gap), height: nil)
+        let label = views[0].dimensions(in: labelProposal)
+        let value = views[1].dimensions(in: valueProposal)
+        if stacked {
+            let y = label.height + AOMSpace.x1
+            return (CGPoint(x: 0, y: y), labelProposal, valueProposal, y + value.height)
+        }
+        let baseline = max(label[.firstTextBaseline], value[.firstTextBaseline])
+        let labelY = baseline - label[.firstTextBaseline]
+        let valueY = baseline - value[.firstTextBaseline]
+        return (CGPoint(x: labelY, y: valueY), labelProposal, valueProposal,
+                max(labelY + label.height, valueY + value.height))
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? (max(labelWidth, subviews[0].sizeThatFits(.unspecified).width)
+                                      + gap + subviews[1].sizeThatFits(.unspecified).width)
+        return CGSize(width: width, height: measure(width, subviews).3)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let (positions, label, value, _) = measure(bounds.width, subviews)
+        let stacked = stacks(label: subviews[0].sizeThatFits(.unspecified).width, available: bounds.width)
+        subviews[0].place(at: CGPoint(x: bounds.minX, y: bounds.minY + (stacked ? 0 : positions.x)),
+                          anchor: .topLeading, proposal: label)
+        subviews[1].place(at: CGPoint(x: bounds.minX + (stacked ? 0 : labelWidth + gap), y: bounds.minY + positions.y),
+                          anchor: .topLeading, proposal: value)
     }
 }
 
@@ -253,43 +334,121 @@ enum AOMRevealFocus {
     }
 }
 
+/// A one-shot focus request bound to its original key window. A new request,
+/// a losing key window, or a detached view must cancel the old request.
+@MainActor
+final class AOMDeferredWindowFocus {
+    private var task: Task<Void, Never>?
+    private var resignObserver: NSObjectProtocol?
+    private var generation = 0
+
+    func schedule(in window: NSWindow, delay: Duration = .zero, action: @escaping @MainActor () -> Void) {
+        cancel()
+        let token = generation
+        resignObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResignKeyNotification, object: window, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.cancel() }
+        }
+        task = Task { [weak self, weak window] in
+            if delay > .zero { try? await Task.sleep(for: delay) }
+            guard !Task.isCancelled, let self, self.generation == token else { return }
+            self.cancel()
+            guard window?.isKeyWindow == true else { return }
+            action()
+        }
+    }
+
+    func cancel() {
+        generation &+= 1
+        task?.cancel()
+        task = nil
+        if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
+        resignObserver = nil
+    }
+}
+
 /// Put behind a row: when `token` changes (and isn't 0), the first focusable
 /// AppKit control drawn inside the row becomes first responder, so a search
 /// result opened with "Show in…" can be changed from the keyboard at once.
 /// It doesn't take clicks and draws nothing.
 struct AOMFocusFirstControl: NSViewRepresentable {
+    enum Target { case control, list }
+
     let token: Int
+    var target: Target = .control
+    @Environment(\.isEnabled) private var isEnabled
 
     func makeNSView(context: Context) -> AnchorView { AnchorView() }
 
     func updateNSView(_ view: AnchorView, context: Context) {
-        guard token != view.lastToken else { return }
-        view.lastToken = token
-        guard token != 0 else { return }
-        // After the scroll that brought the row into view has laid it out.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak view] in view?.focusFirstControl() }
+        view.update(token: isEnabled ? token : 0, target: target)
     }
 
+    static func dismantleNSView(_ view: AnchorView, coordinator: ()) { view.cancel() }
+
     final class AnchorView: NSView {
-        var lastToken = 0
+        private var lastToken = 0
+        private var target: Target = .control
+        private var waitingForWindow = false
+        private var focus = AOMDeferredWindowFocus()
 
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
-        func focusFirstControl() {
-            guard let window, let root = window.contentView else { return }
-            let row = convert(bounds, to: nil)
+        func update(token: Int, target: Target) {
+            guard token != lastToken || target != self.target else { return }
+            cancel()
+            lastToken = token
+            self.target = target
+            if token != 0 { schedule() }
+        }
+
+        func cancel() {
+            waitingForWindow = false
+            focus.cancel()
+        }
+
+        override func viewWillMove(toWindow newWindow: NSWindow?) {
+            if window != nil && newWindow !== window { cancel() }
+            super.viewWillMove(toWindow: newWindow)
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if waitingForWindow, window != nil { schedule() }
+        }
+
+        private func schedule() {
+            guard let window else { waitingForWindow = true; return }
+            waitingForWindow = false
+            let token = lastToken
+            focus.schedule(in: window, delay: target == .control ? .milliseconds(200) : .zero) { [weak self, weak window] in
+                guard let self, let window, self.lastToken == token, self.window === window else { return }
+                self.focusTarget(in: window)
+            }
+        }
+
+        private func focusTarget(in window: NSWindow) {
+            guard !isHiddenOrHasHiddenAncestor, let root = window.contentView else { return }
+            let row = convert(visibleRect, to: nil)
+            guard !row.isEmpty else { return }
             var candidates: [NSView] = []
             collect(in: root, row: row, into: &candidates)
-            let frames = candidates.map { $0.convert($0.bounds, to: nil) }
-            guard let index = AOMRevealFocus.pick(frames, in: row) else { return }
-            window.makeFirstResponder(candidates[index])
+            var frames = candidates.map { $0.convert($0.visibleRect, to: nil) }
+            while let index = AOMRevealFocus.pick(frames, in: row) {
+                if window.makeFirstResponder(candidates[index]) { return }
+                candidates.remove(at: index)
+                frames.remove(at: index)
+            }
         }
 
         private func collect(in view: NSView, row: CGRect, into result: inout [NSView]) {
             for sub in view.subviews where sub !== self && !sub.isHidden && sub.alphaValue > 0 {
-                let frame = sub.convert(sub.bounds, to: nil)
+                let frame = sub.convert(sub.visibleRect, to: nil)
                 guard frame.intersects(row) else { continue }
-                if sub is NSControl, sub.acceptsFirstResponder || sub.canBecomeKeyView {
+                if let control = sub as? NSControl, !control.isEnabled { continue }
+                let eligible = target == .list ? (sub is NSTableView || sub is NSCollectionView) : !(sub is NSClipView)
+                if eligible && (sub.acceptsFirstResponder || sub.canBecomeKeyView) {
                     result.append(sub)
                 } else {
                     collect(in: sub, row: row, into: &result)
@@ -301,9 +460,15 @@ struct AOMFocusFirstControl: NSViewRepresentable {
 
 // MARK: - Automation editor status (D14)
 
-/// The one state line under an automation's name: whether it can run, and
-/// why not. Edits apply as they are made, so "saved" is always true; what
-/// varies is whether it will run.
+/// A master preset write and the automation's runtime validity are independent.
+enum AOMAutomationSaveState: Equatable {
+    case unconfirmed
+    case pending
+    case saved
+    case failed(String)
+}
+
+/// Whether the automation can run, regardless of the last write's outcome.
 enum AOMAutomationEditorStatus: Equatable {
     case ready
     case off
@@ -318,10 +483,23 @@ enum AOMAutomationEditorStatus: Equatable {
         return isEnabled ? .ready : .off
     }
 
+    func presentation(saveState: AOMAutomationSaveState) -> AOMStatus {
+        switch saveState {
+        case .unconfirmed:
+            return AOMStatus(text, tone: tone, symbol: symbol)
+        case .pending:
+            return AOMStatus("Saving… · \(text)", tone: tone == .warning ? .warning : .neutral, symbol: "clock")
+        case .saved:
+            return AOMStatus("\(text) · Saved", tone: tone, symbol: symbol)
+        case .failed(let reason):
+            return AOMStatus("Couldn't save: \(reason) · \(text)", tone: .danger, symbol: AOMTone.danger.symbol)
+        }
+    }
+
     var text: String {
         switch self {
-        case .ready: return "On · changes are saved as you make them"
-        case .off: return "Off · saved, won't run until turned on"
+        case .ready: return "On"
+        case .off: return "Off · won't run until turned on"
         case .noSteps: return "Add a step for this automation to do something"
         case .invalidInput(let problem): return "Can't start: \(problem)"
         case .invalidSteps(let problem): return "Can't run: \(problem)"

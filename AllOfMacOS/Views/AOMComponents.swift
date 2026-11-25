@@ -89,6 +89,7 @@ struct AOMStatus: Equatable {
     var text: String
     var tone: AOMTone
     var symbol: String?
+    var semanticID: AOMHeaderContentID? = nil
 
     init(_ text: String, tone: AOMTone, symbol: String? = nil) {
         self.text = text
@@ -108,8 +109,9 @@ struct AOMPageHeader<Trailing: View>: View {
     /// Off modules show the badge without its hue.
     var active = true
     @ViewBuilder var trailing: Trailing
-    @Environment(\.colorScheme) private var scheme
-    @Environment(\.colorSchemeContrast) private var contrast
+    var headlineID: AOMHeaderContentID? = nil
+    var subtitleID: AOMHeaderContentID? = nil
+    @Environment(\.aomToolbarSubtitleID) private var toolbarSubtitleID
 
     /// Draw the page's identity mark (5.0). Sub-headers inside an editor or
     /// a detail pane pass false, so a page shows its mark once.
@@ -152,33 +154,54 @@ struct AOMPageHeader<Trailing: View>: View {
         }
     }
 
-    /// Workbench 2 (D06): the page's own header doesn't repeat what the
-    /// window already shows — a pill the sentence already says ("is on" +
-    /// "On"), or a subtitle that is the toolbar's title or subtitle.
+    /// Identify facts repeated by the headline, pill or toolbar, independently of copy.
+    func aomHeaderContentIDs(headline: AOMHeaderContentID? = nil, subtitle: AOMHeaderContentID? = nil,
+                             status: AOMHeaderContentID? = nil) -> Self {
+        var view = self
+        view.headlineID = headline
+        view.subtitleID = subtitle
+        if let status { view.status?.semanticID = status }
+        return view
+    }
+
+    private var toolbarIDs: [AOMHeaderContentID] {
+        guard identity, let pageTab else { return [] }
+        return [.pageTitle(pageTab), toolbarSubtitleID].compactMap { $0 }
+    }
+
+    private var shownHeadline: String? {
+        AOMHeaderDedup.visible(title, id: headlineID, alreadyShown: toolbarIDs)
+    }
+
     private var shownStatus: AOMStatus? {
-        guard let status, AOMHeaderDedup.pill(title: title, status: status.text) != nil else { return nil }
+        guard let status, AOMHeaderDedup.visible(status.text, id: status.semanticID,
+                                                 alreadyShown: toolbarIDs + [headlineID].compactMap { $0 }) != nil else { return nil }
         return status
     }
 
     private var shownSubtitle: String? {
-        guard identity, let pageTab else { return subtitle }
-        return AOMHeaderDedup.subtitle(subtitle, toolbarTitle: pageTab.title,
-                                       toolbarSubtitle: AOMToolbarSubtitles.shared.values[pageTab])
+        AOMHeaderDedup.visible(subtitle, id: subtitleID, alreadyShown: toolbarIDs + [headlineID, shownStatus?.semanticID].compactMap { $0 })
     }
 
     private var headerText: some View {
         VStack(alignment: .leading, spacing: AOMSpace.x1) {
-            HStack(spacing: AOMSpace.x2) {
-                Text(title).font(AOMFont.heroTitle).foregroundStyle(AOMColor.text)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityAddTraits(.isHeader).help(help ?? "")
-                if let status = shownStatus { AOMStatusPill(status.text, tone: status.tone, symbol: status.symbol) }
-            }
+            headline(font: AOMFont.heroTitle)
             if let subtitle = shownSubtitle, !subtitle.isEmpty {
                 Text(subtitle).font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+        }
+    }
+
+    private func headline(font: Font) -> some View {
+        HStack(spacing: AOMSpace.x2) {
+            if let headline = shownHeadline {
+                Text(headline).font(font).foregroundStyle(AOMColor.text)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityAddTraits(.isHeader)
+            }
+            if let status = shownStatus { AOMStatusPill(status.text, tone: status.tone, symbol: status.symbol) }
+            if let help { AOMInfoButton(help, topic: title) }
         }
     }
 
@@ -189,13 +212,8 @@ struct AOMPageHeader<Trailing: View>: View {
     private var compact: some View {
         HStack(alignment: .center, spacing: AOMSpace.x3) {
             VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
-                HStack(spacing: AOMSpace.x2) {
-                    Text(title).font(AOMFont.pageTitle).foregroundStyle(AOMColor.text)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .accessibilityAddTraits(.isHeader).help(help ?? "")
-                    if let status = shownStatus { AOMStatusPill(status.text, tone: status.tone, symbol: status.symbol) }
-                }
-                if let subtitle, !subtitle.isEmpty {
+                headline(font: AOMFont.pageTitle)
+                if let subtitle = shownSubtitle, !subtitle.isEmpty {
                     Text(subtitle).font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -272,6 +290,7 @@ struct AOMSection<Content: View, Accessory: View>: View {
     var padding: CGFloat
     @ViewBuilder var accessory: Accessory
     @ViewBuilder var content: Content
+    @Environment(\.aomInSectionCard) private var inCard
 
     init(_ title: String? = nil, detail: String? = nil, help: String? = nil, footer: String? = nil,
          padding: CGFloat = 0,
@@ -293,10 +312,6 @@ struct AOMSection<Content: View, Accessory: View>: View {
             }
             VStack(alignment: .leading, spacing: 0) { content }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                // Rows draw their divider on top; the first one is not drawn
-                // (AOMDivider reads its place in this space).
-                .environment(\.aomInSectionCard, true)
-                .coordinateSpace(name: AOMSectionCardSpace.space)
                 .aomCard(padding: padding)
             if let footer, !footer.isEmpty {
                 Text(footer)
@@ -306,6 +321,10 @@ struct AOMSection<Content: View, Accessory: View>: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, AOMSpace.rowInset)
             }
+        }
+        .padding(.top, inCard && title != nil ? AOMSpace.x2 : 0)
+        .overlay(alignment: .top) {
+            if inCard && title != nil { AOMRowDivider().allowsHitTesting(false) }
         }
         .accessibilityElement(children: .contain)
     }
@@ -1057,11 +1076,7 @@ struct AOMToolCard: View {
 
 // MARK: - Hero band (7.14)
 
-/// A page's header (7.14). Follows the Native Workbench mock-up
-/// (`AOM-7.13.0-MainWindow-UIUX-…-개편명세서` §4: detail headers 16–18 pt, no
-/// arbitrary hero, shadows only on floating panels): the tool's solid
-/// squircle beside a status sentence, on the page — no band, no shadow.
-/// Off tools keep their mark's colour, dimmed; the sentence says off.
+/// A neutral identity mark beside a status sentence, directly on the page.
 struct AOMHeroBand<Content: View>: View {
     let identity: AOMIdentity
     var active = true
@@ -1075,8 +1090,8 @@ struct AOMHeroBand<Content: View>: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: AOMSpace.x3) {
-            AOMAppIcon(identity, size: AOMIcon.heroMark, active: true, style: .solid)
-                .opacity(active ? 1 : 0.6)
+            AOMAppIcon(AOMIdentity(symbol: identity.symbol, color: active ? AOMColor.text : AOMColor.textSecondary),
+                       size: AOMIcon.heroMark, style: .tinted)
             content
         }
         .frame(minHeight: AOMSize.rowDetail)

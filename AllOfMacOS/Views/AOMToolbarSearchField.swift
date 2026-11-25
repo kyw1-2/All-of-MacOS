@@ -58,13 +58,7 @@ struct AOMToolbarSearchField: NSViewRepresentable {
         context.coordinator.parent = self
         if field.placeholderString != prompt { field.placeholderString = prompt }
         if field.stringValue != text { field.stringValue = text }
-        if let request = focusRequest, request.wrappedValue {
-            // Answered after this view update, which must not write state.
-            DispatchQueue.main.async {
-                field.focus()
-                request.wrappedValue = false
-            }
-        }
+        field.updateFocusRequest(focusRequest)
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: Field, context: Context) -> CGSize? {
@@ -74,6 +68,7 @@ struct AOMToolbarSearchField: NSViewRepresentable {
     }
 
     static func dismantleNSView(_ field: Field, coordinator: Coordinator) {
+        field.cancelFocusRequest()
         field.coordinator = nil
     }
 
@@ -107,16 +102,40 @@ struct AOMToolbarSearchField: NSViewRepresentable {
         weak var coordinator: Coordinator?
         private var keyMonitor: Any?
         private var previewObserver: NSObjectProtocol?
+        private let deferredFocus = AOMDeferredWindowFocus()
+        private var hadWindow = false
 
         func focus() {
-            guard let window, currentEditor() == nil else { return }
+            guard let window, isEnabled, !isHiddenOrHasHiddenAncestor, currentEditor() == nil else { return }
             window.makeFirstResponder(self)
+        }
+
+        func updateFocusRequest(_ request: Binding<Bool>?) {
+            guard let request, request.wrappedValue, let window else { deferredFocus.cancel(); return }
+            // A detached field must not replay its old request in a new window.
+            deferredFocus.schedule(in: window) { [weak self, weak window] in
+                guard let self, let window, self.window === window,
+                      let liveRequest = self.coordinator?.parent.focusRequest, liveRequest.wrappedValue else { return }
+                self.focus()
+                liveRequest.wrappedValue = false
+            }
+        }
+
+        func cancelFocusRequest() { deferredFocus.cancel() }
+
+        override func viewWillMove(toWindow newWindow: NSWindow?) {
+            if window !== newWindow { cancelFocusRequest() }
+            super.viewWillMove(toWindow: newWindow)
         }
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             stopListening()
-            if window != nil { startListening() }
+            if window != nil {
+                startListening()
+                if !hadWindow { updateFocusRequest(coordinator?.parent.focusRequest) }
+                hadWindow = true
+            }
         }
 
         /// ⌘F reaches the field only while it is in a window, which for a

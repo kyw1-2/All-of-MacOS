@@ -109,6 +109,7 @@ struct AOMCardSurface: ViewModifier {
     var pressed = false
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.aomOpaqueContent) private var opaqueContent
+    @Environment(\.aomInSectionCard) private var inCard
     @Environment(\.accessibilityShowBorders) private var showBorders
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorScheme) private var colorScheme
@@ -128,12 +129,18 @@ struct AOMCardSurface: ViewModifier {
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
         switch style {
+        case .paper where inCard, .glass where inCard:
+            // The outer surface already groups these controls. Keep their
+            // spacing without a second fill, rim, clip or shadow.
+            content.padding(padding ?? 0)
         case .paper:
             // 7.15 (mock-up M04): main-window content is opaque and flat;
             // floating panels keep their glass.
             let glass = translucent && !opaqueContent && !reduceTransparency && contrast != .increased
             let level = AOMTranslucency.Level(rawValue: levelName) ?? .balanced
             content
+                .environment(\.aomInSectionCard, true)
+                .coordinateSpace(name: AOMSectionCardSpace.space)
                 .padding(padding ?? 0)
                 .aomClipped(to: shape, Self.clipsContent(padding: padding, radius: radius))
                 .background {
@@ -174,6 +181,8 @@ struct AOMCardSurface: ViewModifier {
                 }
         case .glass:
             content
+                .environment(\.aomInSectionCard, true)
+                .coordinateSpace(name: AOMSectionCardSpace.space)
                 .padding(padding ?? 0)
                 .aomChrome(radius: radius)
         }
@@ -217,8 +226,10 @@ struct AOMDivider: View {
     @Environment(\.displayScale) private var scale
     @Environment(\.aomInSectionCard) private var inSectionCard
 
+    static func lineWidth(displayScale: CGFloat) -> CGFloat { 1 / max(displayScale, 1) }
+
     var body: some View {
-        let line = 1 / max(scale, 1)
+        let line = Self.lineWidth(displayScale: scale)
         if axis == .horizontal {
             if inSectionCard {
                 // The section's coordinate space does not move while the page
@@ -238,7 +249,7 @@ struct AOMDivider: View {
     }
 }
 
-/// The coordinate space and environment flag `AOMSection` gives its card,
+/// The coordinate space and environment flag the outer card gives its content,
 /// so a divider can tell it is the card's first.
 enum AOMSectionCardSpace {
     static let space = "AOMSectionCard"
@@ -276,9 +287,17 @@ struct AOMResizeDivider: View {
     @State private var dragStart: Double?
     @State private var hovering = false
 
+    @Environment(\.displayScale) private var scale
+    private static let horizontalPadding = AOMSpace.x1 - 1
+
+    static func layoutWidth(displayScale: CGFloat) -> CGFloat {
+        AOMDivider.lineWidth(displayScale: displayScale) + horizontalPadding * 2
+    }
+
     var body: some View {
         AOMDivider(axis: .vertical)
-            .padding(.horizontal, AOMSpace.x1 - 1)
+            .padding(.horizontal, Self.horizontalPadding)
+            .frame(width: Self.layoutWidth(displayScale: scale))
             .contentShape(Rectangle())
             .onHover { inside in
                 guard inside != hovering else { return }

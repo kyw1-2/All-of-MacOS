@@ -188,7 +188,7 @@ enum AOMFont {
     static let pageTitle = Font.title2.weight(.semibold)
     /// Body (13) semibold: a module page's status sentence.
     static let pageStatus = Font.body.weight(.semibold)
-    /// Callout (12) semibold, shown in secondary colour: section titles
+    /// Body (13) semibold, shown in secondary colour: section titles
     /// ("Needs attention", "Rules") that sit above their group and recede.
     static let section = Font.body.weight(.semibold)
     /// Body (13) medium: card and tile titles, emphasised row titles.

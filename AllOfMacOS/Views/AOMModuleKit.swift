@@ -186,14 +186,14 @@ struct AOMFlowLayout: Layout {
 /// page header). The page measures the width it has; the list is drawn at
 /// the stored width only while the detail keeps `detailMinimum`, and the
 /// inspector sits beside the detail only while all three fit (with 20 pt of
-/// hysteresis). Otherwise an open inspector floats over the detail's
-/// trailing edge, so the detail never drops below its minimum. Neither the
-/// stored list width nor the selection changes when the window does.
+/// hysteresis). In compact mode, `.aomListDetailSelection(_:)` connects the
+/// page's selection to drill-in navigation without mutating it on Back.
+/// An inspector that doesn't fit beside the detail can open as a sheet.
 struct AOMListDetail<ListContent: View, Detail: View, InspectorContent: View>: View {
     /// What an inspector that was asked for does when it doesn't fit beside
     /// the detail.
     enum NarrowInspector {
-        /// Floats over the detail's trailing edge.
+        /// Legacy spelling: presents a sheet when a side column won't fit.
         case overlay
         /// Isn't drawn; the page shows the same content in its detail
         /// (`onArrangementChange` says when).
@@ -207,9 +207,16 @@ struct AOMListDetail<ListContent: View, Detail: View, InspectorContent: View>: V
     @ViewBuilder var list: ListContent
     @ViewBuilder var detail: Detail
     @ViewBuilder var inspector: InspectorContent
-    @State private var available: CGFloat = 0
+    @Environment(\.displayScale) private var displayScale
+    @Environment(\.aomPageTab) private var pageTab
     @State private var arrangement: AOMWorkbenchArrangement = .listDetail
+    @State private var didMeasure = false
+    @State private var drillIn = AOMDrillInNavigation()
     @State private var inspectorWidth = Double(AOMSize.inspectorIdeal)
+    @State private var listFocusToken = 0
+    @FocusState private var backFocused: Bool
+    private var selectionID: AnyHashable?
+    private var tracksSelection = false
 
     private static var inspectorRange: ClosedRange<Double> {
         Double(AOMSize.inspectorWidth.lowerBound)...Double(AOMSize.inspectorWidth.upperBound)
@@ -232,83 +239,165 @@ struct AOMListDetail<ListContent: View, Detail: View, InspectorContent: View>: V
 
     private var inspectorRequested: Bool { showsInspector?.wrappedValue ?? false }
 
-    private var shownListWidth: CGFloat {
-        AOMPaneWidth.effective(stored: listWidth, range: AOMSize.moduleListRange, fallback: AOMSize.moduleListIdeal,
-                               available: available,
-                               reserved: AOMSize.detailMinimum + AOMWorkbenchPolicy.dividerAllowance)
-    }
-
-    private var inspectorRoom: CGFloat {
-        AOMWorkbenchPolicy.inspectorRoom(available: available, list: shownListWidth, detailMinimum: AOMSize.detailMinimum)
-    }
-
-    private var shownInspectorWidth: CGFloat {
-        AOMPaneWidth.effective(stored: inspectorWidth, range: Self.inspectorRange,
-                               fallback: Double(AOMSize.inspectorIdeal), available: inspectorRoom, reserved: 0)
-    }
-
-    /// The shared decision (D02), re-run when the width, the request or the
-    /// list's own width changes (D03: dragging the list wider can close the
-    /// inspector; it reopens with 20 pt to spare).
-    private func updateArrangement() {
-        guard available > 0 else { return }
-        let next = AOMWorkbenchArrangement.resolve(
-            available: available, listMinimum: CGFloat(AOMSize.moduleListRange.lowerBound),
-            detailMinimum: AOMSize.detailMinimum, inspectorMinimum: AOMSize.inspectorWidth.lowerBound,
-            inspectorRequested: inspectorRequested, current: arrangement, list: shownListWidth)
-        guard next != arrangement else { return }
-        arrangement = next
-        onArrangementChange?(next)
+    /// The ID of the item whose detail the page is drawing. Keep it bound to
+    /// the native list's selection; Back changes navigation, not selection.
+    func aomListDetailSelection<ID: Hashable>(_ id: ID?) -> Self {
+        var view = self
+        view.selectionID = id.map(AnyHashable.init)
+        view.tracksSelection = true
+        return view
     }
 
     var body: some View {
-        let listShown = shownListWidth
-        // The list keeps its place in the hierarchy in every arrangement, so
-        // its scroll position and selection survive a resize (D03).
-        HStack(spacing: 0) {
-            list
-                .frame(width: listShown)
-                .frame(maxHeight: .infinity)
-            AOMResizeDivider(width: $listWidth, range: AOMSize.moduleListRange, paneEdge: .leading,
-                             displayed: listShown,
-                             maximum: available > 0 ? available - AOMSize.detailMinimum - AOMWorkbenchPolicy.dividerAllowance : nil)
-            detail
-                .frame(minWidth: AOMSize.detailMinimum, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            if inspectorRequested && arrangement.showsInspectorBeside {
-                AOMResizeDivider(width: $inspectorWidth, range: Self.inspectorRange, paneEdge: .trailing,
-                                 displayed: shownInspectorWidth, maximum: inspectorRoom)
-                inspector
-                    .frame(width: shownInspectorWidth)
-                    .frame(maxHeight: .infinity)
-                    .accessibilityElement(children: .contain)
-                    .accessibilityLabel("Inspector")
+        if let pageTab {
+            AOMStoredInspectorWidth(moduleID: AOMModule(tab: pageTab)?.id ?? pageTab.id) { width in
+                workspace(inspectorWidth: width)
             }
+        } else {
+            workspace(inspectorWidth: $inspectorWidth)
         }
-        .overlay(alignment: .trailing) {
-            // Asked for but no room beside the detail: over its trailing edge.
-            if narrowInspector == .overlay, inspectorRequested, !arrangement.showsInspectorBeside, available > 0 {
-                inspector
-                    .frame(width: AOMSize.inspectorWidth.lowerBound)
-                    .frame(maxHeight: .infinity)
-                    .background(AOMColor.raised)
-                    .overlay(alignment: .leading) { AOMDivider(axis: .vertical) }
-                    .aomElevation(.raised)
-                    .accessibilityElement(children: .contain)
-                    .accessibilityLabel("Inspector")
-            }
+    }
+
+    private func workspace(inspectorWidth: Binding<Double>) -> some View {
+        GeometryReader { proxy in
+            let available = proxy.size.width
+            let divider = AOMResizeDivider.layoutWidth(displayScale: displayScale)
+            let listShown = AOMPaneWidth.effective(stored: listWidth, range: AOMSize.moduleListRange,
+                                                   fallback: AOMSize.moduleListIdeal, available: available,
+                                                   reserved: AOMSize.detailMinimum + divider)
+            let resolved = AOMWorkbenchArrangement.resolve(
+                available: available, listMinimum: CGFloat(AOMSize.moduleListRange.lowerBound),
+                detailMinimum: AOMSize.detailMinimum, inspectorMinimum: AOMSize.inspectorWidth.lowerBound,
+                inspectorRequested: inspectorRequested, current: arrangement, list: listShown, dividers: divider)
+            let compact = resolved == .drillIn
+            let compactDetail = compact && (drillIn.showsDetail || (didMeasure && arrangement != .drillIn && selectionID != nil))
+            let room = AOMWorkbenchPolicy.inspectorRoom(available: available, list: listShown,
+                                                         detailMinimum: AOMSize.detailMinimum, dividerWidth: divider)
+            let inspectorShown = AOMPaneWidth.effective(stored: inspectorWidth.wrappedValue, range: Self.inspectorRange,
+                                                        fallback: Double(AOMSize.inspectorIdeal), available: room, reserved: 0)
+            let showSheet = narrowInspector == .overlay && !resolved.showsInspectorBeside && (!compact || compactDetail)
+            panes(available: available, divider: divider, listShown: listShown, resolved: resolved,
+                  compactDetail: compactDetail, inspectorWidth: inspectorWidth, inspectorShown: inspectorShown,
+                  inspectorRoom: room, showSheet: showSheet)
+                .onChange(of: resolved, initial: true) { _, next in
+                    if didMeasure && next == .drillIn && arrangement != .drillIn && selectionID != nil {
+                        drillIn.openDetail()
+                    }
+                    if !didMeasure || next != arrangement { onArrangementChange?(next) }
+                    arrangement = next
+                    didMeasure = true
+                }
+                .onChange(of: selectionID) { _, id in
+                    if compact { drillIn.selectionChanged(hasSelection: id != nil) }
+                }
+                .onChange(of: compactDetail) { _, shown in
+                    if shown {
+                        listFocusToken = 0
+                        backFocused = true
+                    }
+                }
         }
         .background(AOMPageTint())
-        // The row's own width, which the inspector doesn't change (the
-        // detail gives way), so the decision can't feed back into itself.
-        .background {
-            GeometryReader { proxy in
-                Color.clear
-                    .onAppear { available = proxy.size.width; updateArrangement() }
-                    .onChange(of: proxy.size.width) { _, width in available = width; updateArrangement() }
+    }
+
+    private func panes(available: CGFloat, divider: CGFloat, listShown: CGFloat, resolved: AOMWorkbenchArrangement,
+                       compactDetail: Bool, inspectorWidth: Binding<Double>, inspectorShown: CGFloat,
+                       inspectorRoom: CGFloat, showSheet: Bool) -> some View {
+        let compact = resolved == .drillIn
+        let listVisible = !compactDetail
+        let detailVisible = !compact || compactDetail
+        let showBeside = inspectorRequested && resolved.showsInspectorBeside
+        let detailWidth = max(0, compact ? available : available - listShown - divider - (showBeside ? inspectorShown + divider : 0))
+
+        // Both scroll hosts keep the same identity. The hidden pane retains its
+        // content width and is excluded from layout, interaction and VoiceOver.
+        return HStack(spacing: 0) {
+            VStack(spacing: 0) {
+                list.frame(maxHeight: .infinity)
+                    .background(AOMFocusFirstControl(token: listFocusToken, target: .list))
+                if compact && (!tracksSelection || selectionID != nil) {
+                    Button(tracksSelection ? "Open Selected" : "Show Detail") { drillIn.openDetail() }
+                        .padding(AOMSpace.x2)
+                }
+            }
+            .onKeyPress(.return) {
+                guard compact, listVisible, tracksSelection, selectionID != nil else { return .ignored }
+                drillIn.openDetail()
+                return .handled
+            }
+            .frame(width: compact ? available : listShown)
+            .frame(width: listVisible ? (compact ? available : listShown) : 0)
+            .opacity(listVisible ? 1 : 0)
+            .disabled(!listVisible)
+            .allowsHitTesting(listVisible)
+            .accessibilityHidden(!listVisible)
+
+            if !compact {
+                AOMResizeDivider(width: $listWidth, range: AOMSize.moduleListRange, paneEdge: .leading,
+                                 displayed: listShown, maximum: available - AOMSize.detailMinimum - divider)
+            }
+
+            VStack(spacing: 0) {
+                if compactDetail {
+                    HStack {
+                        Button {
+                            goBack()
+                        } label: {
+                            Label("Back to List", systemImage: "chevron.left")
+                        }
+                        .focused($backFocused)
+                        .keyboardShortcut(inspectorRequested && showSheet ? nil : SwiftUI.KeyboardShortcut(.escape, modifiers: []))
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, AOMSpace.x3)
+                    .frame(minHeight: AOMSize.rowStandard)
+                    AOMDivider()
+                }
+                detail.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            }
+            .frame(width: detailWidth)
+            .frame(width: detailVisible ? detailWidth : 0)
+            .opacity(detailVisible ? 1 : 0)
+            .disabled(!detailVisible)
+            .allowsHitTesting(detailVisible)
+            .accessibilityHidden(!detailVisible)
+            .sheet(isPresented: Binding(get: { showSheet && inspectorRequested }, set: { open in
+                // Don't turn the inspector preference off when a resize docks it.
+                if !open && showSheet { showsInspector?.wrappedValue = false }
+            })) {
+                VStack(spacing: 0) {
+                    HStack {
+                        Text("Inspector").font(AOMFont.section).accessibilityAddTraits(.isHeader)
+                        Spacer()
+                        Button("Done") { showsInspector?.wrappedValue = false }
+                            .keyboardShortcut(.cancelAction)
+                    }
+                    .padding(AOMSpace.x3)
+                    AOMDivider()
+                    inspector
+                }
+                .frame(width: AOMSize.inspectorWidth.upperBound, height: AOMSize.inspectorWidth.upperBound)
+                .background(AOMColor.canvas)
+                .environment(\.aomOpaqueContent, true)
+            }
+
+            if showBeside {
+                AOMResizeDivider(width: inspectorWidth, range: Self.inspectorRange, paneEdge: .trailing,
+                                 displayed: inspectorShown, maximum: inspectorRoom)
+                inspector
+                    .frame(width: inspectorShown)
+                    .frame(maxHeight: .infinity)
+                    .accessibilityElement(children: .contain)
+                    .accessibilityLabel("Inspector")
             }
         }
-        .onChange(of: inspectorRequested) { _, _ in updateArrangement() }
-        .onChange(of: listWidth) { _, _ in updateArrangement() }
+        .frame(width: available)
+        .clipped()
+    }
+
+    private func goBack() {
+        drillIn.goBack()
+        listFocusToken = drillIn.returnCount
     }
 }
 
@@ -710,8 +799,7 @@ struct AOMTokenField: View {
 /// files): the glyph inside an optional 48 pt progress ring, a title (13 pt
 /// medium), the one live figure in Display (22 pt, monospaced digits, numeric
 /// transition) with its unit, a detail line, an optional status pill, and the
-/// actions at regular size on the trailing edge. It sits on the canvas, never
-/// in a card.
+/// actions at regular size on the trailing edge, on the shared card surface.
 struct AOMStatusHeader<Actions: View>: View {
     let module: AOMModule
     var active = true
@@ -796,13 +884,7 @@ struct AOMStatusHeader<Actions: View>: View {
         }
         .padding(AOMSpace.x5)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background {
-            RoundedRectangle(cornerRadius: AOMRadius.panel, style: .continuous)
-                .fill(AOMColor.surface)
-            RoundedRectangle(cornerRadius: AOMRadius.panel, style: .continuous)
-                .fill(LinearGradient(colors: [module.hue.opacity(active ? 0.08 : 0.04), .clear],
-                                     startPoint: .leading, endPoint: .trailing))
-        }
+        .aomCard(radius: AOMRadius.panel, padding: 0)
         .accessibilityElement(children: .contain)
     }
 }
