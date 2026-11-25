@@ -37,8 +37,6 @@ struct FocusPage: View {
                     Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([problem.file]) }
                 }
             }
-            AOMTipCard(id: "focus.memory", symbol: "memorychip", title: "Free memory on this Mac",
-                       message: "List apps you leave open, like chat and mail. Focus hides or quits them once they've been idle, and quits the idlest first when memory runs low.")
             FocusColumns {
                 FocusTodaySection(stats: session.stats)
             } trailing: {
@@ -55,7 +53,7 @@ struct FocusPage: View {
             FocusMemorySection(idle: idle, settings: settings, activity: activity)
                 .id("focus.memory")
             AOMLogSection("Activity", entries: activity.items.map(\.logEntry), limit: 6, emptySymbol: "list.bullet.rectangle",
-                          emptyMessage: "Nothing yet. Hidden and quit apps and shortcut runs appear here.",
+                          emptyMessage: "No Focus activity yet.",
                           clear: { activity.clear() })
         }
         .aomPage("Focus")

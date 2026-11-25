@@ -52,7 +52,8 @@ struct TextActionsPreviewPane: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: AOMSpace.x2) {
-            AOMSectionTitle("Live Preview", help: help) {
+            AOMSectionTitle("Live Preview") {
+                AOMInfoButton(help, topic: "Live Preview")
                 if selectedAction == nil {
                     Picker("Sample Text", selection: $barSample) {
                         ForEach(TextActionsPreviewSample.allCases) { Text($0.title).tag($0) }

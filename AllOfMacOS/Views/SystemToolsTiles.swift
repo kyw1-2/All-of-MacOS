@@ -396,9 +396,16 @@ struct CleanupReviewContent: View {
     var body: some View {
         VStack(alignment: .leading, spacing: AOMSpace.x3) {
             VStack(alignment: .leading, spacing: AOMSpace.x1) {
-                Text(review.title).font(AOMFont.title).lineLimit(1)
-                Text(review.detail).font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: AOMSpace.x2) {
+                    Text(review.title).font(AOMFont.title).lineLimit(1)
+                    AOMInfoButton(review.detail, topic: review.title)
+                }
+                if review.allowsTrash {
+                    Text(SystemToolUndoNote.trashRecovery)
+                        .font(AOMFont.callout)
+                        .foregroundStyle(AOMColor.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             List {
                 if review.groupsByNote {

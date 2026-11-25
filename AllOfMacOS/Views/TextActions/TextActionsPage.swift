@@ -52,7 +52,7 @@ struct TextActionsPage: View {
                 }
             }
         } inspector: {
-            previewPane
+            previewPane.frame(maxHeight: .infinity, alignment: .top)
         }
         .aomPage("Text Actions")
         .aomPageToolbar {

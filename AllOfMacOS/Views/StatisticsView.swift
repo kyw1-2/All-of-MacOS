@@ -96,10 +96,11 @@ struct StatisticsView: View {
             let series = Self.activitySeries(events: stats.events, period: period, now: now)
             AOMPage {
                 header(figures)
-                AOMSection(help: periodIsTruncated(now: now)
-                           ? "The log kept only the latest \(GestureStatistics.recentEventLimit.formatted()) events. All Time uses the full totals."
-                           : nil,
-                           padding: AOMSpace.x1) {
+                AOMSection("Overview", detail: periodIsTruncated(now: now) ? "Partial history" : nil, padding: AOMSpace.x1) {
+                    if periodIsTruncated(now: now) {
+                        AOMInfoButton("The log kept only the latest \(GestureStatistics.recentEventLimit.formatted()) events. All Time uses the full totals.", topic: "Partial history")
+                    }
+                } content: {
                     overviewStrip(figures, columns: geometry.size.width >= Self.stripSingleRowWidth ? nil : 2)
                 }
                 switch layout {
@@ -206,9 +207,9 @@ struct StatisticsView: View {
     /// Calendar-aligned bars include both partial edge bins, but count only
     /// events within the exact rolling period used by the figures and log.
     /// All Time uses the available event history, not a mislabeled 7-day chart.
-    static func activitySeries(events: [GestureEvent], period: Period, now: Date,
-                               calendar: Calendar = .current) -> ActivitySeries {
-        let earliestLogged = events.first(where: { $0.timestamp <= now })?.timestamp ?? now
+    nonisolated static func activitySeries(events: [GestureEvent], period: Period, now: Date,
+                                           calendar: Calendar = .current) -> ActivitySeries {
+        let earliestLogged = events.lazy.map(\.timestamp).filter { $0 <= now }.min() ?? now
         let since = period.interval.map { now.addingTimeInterval(-$0) } ?? earliestLogged
         let days = now.timeIntervalSince(since) / 86_400
         let unit: Calendar.Component = switch period {
@@ -587,7 +588,7 @@ enum AOMActivityLog {
         let bin = bucketStart.flatMap { calendar.dateInterval(of: unit, for: $0) }
         var result: [GestureEvent] = []
         for event in events.reversed() {
-            if let earliest, event.timestamp < earliest { break }
+            if let earliest, event.timestamp < earliest { continue }
             guard event.timestamp <= now else { continue }
             if runsOnly && !event.fired { continue }
             if let bin, !(bin.start..<bin.end).contains(event.timestamp) { continue }

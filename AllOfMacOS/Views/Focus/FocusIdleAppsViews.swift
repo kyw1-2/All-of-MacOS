@@ -19,12 +19,13 @@ struct FocusIdleAppsSection: View {
             AOMToggleRow("Hide or quit idle apps", detail: "Only the apps listed here, after the time you set",
                          symbol: "moon.zzz", isOn: $settings.settings.idleAppsEnabled)
             if FocusSystemProbes.isAudioCheckUnsupported {
-                AOMNotice(.info, "Needs macOS 14.2 or later",
-                          detail: "Focus can't tell which apps play or record audio on this version, so it leaves every app alone.")
-                    .padding(AOMSpace.x2)
+                AOMSettingRow("Idle rules need macOS 14.2 or later", symbol: "info.circle",
+                              help: "This version doesn't report which apps are playing or recording audio, so Focus leaves them open.") {
+                    EmptyView()
+                }
             }
             if rules.isEmpty {
-                AOMInlineEmpty(symbol: "moon.zzz", message: "No apps yet. Add chat, mail or other apps you leave open.")
+                AOMInlineEmpty(symbol: "moon.zzz", message: "No idle-app rules yet.")
                     .overlay(alignment: .top) { AOMRowDivider() }
             } else {
                 AOMPageTimeline(every: 5) { context in
