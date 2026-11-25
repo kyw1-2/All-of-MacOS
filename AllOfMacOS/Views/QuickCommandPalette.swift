@@ -166,7 +166,9 @@ struct QuickCommandPalette: View {
             self.primary = primary
             self.secondaries = Array(secondaries.prefix(secondaryLimit))
             self.placement = placement
-            self.accessory = accessory
+            // 7.18 (D32): a dimmed row says why on the row itself, not only
+            // in the footer once it is selected.
+            self.accessory = accessory ?? (isDimmed ? (id.hasPrefix("kill.") ? "Protected" : "Unavailable") : nil)
             self.image = image
             self.isDimmed = isDimmed
         }

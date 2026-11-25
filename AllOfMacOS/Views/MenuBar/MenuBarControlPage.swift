@@ -42,6 +42,9 @@ struct MenuBarControlPage: View {
     @ObservedObject private var layout = MenuBarLayoutModel.shared
     @AppStorage(MenuBarSettingsTab.key) private var tabRaw = MenuBarSettingsTab.layout.rawValue
     @State private var setup = false
+    /// 7.18: the first visit shows a banner, not a sheet over the page.
+    @AppStorage(MenuBarPrefs.setupKey) private var setupDone = false
+    @State private var bannerDismissed = false
 
     private var tab: MenuBarSettingsTab { MenuBarSettingsTab(rawValue: tabRaw) ?? .layout }
     @State private var sideBySide = true
@@ -68,6 +71,12 @@ struct MenuBarControlPage: View {
             AOMPageHeader(headline, subtitle: summary, active: modules.isOn(.menuBarHider) || layout.isSample) {
                 Button { setup = true } label: { Label("Setup Guide", systemImage: "questionmark.circle") }
                     .controlSize(.small)
+            }
+            if !setupDone && !bannerDismissed && !PresetManager.isUIPreview {
+                AOMNotice(.info, "Set up the menu bar", detail: "A short guide shows Shown, Hidden and Always Hidden and how to move icons.") {
+                    Button("Set Up…") { setup = true }.controlSize(.small)
+                    AOMIconButton("xmark", label: "Not Now") { bannerDismissed = true }
+                }
             }
             // 7.15 (50refs §1, Bartender 7 / Ice preferences): the eight
             // panes as a list beside the pane when the page is wide, a
@@ -102,7 +111,7 @@ struct MenuBarControlPage: View {
         .onReceive(NotificationCenter.default.publisher(for: .aomMenuBarSetup)) { _ in setup = true }
         .onAppear {
             if let raw = MenuBarPreviewFlags.tab { tabRaw = raw }
-            if MenuBarPreviewFlags.setup || (!MenuBarPrefs.setupDone && !PresetManager.isUIPreview) { setup = true }
+            if MenuBarPreviewFlags.setup { setup = true }
         }
         .aomPageLifecycle(minimumInterval: 20, onActivate: {
             if AXIsProcessTrusted() { layout.refresh(quietly: true) }

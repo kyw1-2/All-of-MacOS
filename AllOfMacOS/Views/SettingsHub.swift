@@ -475,7 +475,36 @@ enum SettingsCatalog {
     static func items(sheet: Binding<AdvancedSheet?>) -> [SettingItem] {
         generalItems(sheet: sheet) + captureItems() + clipboardItems(sheet: sheet)
             + automationItems(sheet: sheet) + permissionItems(sheet: sheet)
-            + dataItems(sheet: sheet) + aboutItems()
+            + aiItems() + dataItems(sheet: sheet) + aboutItems()
+    }
+
+    /// 7.18: the AI pane is a dashboard, so its settings had no search
+    /// entries; each one opens the AI category.
+    private static func aiItems() -> [SettingItem] {
+        func open(_ title: String, _ subtitle: String, _ icon: String) -> AnyView {
+            AnyView(HubActionRow(icon: icon, tint: .purple, title: title, subtitle: subtitle) {
+                Button("Show") {
+                    NotificationCenter.default.post(name: .aomShowSettingsCategory, object: SettingsCategory.ai.rawValue)
+                }
+            })
+        }
+        return [
+            item("ai-providers", .ai, "AI Providers", "API keys and local models for Ask AI",
+                 ["ai", "provider", "api key", "ollama", "claude", "openai", "인공지능", "모델", "키"],
+                 open("AI Providers", "API keys and local models for Ask AI", "sparkles")),
+            item("ai-model", .ai, "Ask AI Model", "The model and effort the launcher's ⇥ asks",
+                 ["ask ai", "model", "effort", "launcher", "모델", "질문"],
+                 open("Ask AI Model", "The model and effort the launcher's ⇥ asks", "text.bubble")),
+            item("ai-instructions", .ai, "AI Instructions", "Added to every question",
+                 ["instructions", "prompt", "tone", "language", "지시", "프롬프트"],
+                 open("AI Instructions", "Added to every question", "text.quote")),
+            item("ai-records", .ai, "AI Records Access", "What a question may read (@mentions)",
+                 ["records", "mentions", "@mac", "wiki", "privacy", "기록", "개인정보"],
+                 open("AI Records Access", "What a question may read (@mentions)", "lock.doc")),
+            item("ai-agents", .ai, "Agents", "Claude Code and Codex in the launcher",
+                 ["agent", "claude code", "codex", "cli", "에이전트"],
+                 open("Agents", "Claude Code and Codex in the launcher", "terminal")),
+        ]
     }
 
     private static func item(_ id: String, _ category: SettingsCategory, _ title: String,
@@ -847,7 +876,7 @@ struct SettingsHubView: View {
                     }
                 }
         }
-        .searchable(text: $query, placement: .sidebar, prompt: "Search Settings")
+        .searchable(text: $query, placement: .sidebar, prompt: "Search")
         .frame(minWidth: SettingsHubMetrics.windowMinWidth, idealWidth: SettingsHubMetrics.windowIdealWidth,
                maxWidth: .infinity, minHeight: SettingsHubMetrics.windowMinHeight,
                idealHeight: SettingsHubMetrics.windowIdealHeight, maxHeight: .infinity)

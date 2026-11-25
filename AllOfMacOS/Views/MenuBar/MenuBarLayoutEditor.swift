@@ -54,10 +54,6 @@ struct MenuBarLayoutEditor: View {
                 }
                 // D23: the lanes and the selected icon's settings together.
                 selectedItemPanel(lanes)
-                Text(Self.help)
-                    .font(.system(size: 11.5)).foregroundStyle(AOMColor.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 2)
             }
         }
         .onAppear { if model.lastRefresh == nil { model.refresh() } }
@@ -73,11 +69,13 @@ struct MenuBarLayoutEditor: View {
     private var header: some View {
         HStack(alignment: .top, spacing: 10) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Menu Bar Items").font(.system(size: 17, weight: .semibold))
-                Text("Drag menu bar item icons between the sections below to arrange them as you want")
-                    .font(.system(size: 12.5)).foregroundStyle(AOMColor.textSecondary)
-                Text("You can also change their order quickly by ⌘ + dragging them in the menu bar")
-                    .font(.system(size: 12.5)).foregroundStyle(AOMColor.textSecondary)
+                // 7.18: one line; the full explanation sits behind ⓘ.
+                HStack(spacing: AOMSpace.x1) {
+                    Text("Menu Bar Items").font(AOMFont.title)
+                    AOMInfoButton(text: Self.help, topic: "Arranging menu bar items", textStyle: AOMFont.title)
+                }
+                Text("Drag icons between sections, or ⌘-drag them in the menu bar.")
+                    .font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
                 if let status = model.status {
                     Text(status).font(AOMFont.caption).foregroundStyle(AOMColor.accent).lineLimit(2).padding(.top, 2)
                 }
@@ -171,11 +169,11 @@ struct MenuBarLayoutEditor: View {
         let isTarget = targeted == section
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
-                Text(section.stripTitle).font(.system(size: 13, weight: .semibold))
-                Text("\(items.count)").font(.system(size: 11, weight: .medium).monospacedDigit())
+                Text(section.stripTitle).font(AOMFont.section)
+                Text("\(items.count)").font(AOMFont.caption.weight(.medium).monospacedDigit())
                     .foregroundStyle(AOMColor.textTertiary)
                 Spacer()
-                Text(section.caption).font(.system(size: 11)).foregroundStyle(AOMColor.textTertiary).lineLimit(1)
+                Text(section.caption).font(AOMFont.caption).foregroundStyle(AOMColor.textTertiary).lineLimit(1)
             }
             GeometryReader { geometry in
                 ScrollView(.horizontal, showsIndicators: true) {
@@ -237,7 +235,10 @@ struct MenuBarLayoutEditor: View {
     @ViewBuilder private func selectedItemPanel(_ lanes: [MenuBarSection: [MenuBarLayoutItem]]) -> some View {
         let all = MenuBarSection.allCases.flatMap { lanes[$0] ?? [] }
         if let entry = all.first(where: { $0.id == selectedID }) {
-            AOMSection("Selected item", padding: AOMSpace.x3) {
+            // 7.18 (D07): a group under the lanes, not a card inside the card.
+            VStack(alignment: .leading, spacing: AOMSpace.x2) {
+                AOMDivider()
+                Text("Selected Item").font(AOMFont.section).foregroundStyle(AOMColor.textSecondary)
                 VStack(alignment: .leading, spacing: AOMSpace.x2) {
                     HStack(spacing: AOMSpace.x2) {
                         MenuBarItemGlyph(item: entry.item, size: 22)

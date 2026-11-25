@@ -254,9 +254,39 @@ struct AOMHomeView: View {
 
     /// 6.7: one row per session that is running, with the control that ends
     /// it on the same line; a calm line and the launcher when nothing is.
+    @ViewBuilder
     private var runningNow: some View {
         let rows = runningRows
-        return VStack(alignment: .leading, spacing: AOMSpace.x2) {
+        if rows.isEmpty {
+            // 7.18: nothing running is one calm line, not a card.
+            HStack(spacing: AOMSpace.x2) {
+                Image(systemName: "checkmark.circle").foregroundStyle(AOMColor.success).accessibilityHidden(true)
+                Text("Nothing running").font(AOMFont.callout.weight(.medium)).foregroundStyle(AOMColor.text)
+                Text("Recording, Keep Awake, focus sessions and a muted mic appear here.")
+                    .font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary).lineLimit(1)
+                Spacer(minLength: AOMSpace.x2)
+                launcherButton
+            }
+            .padding(.horizontal, AOMSpace.rowInset)
+            .accessibilityElement(children: .contain)
+        } else {
+            runningCard(rows)
+        }
+    }
+
+    private var launcherButton: some View {
+        Button {
+            AOMLauncherController.shared.show()
+        } label: {
+            Label(AOMLauncherShortcut.isRegistered ? "Launcher  \(AOMLauncherShortcut.current.displayString)" : "Launcher",
+                  systemImage: "magnifyingglass")
+        }
+        .controlSize(.small)
+        .help("Kill Apps, Uninstall App, Sound Devices, System Commands and every AOM command")
+    }
+
+    private func runningCard(_ rows: [RunningRow]) -> some View {
+        VStack(alignment: .leading, spacing: AOMSpace.x2) {
             HStack(spacing: AOMSpace.x2) {
                 Text("Running now").font(AOMFont.headline)
                 if !rows.isEmpty {
@@ -266,24 +296,9 @@ struct AOMHomeView: View {
                         .background(AOMColor.track, in: Capsule())
                 }
                 Spacer()
-                Button {
-                    AOMLauncherController.shared.show()
-                } label: {
-                    Label(AOMLauncherShortcut.isRegistered ? "Launcher  \(AOMLauncherShortcut.current.displayString)" : "Launcher",
-                          systemImage: "magnifyingglass")
-                }
-                .controlSize(.small)
-                .help("Kill Apps, Uninstall App, Sound Devices, System Commands and every AOM command")
+                launcherButton
             }
-            if rows.isEmpty {
-                HStack(spacing: AOMSpace.x2) {
-                    Image(systemName: "checkmark.circle").foregroundStyle(AOMColor.success).accessibilityHidden(true)
-                    Text("Nothing is running. Recording, Keep Awake, focus sessions and a muted mic show here with the button that ends them.")
-                        .font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(.vertical, AOMSpace.x1)
-            } else {
+            Group {
                 VStack(spacing: 0) {
                     ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
                         if index > 0 { AOMDivider().padding(.leading, 40) }
@@ -405,9 +420,13 @@ struct AOMHomeView: View {
 
     // MARK: Layout
 
-    static let railWidth: CGFloat = 300
+    /// 7.18: 260 pt so the rail sits beside two module columns at the
+    /// default 1280 × 800 window (content ≈ 1004 pt).
+    static let railWidth: CGFloat = 260
+    /// Two module columns from this main-column width.
+    static let twoColumnMinimum: CGFloat = 680
     /// The right rail needs the module grid to keep two columns beside it.
-    private var usesRail: Bool { contentWidth >= 720 + Self.railWidth + AOMSpace.sectionGap }
+    private var usesRail: Bool { contentWidth >= Self.twoColumnMinimum + Self.railWidth + AOMSpace.sectionGap }
     /// Width of the column the module grid and utilities sit in.
     private var mainWidth: CGFloat { usesRail ? contentWidth - Self.railWidth - AOMSpace.sectionGap : contentWidth }
 
@@ -634,7 +653,7 @@ struct AOMHomeView: View {
 
     /// Module rows in one frosted pane, two columns when there is room.
     private func moduleGrid<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        let columns = mainWidth >= 720 ? 2 : 1
+        let columns = mainWidth >= Self.twoColumnMinimum ? 2 : 1
         return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: AOMSpace.x1, alignment: .top),
                                         count: columns),
                          alignment: .leading, spacing: 0, content: content)
@@ -949,7 +968,7 @@ struct AOMHomeView: View {
     /// rows): a monochrome glyph, the name, a short detail and a chevron.
     private var utilities: some View {
         let links = utilityLinks
-        let columns = mainWidth >= 720 ? 2 : 1
+        let columns = mainWidth >= Self.twoColumnMinimum ? 2 : 1
         return VStack(alignment: .leading, spacing: AOMSpace.titleGap) {
             AOMSectionTitle("Utilities")
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: AOMSpace.x1), count: columns),
@@ -1183,7 +1202,7 @@ struct AOMHomeView: View {
 
     private func copy(_ entry: ClipboardEntry) {
         Task {
-            do {
+            Group {
                 _ = try await clipboard.writeAsync(entryIDs: [entry.id], plainText: false, playSound: true)
                 toast.show("Copied “\(entry.title.prefix(40))”")
             } catch {

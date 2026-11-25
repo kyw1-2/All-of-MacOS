@@ -63,11 +63,16 @@ struct AOMMenuBarCraftPanel: View {
             HStack {
                 HStack(spacing: 8) {
                     Circle()
-                        .fill(isEngineRunning ? Color.green : Color.orange)
+                        .fill(isEngineRunning ? AOMColor.success : AOMColor.warning)
                         .frame(width: 8, height: 8)
+                        .accessibilityHidden(true)
                     Text("All of MacOS")
-                        .font(.system(size: 13.5, weight: .semibold))
+                        .font(AOMFont.bodyEmphasis.weight(.semibold))
+                    // 7.18: the state in words too, not by colour alone.
+                    Text(isEngineRunning ? "Running" : "Paused")
+                        .font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
                 }
+                .accessibilityElement(children: .combine)
                 Spacer()
                 Toggle("Automation engine", isOn: Binding(get: { isEngineRunning }, set: { _ in onToggleMaster() }))
                     .labelsHidden()
