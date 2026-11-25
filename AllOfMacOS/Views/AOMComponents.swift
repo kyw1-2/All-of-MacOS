@@ -1076,7 +1076,7 @@ struct AOMToolCard: View {
 
 // MARK: - Hero band (7.14)
 
-/// A neutral identity mark beside a status sentence, directly on the page.
+/// The tool's identity mark beside a status sentence; off tools keep their colour, dimmed.
 struct AOMHeroBand<Content: View>: View {
     let identity: AOMIdentity
     var active = true
@@ -1090,8 +1090,9 @@ struct AOMHeroBand<Content: View>: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: AOMSpace.x3) {
-            AOMAppIcon(AOMIdentity(symbol: identity.symbol, color: active ? AOMColor.text : AOMColor.textSecondary),
-                       size: AOMIcon.heroMark, style: .tinted)
+            // 7.18: the tool's own colour stays (identity, 7.14); off dims it.
+            AOMAppIcon(identity, size: AOMIcon.heroMark, active: true, style: .solid)
+                .opacity(active ? 1 : 0.6)
             content
         }
         .frame(minHeight: AOMSize.rowDetail)

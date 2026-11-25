@@ -1,3 +1,22 @@
+## [7.18.0] - 2026-11-25 — Calm Workbench
+
+From the 7.17.0 independent re-review (R01–R18), the 19-app design review's open items, and a static review of the shell — planned from CI-rendered screenshots of every page (`docs/design-7.18.md`). Built by five GPT-6.2 Sol workers plus Claude; status of every item in `docs/design-7.18.md`.
+
+- **Toolbar**: no permanently disabled Actions ⋯, no in-window palette 🔍 and no Diagnostics stethoscope on every page. Pages show their filter field, one options menu (slider icon — never a second ⋯) and their primary action. ⌘K and the sidebar open the one launcher; Diagnostics stays in the View menu with its shortcut.
+- **Action bar**: a selection with more than three actions gets a More menu for the rest, destructive ones last.
+- **List + detail pages** (R01, R02, R17): narrow windows really drill in — list, then the item with Back (Esc) — and the inspector no longer covers the detail's buttons; inspector widths are remembered per page (R06).
+- **Clipboard** (R03, R04, R18, D16): every command acts only on a row you chose that is still on screen (never on the auto-highlighted first row or while a search is settling); each delete has its own undo; image previews decode off the main thread and stop when you move on.
+- **Automation** (R05, R14, D13): search and scope in the toolbar; steps reorder by drag; branch steps are indented rows with a rail instead of cards inside cards; drafts and the inspected step survive window resizes.
+- **Workspace**: the overview rail shows beside two columns at the default window size; "Nothing running" is one line instead of a card.
+- **Menu Bar**: the first visit shows a Set Up banner instead of opening a sheet over the page; the five-line explanation moved behind ⓘ; the selected item is a group under the lanes, not a card in a card.
+- **Settings**: the search field fits ("Search"); AI providers, model, instructions, records and agents are searchable.
+- **Window Tiling** (R15): the toolbar no longer repeats the tiles; zone editing re-checks the display and says so if it was disconnected.
+- **Files**: inspector with breadcrumbs and actions, remembered width; the dialog illustration folds away; missing favourites are marked.
+- **Folder Rules**: inline cards no longer capture Return/Esc; inspector rows; PDF text cache expires by earliest deadline.
+- **Text Actions / Activity / System Tools / Focus**: preview apart from settings, keyboard reordering; consistent chart units and empty states; one card level.
+- **Launcher**: unavailable rows say why on the row. **Menu bar panel**: Running/Paused in words, not colour alone.
+- **Previews**: `--aom-preview-sample-data` fills Clipboard, Automation, Files and Folder Rules; `.github/workflows/ui-snapshots.yml` renders every page light/dark on CI.
+
 ## [7.17.0] - 2026-11-25 — Native Workbench 2
 
 From the 7.16.1 design binary review (`AOM-7.16.1-상용앱19종-디자인-바이너리검수-2026-11-25.md`, D01–D32) and its independent review. Status of every item: `docs/design-7.17-workbench2.md`. Release candidate: code CI passed on 86efcc5; real-window screenshot, accessibility and performance checks remain pending.

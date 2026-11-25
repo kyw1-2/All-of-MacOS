@@ -71,6 +71,24 @@ their final report and Claude applies it after merging.
 - Claude merges W1…W5 into `feat/7.18`, runs tests + snapshots on the merge, compares against the baseline, bumps to 7.18.0,
   pushes to `main` (release.yml signs and publishes), installs the DMG.
 
-## Status
+## Status (2026-11-25, release 7.18.0)
 
-Filled in after the merge (per item: DONE (code) / DONE (screenshot) / PARTIAL / NOT_DONE, with file:line and run ids).
+**How it ran.** Five Sol workers started at 19:2x KST. W4 died from "prompt too long" (no commits); W4a/W4b replaced it.
+At ~19:55 every ChatGPT account hit its usage limit (429 until 22:00), so all workers stopped. Claude recovered each
+worktree (committed WIP as `wip(7.18-wN)`), merged W1, W5, W2, W4a and W4b, finished or reverted half-done edits, and did W3's area itself.
+
+| Worker | Result |
+|---|---|
+| W1 shell/kit | `749b1bd`, `eb4502b` merged. Toolbar budget, action bar More menu, drawer divider, compact drill-in (`.aomListDetailSelection`), per-module inspector width, focus tokens, semantic header dedup, save-state model, nested-section flattening. Claude restored the coloured page-header marks (W1 had made them grey; identity colour is a 7.14 decision). |
+| W2 Clipboard/Automation | `7e06c80` + recovered WIP. Live explicit targets (`AOMActionTarget`), receipt-based delete/undo, cancellable thumbnails, sample data; Automation drag reorder, flat branches, toolbar search/scope. Claude finished the half-trimmed `AutomationListHeader` and fixed a ViewBuilder local func. |
+| W3 Workspace/Settings/Launcher/Menu Bar | Worker made no commits (wrong base, then stopped). Done by Claude: rail at default size (260 pt rail, 2 columns ≥ 680 pt), one-line Nothing running, Settings "Search" + AI catalog items, Menu Bar banner/ⓘ/flat selected item, launcher dimmed reasons, panel Running/Paused text. NOT_DONE: R08 per-result reveal, R09 snapshot caching, R10 units/"as of", N07, N08. |
+| W4a Audio | WIP was a half-done refactor (optional `service`, hundreds of call sites unchanged) — **reverted**. Claude changed only the options icon and the duplicate button style. NOT_DONE: D17 mixer table, R11, Audio inspector width/fallback, Audio sample data. |
+| W4b Capture/Tiling | Recovered: Tiling toolbar de-dup, R15 display re-resolve (Claude fixed two leftover call sites), empty annotate stub removed from code and hygiene test. Claude changed Capture's ⋯ menu to the options icon. NOT_DONE: D19 Grid/List + skeletons, Capture inspector fallback, Capture sample data. |
+| W5 Files/Rules/Text/Activity/Tools/Focus | `3aa6c3b`, `c10546a`, `c8df3c1` merged (Claude fixed `.ok(items:)`). |
+
+**CI.** Merge `0f121be`: snapshots run 45602334316 success (64 PNGs); `tests.yml` run 45602353316 — `swift test` step passed.
+Screens checked by Claude after the merge: Workspace, Clipboard (sample data), Automation dark (sample data), Menu Bar dark,
+Capture, Files 980×600, Window Tiling, Settings.
+
+**NOT_RUN** (unchanged limits): real-window resize ×30, VoiceOver/Reduce Motion/Transparency, p50/p95 transitions, 15-minute idle,
+1320+ widths (the CI display is 1024×768).

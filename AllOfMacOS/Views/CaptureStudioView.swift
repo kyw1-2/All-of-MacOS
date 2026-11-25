@@ -297,7 +297,7 @@ struct CaptureStudioView: View {
                 }
                 Button("Capture Settings…") { showingSettingsSheet = true }
             } label: {
-                Label("More", systemImage: "ellipsis.circle")
+                Label("Capture Options", systemImage: "slider.horizontal.3")
             }
             .help("Open an image, desktop icons, history and settings")
         }
