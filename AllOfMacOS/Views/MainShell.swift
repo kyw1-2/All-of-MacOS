@@ -23,6 +23,8 @@ struct AOMMainShell<Content: View>: View {
     /// The sidebar is collapsible (toolbar button, View ▸ Hide Sidebar) and
     /// remembers its state.
     @AppStorage("AOMSidebarVisible") private var sidebarVisible = true
+    /// D08: View › Compact Sidebar.
+    @AppStorage(AOMSidebarDensity.key) private var compactSidebar = false
 
     init(showingCommandPalette: Binding<Bool>,
          showLog: Binding<Bool>,
@@ -48,7 +50,8 @@ struct AOMMainShell<Content: View>: View {
                            snappingOn: appState.currentPreset.snappingEnabled,
                            paletteKeys: AOMPaletteShortcut.current(appState.currentPreset).displayString,
                            showingCommandPalette: $showingCommandPalette)
-                .navigationSplitViewColumnWidth(min: AOMSize.sidebarMin, ideal: AOMSize.sidebarIdeal,
+                .navigationSplitViewColumnWidth(min: AOMSidebarDensity.minimum(compact: compactSidebar),
+                                                ideal: AOMSidebarDensity.ideal(compact: compactSidebar),
                                                 max: AOMSize.sidebarMax)
         } detail: {
             GeometryReader { geometry in
@@ -634,8 +637,12 @@ extension FocusedValues {
 /// Touch Visualizer (these moved out of the sidebar footer).
 struct AOMShellCommandMenus: Commands {
     @FocusedValue(\.aomShellCommands) private var shell
+    @AppStorage(AOMSidebarDensity.key) private var compactSidebar = false
 
     var body: some Commands {
+        CommandGroup(after: .sidebar) {
+            Toggle("Compact Sidebar", isOn: $compactSidebar)
+        }
         CommandMenu("Controls") {
             Button(shell?.engineOn == false ? "Resume AOM" : "Pause AOM") { shell?.toggleEngine() }
                 .disabled(shell == nil)
@@ -650,6 +657,13 @@ struct AOMShellCommandMenus: Commands {
                 .disabled(shell == nil)
         }
     }
+}
+
+/// Workbench 2 (D08): the sidebar's two widths.
+enum AOMSidebarDensity {
+    static let key = "AOMSidebarCompact"
+    static func minimum(compact: Bool) -> CGFloat { compact ? AOMSize.sidebarCompactMin : AOMSize.sidebarMin }
+    static func ideal(compact: Bool) -> CGFloat { compact ? AOMSize.sidebarCompactIdeal : AOMSize.sidebarIdeal }
 }
 
 /// Workbench 2 (D01): one set of names for the diagnostics drawer, shared by

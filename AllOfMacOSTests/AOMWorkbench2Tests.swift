@@ -400,3 +400,14 @@ final class AOMWorkbench2WorkspaceTests: XCTestCase {
         XCTAssertEqual(WorkspaceRailChoice.shortTitle(.recent), "Recent")
     }
 }
+
+/// D08: the compact sidebar is narrower and still leaves the default untouched.
+final class AOMWorkbench2SidebarTests: XCTestCase {
+    func testDensityWidths() {
+        XCTAssertEqual(AOMSidebarDensity.minimum(compact: false), AOMSize.sidebarMin)
+        XCTAssertEqual(AOMSidebarDensity.ideal(compact: false), AOMSize.sidebarIdeal)
+        XCTAssertLessThan(AOMSidebarDensity.minimum(compact: true), AOMSize.sidebarMin)
+        XCTAssertLessThanOrEqual(AOMSidebarDensity.minimum(compact: true), AOMSidebarDensity.ideal(compact: true))
+        XCTAssertGreaterThanOrEqual(AOMSidebarDensity.minimum(compact: true), 200, "labels need 200 pt at 13 pt")
+    }
+}
