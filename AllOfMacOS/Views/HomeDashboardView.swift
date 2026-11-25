@@ -69,6 +69,8 @@ struct AOMHomeView: View {
     /// you did last (the Codex report, p. 3) — and All Tools is the
     /// directory. The choice is remembered.
     @AppStorage("AOMWorkspaceShowsNow") private var showsOverview = true
+    /// D11: which overview the rail shows.
+    @AppStorage("AOMWorkspaceRailPart") private var railPart = AOMWorkspaceLayout.Part.today.rawValue
     @State private var focusRunning = false
     @State private var micMuted = false
     /// The Productivity modules' `attention` lines, polled with the rest of
@@ -123,14 +125,16 @@ struct AOMHomeView: View {
                         .padding(.leading, AOMSpace.rowInset + AOMIcon.heroMark + AOMSpace.x3)
                 }
                 if recording.isRecording { recordingStrip }
+                // D10: Now leads with what asks for you, then what is
+                // running, then setup — the directory is All Tools.
+                if showsOverview && !snapshot.attention.isEmpty {
+                    needsAttention(snapshot.attention)
+                }
                 if showsOverview {
                     runningNow
                 }
                 if showsOverview && snapshot.showsSetup {
                     setupCard(snapshot)
-                }
-                if showsOverview && !snapshot.attention.isEmpty {
-                    needsAttention(snapshot.attention)
                 }
                 // Dashboard: what you operate on the left, what happened on
                 // the right rail (Xcode Organizer, Activity summary), so the
@@ -423,12 +427,24 @@ struct AOMHomeView: View {
 
     /// Today, This Mac and Recent activity stacked in the rail.
     @ViewBuilder
+    /// D11: the rail shows one of Today, This Mac and Recent at a time,
+    /// picked above it, so the others aren't built or refreshed meanwhile.
     private func overviewRail(_ snapshot: WorkspaceSnapshot) -> some View {
         let parts = [AOMWorkspaceLayout.Part.today, .thisMac, .recent].filter(layout.shows)
-        VStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
-            ForEach(parts) { part in
-                overviewCard(part, snapshot)
+        let shown = WorkspaceRailChoice.resolve(railPart, available: parts)
+        return VStack(alignment: .leading, spacing: AOMSpace.x3) {
+            if parts.count > 1 {
+                Picker("Overview", selection: Binding(get: { shown ?? parts[0] }, set: { railPart = $0.rawValue })) {
+                    ForEach(parts) { Text(WorkspaceRailChoice.shortTitle($0)).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .help("Today, This Mac or Recent activity")
+            }
+            if let shown {
+                overviewCard(shown, snapshot)
                     .fixedSize(horizontal: false, vertical: true)
+                    .id(shown)
             }
         }
     }
@@ -2279,5 +2295,18 @@ struct AOMModuleStatusTile<MenuItems: View>: View {
 extension AOMModuleStatusTile where MenuItems == EmptyView {
     init(status: AOMModuleStatus, open: @escaping () -> Void) {
         self.init(status: status, open: open, menu: { EmptyView() })
+    }
+}
+
+/// D11: the rail's one visible overview.
+enum WorkspaceRailChoice {
+    /// The saved choice while it is one of the parts shown, else the first.
+    static func resolve(_ saved: String, available: [AOMWorkspaceLayout.Part]) -> AOMWorkspaceLayout.Part? {
+        if let part = AOMWorkspaceLayout.Part(rawValue: saved), available.contains(part) { return part }
+        return available.first
+    }
+
+    static func shortTitle(_ part: AOMWorkspaceLayout.Part) -> String {
+        part == .recent ? "Recent" : part.title
     }
 }

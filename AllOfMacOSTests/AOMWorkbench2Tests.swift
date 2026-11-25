@@ -388,3 +388,15 @@ final class AOMWorkbench2ClipboardMemoryTests: XCTestCase {
         XCTAssertNil(ClipboardLibraryFilterMemory.restore(board: "", kind: "", boards: [board]).board)
     }
 }
+
+/// D11: the Workspace rail shows one overview at a time.
+final class AOMWorkbench2WorkspaceTests: XCTestCase {
+    func testRailChoice() {
+        let all: [AOMWorkspaceLayout.Part] = [.today, .thisMac, .recent]
+        XCTAssertEqual(WorkspaceRailChoice.resolve("thisMac", available: all), .thisMac)
+        XCTAssertEqual(WorkspaceRailChoice.resolve("thisMac", available: [.today, .recent]), .today, "a hidden part falls back")
+        XCTAssertEqual(WorkspaceRailChoice.resolve("bogus", available: all), .today)
+        XCTAssertNil(WorkspaceRailChoice.resolve("today", available: []))
+        XCTAssertEqual(WorkspaceRailChoice.shortTitle(.recent), "Recent")
+    }
+}
