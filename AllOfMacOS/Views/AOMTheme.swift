@@ -291,12 +291,12 @@ struct AOMResizeDivider: View {
             .gesture(
                 DragGesture(minimumDistance: 1, coordinateSpace: .global)
                     .onChanged { value in
-                        let start = dragStart ?? displayed.map(Double.init)
+                        let start = dragStart ?? displayed.map { Double($0) }
                             ?? AOMPaneWidth.sanitized(width, range: range, fallback: range.lowerBound)
                         dragStart = start
                         let delta = Double(value.translation.width) * (paneEdge == .trailing ? -1 : 1)
                         let next = AOMPaneWidth.dragged(start: start, delta: delta, range: range,
-                                                        maximum: maximum.map(Double.init))
+                                                        maximum: maximum.map { Double($0) })
                         if next != width { width = next }
                     }
                     .onEnded { _ in dragStart = nil }

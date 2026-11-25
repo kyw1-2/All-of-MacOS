@@ -186,7 +186,7 @@ final class AOMWorkbench2FolderRulesTests: XCTestCase {
 final class AOMWorkbench2SettingsTests: XCTestCase {
     func testRevealTarget() {
         let general = SettingsSearchReveal.target(category: .general, rowID: "launchAtLogin", sheetOpen: false)
-        XCTAssertEqual(general, .init(category: .general, rowID: "launchAtLogin"))
+        XCTAssertEqual(general, SettingsSearchReveal.Target(category: .general, rowID: "launchAtLogin"))
         XCTAssertNil(SettingsSearchReveal.target(category: .general, rowID: "launchAtLogin", sheetOpen: true),
                      "never moves the pane under an open sheet")
         let permissions = SettingsSearchReveal.target(category: .permissions, rowID: "accessibility", sheetOpen: false)
