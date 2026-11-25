@@ -1,6 +1,6 @@
-## [Unreleased] — Native Workbench 2
+## [7.17.0] - 2026-11-25 — Native Workbench 2
 
-From the 7.16.1 design binary review (`AOM-7.16.1-상용앱19종-디자인-바이너리검수-2026-11-25.md`, D01–D32) and its independent review. Status of every item: `docs/design-7.17-workbench2.md`. Not released; not checked on screen.
+From the 7.16.1 design binary review (`AOM-7.16.1-상용앱19종-디자인-바이너리검수-2026-11-25.md`, D01–D32) and its independent review. Status of every item: `docs/design-7.17-workbench2.md`. Release candidate: code CI passed on 86efcc5; real-window screenshot, accessibility and performance checks remain pending.
 
 - **Shared layout** (D02–D04): list + detail (+ inspector) pages decide from the width they have, through one tested resolver with 20 pt of hysteresis; saved widths are checked and come back when the window widens; dividers drag from what is on screen; dragging the list wider can close the inspector.
 - **Selection** (D03, D05): a search or filter that hides the selected item leaves nothing selected — in Automation, Clipboard, Capture and Audio — so ⌘↩, Return, Space, ⌫ and ⌘C never act on a different row.
