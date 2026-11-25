@@ -50,6 +50,11 @@ struct SystemToolsView: View {
             AOMPageHeader(model.lastResult.map { $0.succeeded ? "Last task finished" : "Last task needs a look" } ?? "Maintenance and quick fixes",
                           subtitle: subtitle)
                 .help(model.lastResult?.message ?? "")
+            // D29: the last result in one place, with whether it can be undone
+            // and the way to run it again, beside the search and categories.
+            if let result = model.lastResult {
+                lastResultStrip(result)
+            }
             HStack {
                 // 6.1: categories as view tabs (Linear, iStat Menus' module
                 // bar) instead of a pop-up, so every group is one click away.
@@ -155,6 +160,30 @@ struct SystemToolsView: View {
         if pageActivity.isActive { model.refreshStates() }
     }
 
+    private func lastResultStrip(_ result: SystemToolsModel.ToolResult) -> some View {
+        let info = SystemToolCatalog.info(result.tool)
+        return HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x2) {
+            Image(systemName: result.succeeded ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                .foregroundStyle(result.succeeded ? AOMColor.success : AOMColor.warningText)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
+                Text("\(info.title) · \(AOMRelativeTime.string(result.date))").font(AOMFont.callout.weight(.medium))
+                Text(result.message).font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let note = SystemToolUndoNote.note(result.tool, kind: info.kind) {
+                    Text(note).font(AOMFont.caption).foregroundStyle(AOMColor.textTertiary)
+                }
+            }
+            Spacer(minLength: AOMSpace.x2)
+            Button(result.succeeded ? "Run Again" : "Try Again") { model.run(result.tool) }
+                .controlSize(.small)
+                .disabled(model.running.contains(result.tool))
+        }
+        .padding(AOMSpace.x3)
+        .aomCard(padding: 0)
+        .accessibilityElement(children: .combine)
+    }
+
     // MARK: - Favorites
 
     @ViewBuilder
@@ -215,6 +244,23 @@ struct SystemToolsView: View {
                 }
                 .help(info.help)
             }
+        }
+    }
+}
+
+/// D29: whether a tool's last run can be taken back, said under its result.
+enum SystemToolUndoNote {
+    static func note(_ id: SystemToolID, kind: SystemToolKind) -> String? {
+        switch id {
+        // Free Up Space empties the Trash and clears caches (both confirmed
+        // first); what it moves to the Trash can still be put back.
+        case .freeUpSpace: return "Items moved to the Trash can be put back; an emptied Trash or cleared caches can't."
+        case .resetSavedState: return "Saved window state can't be restored once reset."
+        default: break
+        }
+        switch kind {
+        case .toggle: return "Run it again to switch it back."
+        case .sheet, .command: return nil
         }
     }
 }

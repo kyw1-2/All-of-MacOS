@@ -29,6 +29,8 @@ struct MenuBarLayoutEditor: View {
     @State private var applied = MenuBarPresets.applied
     @State private var naming = false
     @State private var presetName = ""
+    /// D23: the icon whose settings show under the lanes.
+    @State private var selectedID: String?
 
     private var hiderOn: Bool { modules.isOn(.menuBarHider) || model.isSample }
 
@@ -50,6 +52,8 @@ struct MenuBarLayoutEditor: View {
                         strip(section, items: lanes[section] ?? [])
                     }
                 }
+                // D23: the lanes and the selected icon's settings together.
+                selectedItemPanel(lanes)
                 Text(Self.help)
                     .font(.system(size: 11.5)).foregroundStyle(AOMColor.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -228,6 +232,47 @@ struct MenuBarLayoutEditor: View {
             .accessibilityLabel("New Menu Bar Items go to this section")
     }
 
+    /// The selected icon: where it is, why it can't move if it can't, and
+    /// the same moves as dragging it, for the keyboard and VoiceOver.
+    @ViewBuilder private func selectedItemPanel(_ lanes: [MenuBarSection: [MenuBarLayoutItem]]) -> some View {
+        let all = MenuBarSection.allCases.flatMap { lanes[$0] ?? [] }
+        if let entry = all.first(where: { $0.id == selectedID }) {
+            AOMSection("Selected item", padding: AOMSpace.x3) {
+                VStack(alignment: .leading, spacing: AOMSpace.x2) {
+                    HStack(spacing: AOMSpace.x2) {
+                        MenuBarItemGlyph(item: entry.item, size: 22)
+                        VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
+                            Text(entry.item.displayName).font(AOMFont.headline)
+                            Text(entry.item.ownerName).font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
+                        }
+                        Spacer(minLength: AOMSpace.x2)
+                        Button("Rename…") { renaming = entry.id }.controlSize(.small)
+                        AOMIconButton("xmark", label: "Deselect") { selectedID = nil }
+                    }
+                    AOMInspectorRow("Section", text: entry.section.title)
+                    if MenuBarNativeHiding.isAvailable {
+                        AOMInspectorRow("Moves with", text: "Every icon of \(entry.item.ownerName) (macOS 27 hides by app)")
+                    }
+                    if let reason = entry.lockedReason {
+                        Label(reason, systemImage: "lock")
+                            .font(AOMFont.callout)
+                            .foregroundStyle(AOMColor.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        HStack(spacing: AOMSpace.x2) {
+                            Text("Move to").font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
+                            ForEach(MenuBarSection.allCases) { section in
+                                Button(section.title) { model.move(entry.id, to: section) }
+                                    .controlSize(.small)
+                                    .disabled(section == entry.section)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     private var laneColor: Color { model.laneColor }
     private var laneInk: Color { model.ink }
 
@@ -242,7 +287,14 @@ struct MenuBarLayoutEditor: View {
             .background(lit ? laneInk.opacity(0.16) : (sibling ? laneInk.opacity(0.08) : .clear),
                         in: RoundedRectangle(cornerRadius: 6, style: .continuous))
             .opacity(entry.lockedReason == nil ? 1 : 0.5)
+            .overlay {
+                if selectedID == entry.id {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(AOMColor.accent, lineWidth: 2)
+                }
+            }
             .contentShape(Rectangle())
+            // D23: a click selects the icon; its settings show under the lanes.
+            .onTapGesture { selectedID = entry.id }
             .onHover { inside in
                 hovered = inside ? entry.id : (hovered == entry.id ? nil : hovered)
                 hoveredApp = inside ? entry.item.ownerBundleID : (hovered == nil ? nil : hoveredApp)
@@ -255,6 +307,8 @@ struct MenuBarLayoutEditor: View {
             }
             .accessibilityElement()
             .accessibilityLabel("\(entry.item.displayName), \(entry.section.title)")
+            .accessibilityAddTraits(selectedID == entry.id ? [.isButton, .isSelected] : .isButton)
+            .accessibilityAction { selectedID = entry.id }
     }
 }
 

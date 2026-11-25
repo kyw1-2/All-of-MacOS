@@ -84,6 +84,10 @@ enum AOMSize {
     static let sidebarMin: CGFloat = 220
     static let sidebarIdeal: CGFloat = 236
     static let sidebarMax: CGFloat = 300
+    /// Workbench 2 (D08): View › Compact Sidebar, off by default. Labels and
+    /// the search field still fit at 13 pt; it gives the page 20–28 pt back.
+    static let sidebarCompactMin: CGFloat = 200
+    static let sidebarCompactIdeal: CGFloat = 208
     /// A settings row: one line, and one line with a description under it.
     static let rowStandard: CGFloat = 34
     static let rowDetail: CGFloat = 44

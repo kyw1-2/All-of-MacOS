@@ -260,11 +260,19 @@ extension EnvironmentValues {
 /// The vertical hairline between a sheet's content and its trailing editor.
 /// Dragging it resizes the editor, like a split-view divider; the hit area is
 /// a few points wider than the line.
+///
+/// Workbench 2 (D04): pass `displayed` when the pane is drawn narrower than
+/// the stored width (the window has no room for it) and `maximum` for the
+/// room there is. A drag then starts from what is on screen and stops where
+/// the window ends; only a drag writes the stored width, so a window that
+/// shrinks and grows again gets the user's width back.
 struct AOMResizeDivider: View {
     @Binding var width: Double
     let range: ClosedRange<Double>
     /// Which side of the divider the resized pane is on.
     var paneEdge: HorizontalEdge = .trailing
+    var displayed: CGFloat? = nil
+    var maximum: CGFloat? = nil
     @State private var dragStart: Double?
     @State private var hovering = false
 
@@ -283,10 +291,13 @@ struct AOMResizeDivider: View {
             .gesture(
                 DragGesture(minimumDistance: 1, coordinateSpace: .global)
                     .onChanged { value in
-                        let start = dragStart ?? width
+                        let start = dragStart ?? displayed.map { Double($0) }
+                            ?? AOMPaneWidth.sanitized(width, range: range, fallback: range.lowerBound)
                         dragStart = start
                         let delta = Double(value.translation.width) * (paneEdge == .trailing ? -1 : 1)
-                        width = min(range.upperBound, max(range.lowerBound, start + delta))
+                        let next = AOMPaneWidth.dragged(start: start, delta: delta, range: range,
+                                                        maximum: maximum.map { Double($0) })
+                        if next != width { width = next }
                     }
                     .onEnded { _ in dragStart = nil }
             )

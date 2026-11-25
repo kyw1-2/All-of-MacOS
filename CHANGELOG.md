@@ -1,3 +1,21 @@
+## [7.17.0] - 2026-11-25 — Native Workbench 2
+
+From the 7.16.1 design binary review (`AOM-7.16.1-상용앱19종-디자인-바이너리검수-2026-11-25.md`, D01–D32) and its independent review. Status of every item: `docs/design-7.17-workbench2.md`. Release candidate: code CI passed on 86efcc5; real-window screenshot, accessibility and performance checks remain pending.
+
+- **Shared layout** (D02–D04): list + detail (+ inspector) pages decide from the width they have, through one tested resolver with 20 pt of hysteresis; saved widths are checked and come back when the window widens; dividers drag from what is on screen; dragging the list wider can close the inspector.
+- **Selection** (D03, D05): a search or filter that hides the selected item leaves nothing selected — in Automation, Clipboard, Capture and Audio — so ⌘↩, Return, Space, ⌫ and ⌘C never act on a different row.
+- **Inspectors** (D09, D12, D15, D18, D20, D25): one inspector style (aligned label/value rows) for Clipboard (item details), Automation (the selected step's options beside When → Then), Audio (the selected app's effects), Capture (size, file, commands) and Files (a recent file's info and path). Each appears only where the page has room and toggles with ⌥⌘I.
+- **Automation** (D14): one status line under the name — on and saved, off, no steps, or why it can't start or run. The list keeps its scroll position across narrow and wide windows.
+- **Window Tiling** (D21, D22): the real displays and the active zones drawn to scale at the top, the usable area apart from menu bar and Dock; Saved Windows can preview what a restore would move and skip, and why.
+- **Menu Bar** (D23): clicking an icon shows its section, lock reason, Move to and Rename under the lanes.
+- **Folder Rules** (D27): out-of-date and updating previews can't run picked items; Test a File says match, no match or can't tell for each condition.
+- **Settings** (D31): a search result opens its pane at the setting and focuses it.
+- **Workspace** (D10, D11): Now starts with what needs you; the rail shows Today, This Mac or Recent, one at a time.
+- **Activity** (D30): an event log apart from the figures, following the period and the chart's selected bar.
+- **System Tools** (D29): the last task's result, Run Again and whether it can be undone, under the header.
+- **Clipboard** (D16): the library's pinboard and type come back after the page is rebuilt.
+- **View › Compact Sidebar** (D08), off by default. **Diagnostics** (D01) is no longer called Inspect.
+
 ## [7.16.0] - 2026-11-24
 
 Fixes from GPT's independent review of 7.15 (`~/Downloads/AOM-7.15-독립검수-75refs-2026-11-24.md`, V01–V16). Status of every item: `docs/design-7.16.md`. The per-page restructuring (Inspector, Automation, Audio, Clipboard, Capture, Window Tiling) is not in this release.

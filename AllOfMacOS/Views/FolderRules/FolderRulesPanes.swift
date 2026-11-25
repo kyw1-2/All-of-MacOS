@@ -40,6 +40,23 @@ struct FolderRulesInspector: View {
             Spacer(minLength: AOMSpace.x1)
             AOMIconButton("arrow.clockwise", label: "Refresh Preview") { model.refreshPreview() }
         }
+        if model.previewLoading, model.preview != nil {
+            Label("Updating the preview…", systemImage: "arrow.triangle.2.circlepath")
+                .font(AOMFont.callout)
+                .foregroundStyle(AOMColor.textSecondary)
+        } else if model.isPreviewStale {
+            // D27: an edit since the preview; the list below is the old answer.
+            HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x2) {
+                Label("Out of date: the rule changed since this preview.", systemImage: "clock.arrow.circlepath")
+                    .font(AOMFont.callout)
+                    .foregroundStyle(AOMColor.warningText)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                Button("Refresh") { model.refreshPreview() }
+                    .controlSize(.small)
+            }
+            .accessibilityElement(children: .combine)
+        }
         if let preview = model.preview {
             if let problem = preview.folderState.problem {
                 Label(problem, systemImage: "exclamationmark.triangle")
@@ -72,7 +89,8 @@ struct FolderRulesInspector: View {
             Spacer(minLength: AOMSpace.x1)
             Button(count == 0 ? "Run Selected" : "Run on \(count) Selected") { model.runPicked() }
                 .controlSize(.small)
-                .disabled(count == 0 || engine.isRunning)
+                // D05/D27: items picked from an out-of-date or refreshing preview don't run.
+                .disabled(!model.canRunPicked || engine.isRunning)
                 .help(rule.actionsNeedingApproval.isEmpty
                       ? "Runs the rule on the checked items now"
                       : "Runs the rule on the checked items now — this counts as your OK for them")
@@ -103,15 +121,25 @@ struct FolderRulesInspector: View {
                 return true
             } isTargeted: { testTargeted = $0 }
             if let result = model.testResult {
+                // D27: match, no match or can't tell, per condition and overall.
+                let verdicts = FolderRulesVerdict.conditions(rule.conditions, results: result.conditionResults, state: result.state)
+                let overall = FolderRulesVerdict.overall(result.state)
+                Label(overall == .match ? "Matches this rule" : (overall == .noMatch ? "Doesn't match this rule" : "The rule can't tell"),
+                      systemImage: overall.symbol)
+                    .font(AOMFont.callout.weight(.semibold))
+                    .foregroundStyle(tint(overall))
                 ForEach(Array(rule.conditions.enumerated()), id: \.element.id) { index, condition in
-                    let passed = result.conditionResults.indices.contains(index) && result.conditionResults[index]
+                    let verdict = verdicts.indices.contains(index) ? verdicts[index] : .unknown
                     Label {
                         Text(FolderRulesText.sentence(condition)).font(AOMFont.callout)
                     } icon: {
-                        Image(systemName: passed ? "checkmark.circle.fill" : "xmark.circle.fill")
-                            .foregroundStyle(passed ? AOMColor.success : AOMColor.danger)
+                        Image(systemName: verdict.symbol).foregroundStyle(tint(verdict))
                     }
-                    .accessibilityLabel("\(FolderRulesText.sentence(condition)): \(passed ? "matches" : "doesn't match")")
+                    .accessibilityLabel("\(FolderRulesText.sentence(condition)): \(verdict.spoken)")
+                }
+                if case .needsReview(let reason) = result.state {
+                    Text(reason).font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Text(result.state == .noMatch ? "The rule wouldn't act on this item." : "The rule would:")
                     .font(AOMFont.callout.weight(.medium))
@@ -121,6 +149,14 @@ struct FolderRulesInspector: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+        }
+    }
+
+    private func tint(_ verdict: FolderRulesVerdict) -> Color {
+        switch verdict {
+        case .match: return AOMColor.success
+        case .noMatch: return AOMColor.danger
+        case .unknown: return AOMColor.warningText
         }
     }
 

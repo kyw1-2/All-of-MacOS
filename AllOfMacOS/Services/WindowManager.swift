@@ -130,6 +130,76 @@ struct SavedWindowPlacement: Codable, Equatable {
         return matching.count == 1 ? matching[0] : nil
     }
 }
+/// Workbench 2 (D22): how a saved layout maps onto the windows and displays
+/// there are now. The rules are restore's own (7.x), moved here so the
+/// editor can show the plan before anything moves.
+struct SavedWindowRestorePlan: Equatable {
+    enum SkipReason: Equatable {
+        /// No open window matches, or more than one does.
+        case windowNotFound
+        /// Another saved window already took the match.
+        case alreadyMatched
+        /// The display it was saved on isn't connected.
+        case displayMissing
+        /// The saved frame or the display's usable area isn't usable.
+        case invalidGeometry
+
+        var text: String {
+            switch self {
+            case .windowNotFound: return "Window closed or ambiguous"
+            case .alreadyMatched: return "Matched by another saved window"
+            case .displayMissing: return "Its display isn't connected"
+            case .invalidGeometry: return "Saved size can't be used"
+            }
+        }
+    }
+
+    struct Move: Equatable {
+        var placement: Int
+        var candidate: Int
+        var display: Int
+        var frame: CGRect
+    }
+
+    struct Skip: Equatable {
+        var placement: Int
+        var reason: SkipReason
+    }
+
+    var moves: [Move] = []
+    var skipped: [Skip] = []
+
+    static func make(_ windows: [SavedWindowPlacement], candidates: [SavedWindowPlacement], displayIDs: [String],
+                     visibleFrames: [CGRect]) -> SavedWindowRestorePlan {
+        var plan = SavedWindowRestorePlan()
+        var matched = Set<Int>()
+        for (index, placement) in windows.enumerated() {
+            guard let match = SavedWindowPlacement.uniqueMatch(placement, in: candidates) else {
+                plan.skipped.append(Skip(placement: index, reason: .windowNotFound)); continue
+            }
+            guard !matched.contains(match) else {
+                plan.skipped.append(Skip(placement: index, reason: .alreadyMatched)); continue
+            }
+            guard let screen = displayIDs.firstIndex(of: placement.displayID), visibleFrames.indices.contains(screen) else {
+                plan.skipped.append(Skip(placement: index, reason: .displayMissing)); continue
+            }
+            let visible = visibleFrames[screen]
+            let frame = placement.normalizedFrame
+            guard [frame.minX, frame.minY, frame.width, frame.height, visible.width, visible.height].allSatisfy(\.isFinite),
+                  frame.width > 0, frame.height > 0, visible.width > 0, visible.height > 0 else {
+                plan.skipped.append(Skip(placement: index, reason: .invalidGeometry)); continue
+            }
+            matched.insert(match)
+            var rect = WindowGeometry.snapFrame(normalized: placement.normalizedFrame, visible: visible)
+            rect.size.width = min(rect.width, visible.width); rect.size.height = min(rect.height, visible.height)
+            rect.origin.x = max(visible.minX, min(rect.minX, visible.maxX-rect.width))
+            rect.origin.y = max(visible.minY, min(rect.minY, visible.maxY-rect.height))
+            plan.moves.append(Move(placement: index, candidate: match, display: screen, frame: rect))
+        }
+        return plan
+    }
+}
+
 struct SavedWindowLayout: Identifiable, Codable {
     var id = UUID()
     var name: String
@@ -229,29 +299,27 @@ final class WindowManager: ObservableObject {
         let live = visibleWindows()
         let displays = screens()
         let ids = NSScreen.screens.map { DisplayTopology.identifier($0) ?? "" }
-        var changes: [Saved] = []; var skipped = 0
-        let candidates = live.map { $0.1 }
-        var matched = Set<Int>()
-        for placement in layout.windows {
-            guard let match = SavedWindowPlacement.uniqueMatch(placement, in: candidates),
-                  !matched.contains(match), let screen = ids.firstIndex(of: placement.displayID),
-                  displays.indices.contains(screen) else { skipped += 1; continue }
-            let visible = displays[screen].visible
-            let frame = placement.normalizedFrame
-            guard [frame.minX, frame.minY, frame.width, frame.height, visible.width, visible.height].allSatisfy(\.isFinite),
-                  frame.width > 0, frame.height > 0, visible.width > 0, visible.height > 0 else { skipped += 1; continue }
-            matched.insert(match)
-            var rect = WindowGeometry.snapFrame(normalized: placement.normalizedFrame, visible: visible)
-            rect.size.width = min(rect.width, visible.width); rect.size.height = min(rect.height, visible.height)
-            rect.origin.x = max(visible.minX, min(rect.minX, visible.maxX-rect.width))
-            rect.origin.y = max(visible.minY, min(rect.minY, visible.maxY-rect.height))
-            changes.append(Saved(target: live[match].0, frame: rect))
-        }
+        // Workbench 2 (D22): the same matching, as a plan the editor can show first.
+        let plan = SavedWindowRestorePlan.make(layout.windows, candidates: live.map { $0.1 }, displayIDs: ids,
+                                               visibleFrames: displays.map { $0.visible })
+        var changes: [Saved] = []
+        let skipped = plan.skipped.count
+        for move in plan.moves { changes.append(Saved(target: live[move.candidate].0, frame: move.frame)) }
         applyBatch(changes, recordUndo: true) { success, failed in
             self.lastLayoutResult = "Restored \(success) · skipped \(skipped) · failed \(failed)."
             completion(success > 0 && skipped == 0 && failed == 0)
         }
     }
+    /// D22: what restoring `name` would do now — which windows move where,
+    /// which are skipped and why — without moving anything.
+    func restorePreview(name: String) -> SavedWindowRestorePlan? {
+        guard let layout = layouts.first(where: { $0.name == name }) else { return nil }
+        let live = visibleWindows()
+        let ids = NSScreen.screens.map { DisplayTopology.identifier($0) ?? "" }
+        return SavedWindowRestorePlan.make(layout.windows, candidates: live.map { $0.1 }, displayIDs: ids,
+                                           visibleFrames: screens().map { $0.visible })
+    }
+
     func undoLastPlacement(completion: @escaping (Bool) -> Void) {
         guard !layoutBusy, moving.isEmpty, let changes = history.popLast() else { completion(false); return }
         historyCount = history.count

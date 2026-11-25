@@ -92,6 +92,14 @@ struct ClipboardStudioView: View {
     @StateObject private var toast = AOMToastModel()
     /// List + detail (design-3.4.0 b.2): the list column's width.
     @AppStorage("AOMClipboardListWidth") private var listWidth: Double = 320
+    /// Workbench 2 (D15, D09): the selected item's details in a trailing
+    /// inspector when the window has room; in the detail otherwise.
+    @AppStorage("AOMClipboardInspector") private var showsInspector = true
+    @State private var inspectorBeside = false
+    /// D16: the pinboard and type the library was narrowed to, kept across
+    /// the page being rebuilt (LRU eviction, relaunch). The search text isn't.
+    @AppStorage("AOMClipboardLibraryBoard") private var savedBoard = ""
+    @AppStorage("AOMClipboardLibraryKind") private var savedKind = ""
     @Environment(\.undoManager) private var undoManager
     @State private var showingNewTextSheet = false
     @State private var newText = ""
@@ -207,8 +215,15 @@ struct ClipboardStudioView: View {
             }
         }
         .sheet(isPresented: $showingNewBoardSheet) { newBoardSheet }
+        .onChange(of: search.board) { _, board in savedBoard = board?.uuidString ?? "" }
+        .onChange(of: search.kind) { _, kind in savedKind = kind?.rawValue ?? "" }
         .sheet(isPresented: $showingNewTextSheet) { newTextSheet }
         .onAppear {
+            // D16: back to the pinboard and type last shown, if they still exist.
+            let restored = ClipboardLibraryFilterMemory.restore(board: savedBoard, kind: savedKind,
+                                                               boards: store.boards.map(\.id))
+            if search.board == nil { search.board = restored.board }
+            if search.kind == nil { search.kind = restored.kind }
             // Isolated previews can open the settings sheet for review
             // (`--aom-preview-clipboard-settings`).
             if PresetManager.isUIPreview, ProcessInfo.processInfo.arguments.contains("--aom-preview-clipboard-settings") {
@@ -324,10 +339,12 @@ struct ClipboardStudioView: View {
                 }
                 .background(AOMPageTint())
             } else {
-                // The list + detail template (b.2) without `AOMListDetail`: its
-                // `.inspector` gives the panes a toolbar inset, which blurred the
-                // first row here, where the panes sit under the header.
-                HStack(spacing: 0) {
+                // The list + detail template (b.2). Workbench 2: `AOMListDetail`
+                // draws plain columns now (no `.inspector` inset under the
+                // header), and keeps the detail at its minimum in a narrow
+                // window by drawing the list narrower than its stored width.
+                AOMListDetail(listWidth: $listWidth, showsInspector: $showsInspector, narrowInspector: .inDetail,
+                              onArrangementChange: { inspectorBeside = $0.showsInspectorBeside }) {
                     AOMListColumn(rows: {
                         List(selection: $selectedEntryID) {
                             ForEach(entries) { entry in libraryRow(entry) }
@@ -361,31 +378,41 @@ struct ClipboardStudioView: View {
                                 .disabled(!store.entries.contains { $0.pinboardIDs.isEmpty })
                         }
                     })
-                    .frame(width: CGFloat(min(AOMSize.moduleListRange.upperBound,
-                                              max(AOMSize.moduleListRange.lowerBound, listWidth))))
-                    AOMResizeDivider(width: $listWidth, range: AOMSize.moduleListRange, paneEdge: .leading)
+                } detail: {
                     Group {
                         if let entry = entries.first(where: { $0.id == selectedEntryID }) {
                             detailPane(entry)
                         } else {
                             AOMEmptyState("No Item Selected", systemImage: "doc.on.clipboard",
-                                          message: "Select an item to see all of it, copy it or pin it.")
+                                          message: isNarrowed && !entries.isEmpty
+                                              ? "Select an item in these results to see all of it, copy it or pin it."
+                                              : "Select an item to see all of it, copy it or pin it.")
                         }
                     }
-                    .frame(minWidth: AOMSize.detailMinimum, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                } inspector: {
+                    inspector(entries.first(where: { $0.id == selectedEntryID }))
                 }
-                .background(AOMPageTint())
-                // The detail always shows the highlighted row: the first item
-                // is selected until another one is (and after a delete).
-                .onAppear { selectFirstIfNeeded(entries) }
-                .onChange(of: entries.map(\.id)) { _, _ in selectFirstIfNeeded(entries) }
+                // The detail shows the highlighted row: the first item is
+                // selected on arrival and when the library isn't narrowed.
+                // Workbench 2 (D03, D05): a search or filter that hides the
+                // selected item leaves nothing selected (Return and ⌫ do
+                // nothing) instead of moving to whatever is first now.
+                .onAppear { reconcileSelection(entries, arriving: true) }
+                .onChange(of: entries.map(\.id)) { _, _ in reconcileSelection(entries, arriving: false) }
             }
         }
     }
 
-    private func selectFirstIfNeeded(_ entries: [ClipboardEntry]) {
-        guard !entries.contains(where: { $0.id == selectedEntryID }) else { return }
-        selectedEntryID = entries.first?.id
+    /// Whether a search or filter (not the board, which is a place) narrows the library.
+    private var isNarrowed: Bool {
+        !search.query.trimmingCharacters(in: .whitespaces).isEmpty || search.kind != nil
+            || search.source != nil || search.recentDays != 0
+    }
+
+    private func reconcileSelection(_ entries: [ClipboardEntry], arriving: Bool) {
+        let next = AOMStableSelection.reconcile(selectedEntryID, visible: entries.map(\.id),
+                                                autoSelectFirst: arriving || !isNarrowed)
+        if next != selectedEntryID { selectedEntryID = next }
     }
 
     /// Two lines per item, like a Mail or Notes list: the title in Body over
@@ -487,12 +514,11 @@ struct ClipboardStudioView: View {
                     .background(AOMColor.surface, in: RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous))
                     .clipShape(RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous))
                     .onDrag { ClipboardStudioDrag.provider(for: entry) }
-                AOMSection("Details") {
-                    detailRow("Kind", entry.kind.displayName)
-                    detailRow("From", entry.sourceName ?? "Unknown app")
-                    detailRow("Copied", entry.lastCopiedAt.formatted(date: .abbreviated, time: .shortened))
-                    detailRow("Contents", detailSummary[entry.id] ?? "…")
-                    detailRow("Pinboards", pinboardNames(entry) ?? "None")
+                // In the inspector when it is beside the preview (D15).
+                if !(showsInspector && inspectorBeside) {
+                    AOMSection("Details") {
+                        ForEach(details(entry)) { row in detailRow(row.label, row.value) }
+                    }
                 }
             }
             .padding(AOMSpace.pageMargin)
@@ -505,6 +531,51 @@ struct ClipboardStudioView: View {
             let content = await ClipboardPreviewCache.shared.content(for: entry)
             guard !Task.isCancelled else { return }
             detailSummary[entry.id] = content.summary
+        }
+    }
+
+    /// The fixed metadata of an item, in one order for the detail and the
+    /// inspector: what it is, where and when it came from, how big, where pinned.
+    private struct DetailRow: Identifiable {
+        let label: String
+        let value: String
+        var id: String { label }
+    }
+
+    private func details(_ entry: ClipboardEntry) -> [DetailRow] {
+        [DetailRow(label: "Kind", value: entry.kind.displayName),
+         DetailRow(label: "From", value: entry.sourceName ?? "Unknown app"),
+         DetailRow(label: "Copied", value: entry.lastCopiedAt.formatted(date: .abbreviated, time: .shortened)),
+         DetailRow(label: "Contents", value: detailSummary[entry.id] ?? "…"),
+         DetailRow(label: "Pinboards", value: pinboardNames(entry) ?? "None")]
+    }
+
+    /// The trailing inspector: the selected item's details as aligned
+    /// label/value rows (AOMInspectorRow), nothing when no item is selected.
+    @ViewBuilder private func inspector(_ entry: ClipboardEntry?) -> some View {
+        AOMInspector {
+            if let entry {
+                AOMInspectorSection("Details", showsDivider: false) {
+                    ForEach(details(entry)) { row in
+                        AOMInspectorRow(row.label) {
+                            Text(row.value).monospacedDigit().textSelection(.enabled)
+                        }
+                    }
+                }
+                AOMInspectorSection("Source") {
+                    AOMInspectorRow("App", text: entry.sourceName ?? "Unknown app")
+                    if let bundle = entry.sourceBundleID, !bundle.isEmpty {
+                        AOMInspectorRow("Bundle ID") { Text(bundle).textSelection(.enabled) }
+                    }
+                }
+            } else {
+                AOMInspectorSection("Details", showsDivider: false) {
+                    Text("Select an item to see where it came from and what it holds.")
+                        .font(AOMFont.callout)
+                        .foregroundStyle(AOMColor.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
         }
     }
 
@@ -648,6 +719,15 @@ struct ClipboardStudioView: View {
             }
             .pickerStyle(.segmented)
             .help("List with preview, or a gallery of cards")
+            if !gridLayout {
+                Button {
+                    withAnimation(AOMMotion.panel) { showsInspector.toggle() }
+                } label: {
+                    Label(showsInspector ? "Hide Inspector" : "Show Inspector", systemImage: "sidebar.trailing")
+                }
+                .keyboardShortcut("i", modifiers: [.command, .option])
+                .help(showsInspector ? "Hide the item's details (⌥⌘I)" : "Show the item's details beside the preview (⌥⌘I)")
+            }
             // Pause lives with the other history commands; while paused the
             // filter bar and the sidebar say so, with Resume one click away.
             Menu {
@@ -1138,5 +1218,14 @@ private extension Color {
             blue:  Double(b) / 255,
             opacity: Double(a) / 255
         )
+    }
+}
+
+/// D16: which saved pinboard and type filter to restore. A pinboard that was
+/// deleted meanwhile, or a value an older build wrote, restores nothing.
+enum ClipboardLibraryFilterMemory {
+    static func restore(board: String, kind: String, boards: [UUID]) -> (board: UUID?, kind: ClipboardEntry.Kind?) {
+        let id = UUID(uuidString: board).flatMap { boards.contains($0) ? $0 : nil }
+        return (id, ClipboardEntry.Kind(rawValue: kind))
     }
 }

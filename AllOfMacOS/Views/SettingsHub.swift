@@ -73,6 +73,23 @@ struct SettingItem: Identifiable {
     var group: String?
 }
 
+/// Workbench 2 (D31): where a search result's "Show in <Category>" goes.
+enum SettingsSearchReveal {
+    struct Target: Equatable {
+        let category: SettingsCategory
+        /// The row to scroll to and mark; nil for panes that draw their own
+        /// rows (Shortcuts, Permissions, AI), which open at the top.
+        let rowID: String?
+    }
+
+    /// The result's category and row. Nothing while a sheet is open: moving
+    /// the pane under a sheet would leave its unsaved edits behind.
+    static func target(category: SettingsCategory, rowID: String, sheetOpen: Bool) -> Target? {
+        guard !sheetOpen else { return nil }
+        return Target(category: category, rowID: category.isDashboard ? nil : rowID)
+    }
+}
+
 // MARK: - Bindings that write immediately
 
 func aomSettingBool(_ key: String, _ fallback: Bool) -> Binding<Bool> {
@@ -739,6 +756,11 @@ struct SettingsHubView: View {
     @State private var sheet: AdvancedSheet?
     @State private var savedFlash = false
     @State private var flashTask: Task<Void, Never>?
+    /// D31: the row a search result was revealed at, marked for a moment.
+    @State private var revealedRowID: String?
+    @State private var revealTask: Task<Void, Never>?
+    /// Bumped on each reveal: the revealed row focuses its control.
+    @State private var revealFocusToken = 0
     @AppStorage("AOMAppearance") private var appearance = "system"
 
     private var allItems: [SettingItem] {
@@ -887,11 +909,12 @@ struct SettingsHubView: View {
         } else if visibleSections.isEmpty {
             ContentUnavailableView.search(text: query)
         } else {
+            ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
                     ForEach(visibleSections) { section in
                         if isSearching {
-                            groupView(section.category.title, rows: section.items)
+                            groupView(section.category.title, rows: section.items, revealCategory: section.category)
                         } else {
                             ForEach(Array(groups(section.items).enumerated()), id: \.offset) { _, group in
                                 groupView(group.title, rows: group.rows)
@@ -915,20 +938,68 @@ struct SettingsHubView: View {
             // Isolated previews only: `--aom-preview-scroll-bottom` or
             // `--aom-preview-scroll-fraction` open a long pane part-way down.
             .defaultScrollAnchor(PreviewScrollAnchor.current)
+            .onAppear {
+                // A revealed result: scroll its row into the middle.
+                guard !isSearching, let row = revealedRowID else { return }
+                DispatchQueue.main.async { proxy.scrollTo(row, anchor: .center) }
+            }
+            }
             .id(isSearching ? "search" : category.id)
+        }
+    }
+
+    /// D31: from a search result to its place — the category in the sidebar,
+    /// the row scrolled into view and marked for a moment.
+    private func reveal(_ row: SettingItem, in rowCategory: SettingsCategory) {
+        guard let target = SettingsSearchReveal.target(category: rowCategory, rowID: row.id, sheetOpen: sheet != nil) else { return }
+        revealTask?.cancel()
+        revealedRowID = target.rowID
+        revealFocusToken &+= 1
+        query = ""
+        category = target.category
+        revealTask = Task {
+            try? await Task.sleep(nanoseconds: 1_600_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run { withAnimation(AOMDesign.animation(.easeIn(duration: 0.2))) { revealedRowID = nil } }
         }
     }
 
     /// e.2: the title above the card in the Section style every main-window
     /// page uses, the rows inside with dividers inset to the title text.
-    private func groupView(_ title: String?, rows: [SettingItem]) -> some View {
+    private func groupView(_ title: String?, rows: [SettingItem], revealCategory: SettingsCategory? = nil) -> some View {
         VStack(alignment: .leading, spacing: AOMSpace.titleGap) {
             if let title {
-                AOMSectionTitle(title)
+                if let revealCategory, let first = rows.first {
+                    // Search results: the way to the rows' own pane.
+                    AOMSectionTitle(title) {
+                        Button("Show in \(revealCategory.title)") { reveal(first, in: revealCategory) }
+                            .buttonStyle(.link)
+                            .font(AOMFont.callout)
+                            .disabled(sheet != nil)
+                            .help("Opens \(revealCategory.title) at this setting")
+                    }
+                } else {
+                    AOMSectionTitle(title)
+                }
             }
             VStack(spacing: 0) {
                 ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                    row.content
+                    Group {
+                        if let revealCategory {
+                            row.content.contextMenu {
+                                Button("Show in \(revealCategory.title)") { reveal(row, in: revealCategory) }
+                                    .disabled(sheet != nil)
+                            }
+                        } else {
+                            row.content
+                                .background(revealedRowID == row.id ? AOMColor.accent.opacity(0.12) : Color.clear)
+                                // D31: the revealed row's control takes keyboard focus.
+                                .background {
+                                    if revealedRowID == row.id { AOMFocusFirstControl(token: revealFocusToken) }
+                                }
+                        }
+                    }
+                    .id(row.id)
                     if index < rows.count - 1 {
                         // Inset to the title text, as `AOMSettingRow` draws it.
                         AOMDivider().padding(.leading, AOMSpace.rowSymbolInset)

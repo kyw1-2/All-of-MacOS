@@ -28,7 +28,21 @@ struct FilesPage: View {
 
     private var isOn: Bool { settings.dialogHelper || settings.shakeOpensShelf || settings.shiftOpensShelf }
 
-    var body: some View {
+    /// D25: the file selected in a list, shown in the trailing inspector
+    /// while the page has room beside it.
+    @State private var inspectedFile: URL?
+    @State private var inspectorFits = false
+    @AppStorage("AOMFilesInspector") private var showsInspector = true
+    private static let pageMinimum: CGFloat = 600
+
+    private func updateInspectorFits(_ width: CGFloat) {
+        let fits = AOMWorkbenchPolicy.sideBySide(
+            available: width, minimum: Self.pageMinimum + AOMSize.inspectorIdeal + AOMWorkbenchPolicy.dividerAllowance,
+            current: inspectorFits)
+        if fits != inspectorFits { inspectorFits = fits }
+    }
+
+    private var page: some View {
         AOMPage {
             // 7.15 (M01): the toolbar says "Files"; the header says its state.
             AOMPageHeader(isOn ? "Files is on" : "Files is off", subtitle: AOMMainTab.files.subtitle,
@@ -58,8 +72,30 @@ struct FilesPage: View {
             FilesShelfSection(settings: settings, shelf: shelf, toast: toast, openShortcutSettings: openShortcutSettings,
                               quickLook: quickLook)
             FilesActivitySection(log: FilesActivityLog.shared)
-            FilesRecentSection(recent: recent, toast: toast, quickLook: quickLook)
+            FilesRecentSection(recent: recent, toast: toast, quickLook: quickLook,
+                               onSelect: { inspectedFile = $0 })
             diskImageSection
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            page
+            if showsInspector, inspectorFits, let url = inspectedFile {
+                AOMDivider(axis: .vertical)
+                FilesInfoInspector(url: url, quickLook: { quickLook([url], 0) }, close: { inspectedFile = nil })
+                    .frame(width: AOMSize.inspectorIdeal)
+                    .frame(maxHeight: .infinity)
+                    .accessibilityElement(children: .contain)
+                    .accessibilityLabel("Inspector")
+            }
+        }
+        .background {
+            GeometryReader { proxy in
+                Color.clear
+                    .onAppear { updateInspectorFits(proxy.size.width) }
+                    .onChange(of: proxy.size.width) { _, width in updateInspectorFits(width) }
+            }
         }
         .aomPage("Files")
         .aomToast(toast)

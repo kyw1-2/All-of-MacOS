@@ -24,6 +24,11 @@ struct CaptureStudioView: View {
     @State private var showingClearConfirmation = false
     @FocusState private var galleryFocused: Bool
     @StateObject private var toast = AOMToastModel()
+    /// D19/D20: the library on the left, the selected capture's properties
+    /// and commands in a trailing inspector when the page has room.
+    @AppStorage("AOMCaptureInspector") private var showsInspector = true
+    @State private var inspectorFits = false
+    @State private var selectedFileBytes: Int64?
 
     enum CaptureFilter: String, CaseIterable, Identifiable {
         case all = "All"
@@ -71,7 +76,139 @@ struct CaptureStudioView: View {
         history.entries.filter { matches($0, filter) }.count
     }
 
+    /// The selected capture, only while it is one of the captures shown.
+    private var selectedEntry: CaptureHistoryEntry? {
+        guard let id = selectedEntryID else { return nil }
+        return filteredEntries.first { $0.id == id }
+    }
+
+    private var inspectorShown: Bool { showsInspector && inspectorFits && !history.entries.isEmpty }
+
     var body: some View {
+        HStack(spacing: 0) {
+            library
+            if inspectorShown {
+                AOMDivider(axis: .vertical)
+                captureInspector
+                    .frame(width: AOMSize.inspectorIdeal)
+                    .frame(maxHeight: .infinity)
+                    .accessibilityElement(children: .contain)
+                    .accessibilityLabel("Inspector")
+            }
+        }
+        .background {
+            GeometryReader { proxy in
+                Color.clear
+                    .onAppear { updateInspectorFits(proxy.size.width) }
+                    .onChange(of: proxy.size.width) { _, width in updateInspectorFits(width) }
+            }
+        }
+        // D05: a search or filter that hides the selected capture leaves
+        // nothing selected; Return, Space, ⌫ and ⌘C then do nothing.
+        .onChange(of: filteredEntries.map(\.id)) { _, ids in
+            let next = AOMStableSelection.reconcile(selectedEntryID, visible: ids, autoSelectFirst: false)
+            if next != selectedEntryID { selectedEntryID = next }
+        }
+        .task(id: selectedEntry?.fileURL) {
+            // The file's size for the inspector, read off the main thread once per selection.
+            guard let url = selectedEntry?.fileURL else { selectedFileBytes = nil; return }
+            let bytes = await Task.detached(priority: .utility) {
+                (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map { Int64($0) }
+            }.value
+            guard !Task.isCancelled else { return }
+            selectedFileBytes = bytes
+        }
+        .aomPage("Capture")
+        .aomObserving(observation)
+        .aomPageToolbar {
+            toolbarContent
+            AOMToolbarSearchItem(text: $query, prompt: "Search captures")
+        }
+        .sheet(isPresented: $showingSettingsSheet) {
+            ModuleSettingsSheet("Capture Settings", done: { showingSettingsSheet = false }) {
+                CaptureSettingsView()
+            }
+        }
+        .alert("Clear capture history?", isPresented: $showingClearConfirmation) {
+            Button("Cancel", role: .cancel) { }
+            Button("Clear All", role: .destructive) {
+                history.removeAll()
+                selectedEntryID = nil
+                toast.show("Capture history cleared")
+            }
+        } message: {
+            Text("Recent captures are removed from history. Screenshot and video files saved in Finder are not deleted.")
+        }
+        .aomToast(toast)
+    }
+
+    // MARK: - Inspector (D20)
+
+    /// The library keeps at least this much beside the inspector.
+    private static let libraryMinimum: CGFloat = 560
+
+    private func updateInspectorFits(_ width: CGFloat) {
+        let fits = AOMWorkbenchPolicy.sideBySide(
+            available: width, minimum: Self.libraryMinimum + AOMSize.inspectorIdeal + AOMWorkbenchPolicy.dividerAllowance,
+            current: inspectorFits)
+        if fits != inspectorFits { inspectorFits = fits }
+    }
+
+    private var captureInspector: some View {
+        AOMInspector {
+            if let entry = selectedEntry {
+                AOMInspectorSection(entry.displayName, showsDivider: false) {
+                    AOMInspectorRow("Kind", text: entry.kind.displayName)
+                    AOMInspectorRow("Pixels", text: "\(Int(entry.pixelSize.width)) × \(Int(entry.pixelSize.height))")
+                    AOMInspectorRow("Points", text: "\(Int(entry.pointSize.width)) × \(Int(entry.pointSize.height)) @\(Double(entry.scale).formatted(.number.precision(.fractionLength(0...1))))x")
+                    AOMInspectorRow("Captured", text: entry.capturedAt.formatted(date: .abbreviated, time: .shortened))
+                    AOMInspectorRow("Kept", text: entry.isPinned ? "Yes — past the history limits" : "No")
+                }
+                AOMInspectorSection("File") {
+                    if let url = entry.fileURL {
+                        AOMInspectorRow("Name") { Text(url.lastPathComponent).textSelection(.enabled) }
+                        AOMInspectorRow("Format", text: url.pathExtension.uppercased())
+                        AOMInspectorRow("Size", text: selectedFileBytes.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) } ?? "…")
+                        AOMInspectorRow("Where") {
+                            Text((url.deletingLastPathComponent().path as NSString).abbreviatingWithTildeInPath)
+                                .textSelection(.enabled)
+                                .lineLimit(3)
+                        }
+                    } else {
+                        Text("Not saved to a file. Copy it, or set where captures are saved in Capture Settings.")
+                            .font(AOMFont.callout)
+                            .foregroundStyle(AOMColor.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                AOMInspectorSection("Actions") {
+                    HStack(spacing: AOMSpace.x2) {
+                        Button(entry.kind == .videoRecording ? "Edit Recording" : "Annotate") { CapturePreviewActions.edit(entry) }
+                            .help("Open it in the editor (Return)")
+                        Button("Preview") { QuickAccessExpandedPreview.shared.open(entry: entry) }
+                            .help("Quick Look (Space)")
+                    }
+                    HStack(spacing: AOMSpace.x2) {
+                        Button("Copy") { copy(entry) }.help("Copy it (⌘C)")
+                        if let url = entry.fileURL {
+                            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+                        }
+                    }
+                }
+            } else {
+                AOMInspectorSection("Capture", showsDivider: false) {
+                    Text("Select a capture to see its size, file and where it is saved.")
+                        .font(AOMFont.callout)
+                        .foregroundStyle(AOMColor.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    // MARK: - Library (D19: commands on top, the library under them)
+
+    private var library: some View {
         AOMPage {
             header
             if recordingService.isRecording {
@@ -102,28 +239,6 @@ struct CaptureStudioView: View {
             // The ruler's settings come after the captures they sit beside.
             ScreenRulerSection()
         }
-        .aomPage("Capture")
-        .aomObserving(observation)
-        .aomPageToolbar {
-            toolbarContent
-            AOMToolbarSearchItem(text: $query, prompt: "Search captures")
-        }
-        .sheet(isPresented: $showingSettingsSheet) {
-            ModuleSettingsSheet("Capture Settings", done: { showingSettingsSheet = false }) {
-                CaptureSettingsView()
-            }
-        }
-        .alert("Clear capture history?", isPresented: $showingClearConfirmation) {
-            Button("Cancel", role: .cancel) { }
-            Button("Clear All", role: .destructive) {
-                history.removeAll()
-                selectedEntryID = nil
-                toast.show("Capture history cleared")
-            }
-        } message: {
-            Text("Recent captures are removed from history. Screenshot and video files saved in Finder are not deleted.")
-        }
-        .aomToast(toast)
     }
 
     /// d.9: what Capture holds and when it last ran; recording is a status
@@ -156,6 +271,16 @@ struct CaptureStudioView: View {
                 Label("History Overlay", systemImage: "clock.arrow.circlepath")
             }
             .help("Open the floating capture history")
+            if !history.entries.isEmpty {
+                Button {
+                    withAnimation(AOMMotion.panel) { showsInspector.toggle() }
+                } label: {
+                    Label(showsInspector ? "Hide Inspector" : "Show Inspector", systemImage: "sidebar.trailing")
+                }
+                .keyboardShortcut("i", modifiers: [.command, .option])
+                .help(showsInspector ? "Hide the selected capture's details (⌥⌘I)"
+                                     : "Show the selected capture's size, file and actions beside the library (⌥⌘I)")
+            }
             Menu {
                 Button("Open Image…") { AnnotationEditorController.shared.chooseImageOrProject() }
                 Button("Toggle Desktop Icons") {

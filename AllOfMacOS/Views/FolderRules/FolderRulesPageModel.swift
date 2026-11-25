@@ -22,6 +22,21 @@ final class FolderRulesPageModel: ObservableObject {
     private(set) var draftBase: FolderRule?
     @Published var preview: FolderRulePreview? { didSet { prunePicked() } }
     @Published var previewLoading = false
+    /// Workbench 2 (D27): the version of the rule the preview was made for,
+    /// so an edit not yet applied (a rule that is on) marks it out of date
+    /// instead of leaving an old answer looking current.
+    @Published private(set) var previewRule: FolderRule?
+
+    /// The preview answers for a different version of the rule.
+    var isPreviewStale: Bool {
+        preview != nil && FolderRulesPreviewFreshness.isStale(previewFor: previewRule, draft: draft)
+    }
+
+    /// Items picked from the preview may run only while it is current and
+    /// not being replaced (a refresh can drop or change them).
+    var canRunPicked: Bool {
+        FolderRulesPreviewFreshness.canRun(picked: pickedItems.count, loading: previewLoading, stale: isPreviewStale)
+    }
     /// 7.2.2 (audit N03): preview items picked for Run Selected, by id.
     @Published var pickedPreviewItems: Set<String> = []
     /// The preview shown in place before a rule is turned on.
@@ -229,12 +244,13 @@ final class FolderRulesPageModel: ObservableObject {
 
     func refreshPreview() {
         previewTask?.cancel()
-        guard let rule = draft else { preview = nil; return }
+        guard let rule = draft else { preview = nil; previewRule = nil; previewLoading = false; return }
         previewLoading = true
         previewTask = Task { [weak self] in
             guard let self else { return }
             let result = await engine.preview(rule)
             guard !Task.isCancelled, draft?.id == rule.id else { return }
+            previewRule = rule
             preview = result
             previewLoading = false
         }
@@ -255,7 +271,7 @@ final class FolderRulesPageModel: ObservableObject {
     }
 
     func runPicked() {
-        guard let rule = draft else { return }
+        guard let rule = draft, canRunPicked else { return }
         let items = pickedItems
         guard !items.isEmpty else { return }
         engine.runSelected(rule, items: items)
@@ -415,5 +431,69 @@ final class FolderRulesPageModel: ObservableObject {
         let detail = activity.undone ? "Undone · " + activity.detail : activity.detail
         return AOMLogEntry(id: activity.id, date: activity.date, tone: tone, message: title, detail: detail,
                            source: activity.fileName.isEmpty ? nil : activity.ruleName)
+    }
+}
+
+/// Workbench 2 (D27): whether a Folder Rules preview still describes the rule
+/// being edited. Only what changes the answer counts — the folder, the match,
+/// the conditions, the actions, subfolders and scan recognition — not the
+/// name or the switch.
+enum FolderRulesPreviewFreshness {
+    static func isStale(previewFor made: FolderRule?, draft: FolderRule?) -> Bool {
+        guard let made, let draft else { return false }
+        guard made.id == draft.id else { return true }
+        return made.folderID != draft.folderID || made.match != draft.match
+            || made.conditions != draft.conditions || made.actions != draft.actions
+            || made.includeSubfolders != draft.includeSubfolders || made.recognizesScans != draft.recognizesScans
+    }
+
+    /// Run Selected: something picked, the preview current and not refreshing.
+    static func canRun(picked: Int, loading: Bool, stale: Bool) -> Bool {
+        picked > 0 && !loading && !stale
+    }
+}
+
+/// Workbench 2 (D27): what each condition says about a tested item — it
+/// matches, it doesn't, or the rule can't tell (a PDF whose text it can't
+/// read) — and the item's overall verdict.
+enum FolderRulesVerdict: Equatable {
+    case match, noMatch, unknown
+
+    var symbol: String {
+        switch self {
+        case .match: return "checkmark.circle.fill"
+        case .noMatch: return "xmark.circle.fill"
+        case .unknown: return "questionmark.circle.fill"
+        }
+    }
+
+    var spoken: String {
+        switch self {
+        case .match: return "matches"
+        case .noMatch: return "doesn't match"
+        case .unknown: return "can't tell"
+        }
+    }
+
+    /// One verdict per condition. A condition with no result, or one that
+    /// reads a PDF's text while the item needs review, is unknown.
+    static func conditions(_ conditions: [FolderRuleCondition], results: [Bool],
+                           state: FolderRulePreviewItem.State) -> [FolderRulesVerdict] {
+        let undecided: Bool
+        if case .needsReview = state { undecided = true } else { undecided = false }
+        return conditions.indices.map { index in
+            if undecided && conditions[index].attribute == .pdfText { return .unknown }
+            guard results.indices.contains(index) else { return .unknown }
+            return results[index] ? .match : .noMatch
+        }
+    }
+
+    /// The item as a whole.
+    static func overall(_ state: FolderRulePreviewItem.State) -> FolderRulesVerdict {
+        switch state {
+        case .noMatch: return .noMatch
+        case .needsReview: return .unknown
+        default: return .match
+        }
     }
 }

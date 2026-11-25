@@ -48,6 +48,24 @@ struct ModernGesturesWorkspace: View {
     @StateObject private var toast = AOMToastModel()
     /// Narrow windows: whether the editor replaces the list.
     @State private var compactShowsEditor = false
+    /// Workbench 2 (D02, D03): the arrangement, from the shared resolver with
+    /// the measured width and 20 pt of hysteresis.
+    @State private var arrangement: AOMWorkbenchArrangement = .listDetail
+    /// D12: list | When → Then | the selected step's options. On by default;
+    /// the step inspector only appears where list, editor and inspector fit.
+    @AppStorage("AOMAutomationStepInspector") private var showsStepInspector = true
+    @AppStorage("AOMAutomationStepInspectorWidth") private var stepInspectorWidth = Double(AOMSize.inspectorIdeal)
+    /// The step whose options the inspector shows (kept across resizes).
+    @State private var inspectedStepID: UUID?
+
+    private static var stepInspectorRange: ClosedRange<Double> {
+        Double(AOMSize.inspectorWidth.lowerBound)...Double(AOMSize.inspectorWidth.upperBound)
+    }
+
+    /// Whether the step inspector is on screen now.
+    private var stepInspectorShown: Bool {
+        showsStepInspector && arrangement.showsInspectorBeside && selectedTrigger != nil
+    }
     /// The editor title reads as a heading, so it edits on click — a hoverable
     /// text field this large would put the I-beam over the whole header.
     @State private var editingName = false
@@ -211,21 +229,21 @@ struct ModernGesturesWorkspace: View {
 
     var body: some View {
         GeometryReader { geometry in
-            let compact = geometry.size.width < CGFloat(AOMSize.listColumnRange.lowerBound) + AOMSize.editorMinimum
             Group {
                 if scopedTriggers.isEmpty {
                     onboardingView
-                } else if compact {
-                    if compactShowsEditor, selectedTrigger != nil {
-                        editorPane(compact: true)
-                    } else {
-                        listPane
-                    }
                 } else {
-                    split(totalWidth: geometry.size.width)
+                    panes(totalWidth: geometry.size.width)
                 }
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
+            .onAppear { updateArrangement(geometry.size.width) }
+            .onChange(of: geometry.size.width) { _, width in updateArrangement(width) }
+            // The table needs more room than the list (420 vs 300 pt).
+            .onChange(of: viewMode) { _, _ in updateArrangement(geometry.size.width) }
+            .onChange(of: showsStepInspector) { _, _ in updateArrangement(geometry.size.width) }
+            .onChange(of: listWidth) { _, _ in updateArrangement(geometry.size.width) }
+            .onChange(of: tableWidth) { _, _ in updateArrangement(geometry.size.width) }
         }
         .aomPane()
         .aomToolbarSubtitle(subtitle)
@@ -277,8 +295,15 @@ struct ModernGesturesWorkspace: View {
         .onChange(of: appState.selectedTrigger?.id) { _, _ in
             syncExpandedEditorState()
             applyPreviewEditorHook()
+            reconcileInspectedStep(resetToFirst: true)
         }
-        .aomPageDeleteCommand { if let trigger = selectedTrigger { delete(trigger) } }
+        .onChange(of: selectedTrigger.map { ActionTree.rows($0.actions).map(\.id) } ?? []) { _, _ in
+            reconcileInspectedStep(resetToFirst: false)
+        }
+        // D05: ⌫ goes through the same check as the bar's Delete.
+        .aomPageDeleteCommand {
+            if let id = appState.selectedTrigger?.id, let trigger = actionable(id) { delete(trigger) }
+        }
         // 6.0: the selected automation and what can be done to it, in the
         // action bar (Test ⌘↩ is the primary).
         .aomBarContext(id: BarContextKey(trigger: selectedTrigger,
@@ -299,6 +324,15 @@ struct ModernGesturesWorkspace: View {
             }
             .pickerStyle(.segmented)
             .help("Show as a list or a sortable table")
+            Button {
+                withAnimation(AOMMotion.panel) { showsStepInspector.toggle() }
+            } label: {
+                Label(showsStepInspector ? "Hide Step Inspector" : "Show Step Inspector", systemImage: "sidebar.trailing")
+            }
+            .keyboardShortcut("i", modifiers: [.command, .option])
+            .help(showsStepInspector
+                  ? "Hide the step inspector; options open in each step's card (⌥⌘I)"
+                  : "Show the selected step's options beside the editor when the window has room (⌥⌘I)")
             Menu {
                 Button("Browse Actions…", systemImage: "square.grid.3x3") { showingBrowseActions = true }
                 Button("Floating Menus & Widgets…", systemImage: "menubar.rectangle") {
@@ -328,14 +362,118 @@ struct ModernGesturesWorkspace: View {
         }
     }
 
-    private func split(totalWidth: CGFloat) -> some View {
+    /// The list column's range and minimum in the current view mode.
+    private var listRange: ClosedRange<Double> { viewMode == .table ? Self.tableWidthRange : AOMSize.listColumnRange }
+
+    /// The list's width as drawn beside the editor.
+    private func splitListWidth(_ totalWidth: CGFloat) -> CGFloat {
         let stored = viewMode == .table ? tableWidth : listWidth
-        let range = viewMode == .table ? Self.tableWidthRange : AOMSize.listColumnRange
-        let width = min(CGFloat(stored), max(CGFloat(range.lowerBound), totalWidth - AOMSize.editorMinimum))
+        let fallback = viewMode == .table ? Self.tableWidthRange.lowerBound : AOMSize.listColumnIdeal
+        // D04: the stored width checked and drawn narrower while the editor
+        // needs the room; it is only written by dragging, so it comes back.
+        return AOMPaneWidth.effective(stored: stored, range: listRange, fallback: fallback, available: totalWidth,
+                                      reserved: AOMSize.editorMinimum + AOMWorkbenchPolicy.dividerAllowance)
+    }
+
+    /// List and editor side by side while both minimums and the divider fit
+    /// (the shared resolver, D02), one at a time below that; the step
+    /// inspector beside the editor only while all three fit. Each threshold
+    /// needs 20 pt to spare to come back.
+    private func updateArrangement(_ width: CGFloat) {
+        guard width > 0 else { return }
+        let next = AOMWorkbenchArrangement.resolve(
+            available: width, listMinimum: CGFloat(listRange.lowerBound), detailMinimum: AOMSize.editorMinimum,
+            inspectorMinimum: AOMSize.inspectorWidth.lowerBound, inspectorRequested: showsStepInspector,
+            current: arrangement, list: splitListWidth(width))
+        if next != arrangement { arrangement = next }
+    }
+
+    /// D12: the inspected step follows the automation (its first step when
+    /// another automation is selected) and never points at a step that was
+    /// deleted; a step that still exists stays inspected.
+    private func reconcileInspectedStep(resetToFirst: Bool) {
+        let ids = selectedTrigger.map { ActionTree.rows($0.actions).map(\.id) } ?? []
+        let next = AOMStableSelection.reconcile(resetToFirst ? nil : inspectedStepID, visible: ids, autoSelectFirst: true)
+        if next != inspectedStepID { inspectedStepID = next }
+    }
+
+    /// Both arrangements in one hierarchy (D03): the list keeps its place
+    /// (only its width changes, and it is hidden while the editor fills a
+    /// narrow window), so its scroll position and selection survive a resize
+    /// across the threshold and going Back from the editor.
+    private func panes(totalWidth: CGFloat) -> some View {
+        let compact = arrangement == .drillIn
+        let showsEditor = !compact || (compactShowsEditor && selectedTrigger != nil)
+        let showsList = !compact || !showsEditor
+        let splitWidth = splitListWidth(totalWidth)
+        let listShown: CGFloat = compact ? (showsList ? totalWidth : 0) : splitWidth
+        let inspectorRoom = AOMWorkbenchPolicy.inspectorRoom(available: totalWidth, list: splitWidth,
+                                                             detailMinimum: AOMSize.editorMinimum)
+        let inspectorShown = AOMPaneWidth.effective(stored: stepInspectorWidth, range: Self.stepInspectorRange,
+                                                    fallback: Double(AOMSize.inspectorIdeal),
+                                                    available: inspectorRoom, reserved: 0)
         return HStack(spacing: 0) {
-            listPane.frame(width: width)
-            AOMResizeDivider(width: viewMode == .table ? $tableWidth : $listWidth, range: range, paneEdge: .leading)
-            editorPane(compact: false).frame(maxWidth: .infinity)
+            listPane
+                .frame(width: listShown)
+                .clipped()
+                .opacity(showsList ? 1 : 0)
+                .allowsHitTesting(showsList)
+                .accessibilityHidden(!showsList)
+            if !compact {
+                AOMResizeDivider(width: viewMode == .table ? $tableWidth : $listWidth, range: listRange, paneEdge: .leading,
+                                 displayed: splitWidth,
+                                 maximum: totalWidth - AOMSize.editorMinimum - AOMWorkbenchPolicy.dividerAllowance)
+            }
+            if showsEditor {
+                editorPane(compact: compact).frame(maxWidth: .infinity)
+            }
+            if stepInspectorShown, let trigger = selectedTrigger {
+                AOMResizeDivider(width: $stepInspectorWidth, range: Self.stepInspectorRange, paneEdge: .trailing,
+                                 displayed: inspectorShown, maximum: inspectorRoom)
+                stepInspector(trigger)
+                    .frame(width: inspectorShown)
+                    .frame(maxHeight: .infinity)
+                    .accessibilityElement(children: .contain)
+                    .accessibilityLabel("Step Inspector")
+            }
+        }
+    }
+
+    /// D12: the selected step's options, the same `ActionConfigView` the
+    /// card expands to, with what the step is and whether it can run above.
+    @ViewBuilder private func stepInspector(_ trigger: Trigger) -> some View {
+        let rows = ActionTree.rows(trigger.actions)
+        AOMInspector {
+            if let id = inspectedStepID, let position = rows.firstIndex(where: { $0.id == id }) {
+                let action = rows[position].action
+                AOMInspectorSection("Step \(position + 1)", showsDivider: false) {
+                    AOMInspectorRow("Action", text: action.displayName)
+                    AOMInspectorRow("State", text: action.isEnabled ? "On" : "Off — skipped when the automation runs")
+                    if rows[position].depth > 0 {
+                        AOMInspectorRow("In", text: rows[position].isElse ? "Otherwise branch" : "Branch or group")
+                    }
+                    if let problem = ActionTree.problem([action]) {
+                        Label(problem, systemImage: "exclamationmark.triangle")
+                            .font(AOMFont.callout)
+                            .foregroundStyle(AOMColor.warningText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                AOMInspectorSection("Options") {
+                    ActionConfigView(keyboardMonitor: appState.keyboardMonitor, trigger: trigger, action: action)
+                        // Its fields are seeded from the step: a new step, new state.
+                        .id(action.id)
+                        .padding(.horizontal, -AOMSpace.x3)
+                }
+            } else {
+                AOMInspectorSection("Step", showsDivider: false) {
+                    Text(rows.isEmpty ? "Add a step to set its options here."
+                                      : "Select a step's chevron to set its options here.")
+                        .font(AOMFont.callout)
+                        .foregroundStyle(AOMColor.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
         }
     }
 
@@ -344,11 +482,25 @@ struct ModernGesturesWorkspace: View {
         appState.showingAddTrigger = true
     }
 
+    /// Workbench 2 (D03, D05): a visible selection stays. Switching scope or
+    /// input (or arriving) highlights the first automation; while a search is
+    /// typed, an automation the search hides leaves nothing selected, so ⌘↩
+    /// and ⌫ never move to a different automation.
     private func reconcileSelection() {
-        if !filteredTriggers.contains(where: { $0.id == appState.selectedTrigger?.id }) {
-            appState.selectedTrigger = filteredTriggers.first
-            appState.selectedAction = nil
-        }
+        let visible = filteredTriggers
+        let searching = !searchQuery.trimmingCharacters(in: .whitespaces).isEmpty
+        let next = AOMStableSelection.reconcile(appState.selectedTrigger?.id, visible: visible.map(\.id),
+                                                autoSelectFirst: !searching)
+        guard next != appState.selectedTrigger?.id else { return }
+        appState.selectedTrigger = next.flatMap { id in visible.first { $0.id == id } }
+        appState.selectedAction = nil
+    }
+
+    /// The automation a bar button may act on: still in the preset and still
+    /// one of the rows on screen (not hidden by the search since).
+    private func actionable(_ id: UUID) -> Trigger? {
+        guard AOMStableSelection.actionTarget(id, visible: filteredTriggers.map(\.id)) != nil else { return nil }
+        return latest(id)
     }
 
     /// Summary first (6.1): an automation opens with its steps as one-line
@@ -605,21 +757,21 @@ struct ModernGesturesWorkspace: View {
         if !trigger.actions.isEmpty, ActionTree.problem(trigger.actions) == nil {
             actions.append(AOMBarAction(id: "auto.test", title: runStates[trigger.id] == .running ? "Running…" : "Run",
                                         identity: AOMIdentity(symbol: "play.fill", color: hue),
-                                        run: { if let now = latest(id), !now.actions.isEmpty, ActionTree.problem(now.actions) == nil { test(now) } },
+                                        run: { if let now = actionable(id), !now.actions.isEmpty, ActionTree.problem(now.actions) == nil { test(now) } },
                                         key: SwiftUI.KeyboardShortcut(.return, modifiers: .command)))
         }
         actions.append(AOMBarAction(id: "auto.toggle", title: trigger.isEnabled ? "Turn Off" : "Turn On",
                                     identity: AOMIdentity(symbol: trigger.isEnabled ? "pause.fill" : "play.circle", color: hue),
-                                    run: { if let now = latest(id) { appState.toggleTrigger(now) } }))
+                                    run: { if let now = actionable(id) { appState.toggleTrigger(now) } }))
         actions.append(AOMBarAction(id: "auto.duplicate", title: "Duplicate",
                                     identity: AOMIdentity(symbol: "plus.square.on.square", color: hue),
-                                    run: { if let now = latest(id) { duplicate(now) } }))
+                                    run: { if let now = actionable(id) { duplicate(now) } }))
         actions.append(AOMBarAction(id: "auto.pin", title: trigger.isFavorite ? "Unpin from Workspace" : "Pin to Workspace",
                                     identity: AOMIdentity(symbol: trigger.isFavorite ? "pin.slash" : "pin", color: hue),
-                                    run: { if let now = latest(id) { appState.toggleFavorite(now) } }))
+                                    run: { if let now = actionable(id) { appState.toggleFavorite(now) } }))
         actions.append(AOMBarAction(id: "auto.delete", title: "Delete",
                                     identity: AOMIdentity(symbol: "trash", color: AOMColor.danger),
-                                    shortcut: "⌫", run: { if let now = latest(id) { delete(now) } }))
+                                    shortcut: "⌫", run: { if let now = actionable(id) { delete(now) } }))
         return AOMBarContext(title: trigger.displayName, actions: actions)
     }
 
@@ -672,6 +824,7 @@ struct ModernGesturesWorkspace: View {
                         .aomShortcut("[")
                     }
                     editorHeader(current)
+                    editorStatus(current)
                     whenSection(current)
                     doSection(current)
                     optionsSection(current)
@@ -690,6 +843,21 @@ struct ModernGesturesWorkspace: View {
             AOMEmptyState("No Automation Selected", systemImage: "bolt",
                           message: "Select an automation to edit what starts it and what it does.")
         }
+    }
+
+    /// D14: one state line for the automation — on, off, nothing to do, or
+    /// why it can't start or run — instead of the reason being spread over
+    /// the input, the steps and the Run button.
+    private func editorStatus(_ trigger: Trigger) -> some View {
+        let status = AOMAutomationEditorStatus.resolve(
+            isEnabled: trigger.isEnabled, stepCount: trigger.actions.count,
+            inputProblem: TriggerValidation.problem(for: trigger.input, requiredModifiers: trigger.requiredModifiers),
+            stepsProblem: ActionTree.problem(trigger.actions))
+        return Label(status.text, systemImage: status.symbol)
+            .font(AOMFont.callout)
+            .foregroundStyle(status.tone == .warning ? AOMColor.warningText : AOMColor.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityLabel("Status: \(status.text)")
     }
 
     /// Name, App scope, Enabled — and the item menu.
@@ -1013,11 +1181,15 @@ struct ModernGesturesWorkspace: View {
             index: index + 1,
             depth: row.depth,
             isElse: row.isElse,
-            isExpanded: expandedActionIDs.contains(row.id),
+            // D12: with the step inspector on screen the chevron opens the
+            // step there instead of expanding the card.
+            isExpanded: !stepInspectorShown && expandedActionIDs.contains(row.id),
             trigger: trigger,
             keyboardMonitor: appState.keyboardMonitor,
             onToggleExpand: {
-                if expandedActionIDs.contains(row.id) { expandedActionIDs.remove(row.id) }
+                if stepInspectorShown {
+                    inspectedStepID = row.id
+                } else if expandedActionIDs.contains(row.id) { expandedActionIDs.remove(row.id) }
                 else { expandedActionIDs.insert(row.id) }
             },
             onChangeAction: {
@@ -1047,7 +1219,8 @@ struct ModernGesturesWorkspace: View {
                 toElse = true
                 replaceActionID = nil
                 appState.showingAddAction = true
-            }
+            },
+            isInspected: stepInspectorShown && inspectedStepID == row.id
         )
     }
 

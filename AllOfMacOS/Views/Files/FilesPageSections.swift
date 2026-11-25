@@ -241,6 +241,8 @@ struct FilesRecentSection: View {
     @ObservedObject var recent: FilesRecentModel
     let toast: AOMToastModel
     let quickLook: ([URL], Int) -> Void
+    /// D25: a click or arrow key on a file shows it in the page's inspector.
+    var onSelect: (URL) -> Void = { _ in }
 
     var body: some View {
         FilesAdaptiveColumns(minimumColumnWidth: 400) {
@@ -256,7 +258,7 @@ struct FilesRecentSection: View {
         } content: {
             FilesRecentList(files: recent.downloads, loaded: recent.loaded, readable: recent.downloadsReadable,
                             emptyMessage: "No downloads yet.", emptySymbol: "arrow.down.circle",
-                            toast: toast, quickLook: quickLook, refresh: { recent.refresh() })
+                            toast: toast, quickLook: quickLook, refresh: { recent.refresh() }, onSelect: onSelect)
         }
     }
 
@@ -267,7 +269,7 @@ struct FilesRecentSection: View {
         } content: {
             FilesRecentList(files: recent.screenshots, loaded: recent.loaded, readable: true,
                             emptyMessage: "No screenshots here yet.", emptySymbol: "camera.viewfinder",
-                            toast: toast, quickLook: quickLook, refresh: { recent.refresh() })
+                            toast: toast, quickLook: quickLook, refresh: { recent.refresh() }, onSelect: onSelect)
         }
     }
 
@@ -287,6 +289,7 @@ struct FilesRecentList: View {
     let toast: AOMToastModel
     let quickLook: ([URL], Int) -> Void
     let refresh: () -> Void
+    var onSelect: (URL) -> Void = { _ in }
     @State private var selection: String?
     @FocusState private var focused: Bool
 
@@ -331,6 +334,9 @@ struct FilesRecentList: View {
         }
         .onKeyPress(.downArrow) { step(1) }
         .onKeyPress(.upArrow) { step(-1) }
+        .onChange(of: selection) { _, id in
+            if let file = shown.first(where: { $0.id == id }) { onSelect(file.url) }
+        }
     }
 
     private var selected: FilesRecentFile? { shown.first { $0.id == selection } }

@@ -14,6 +14,8 @@ struct StatisticsView: View {
     /// The bar under the pointer (or clicked): its exact value is shown on
     /// the chart (design-3.4.0 #169).
     @State private var selectedBucket: Date?
+    /// D30: the event log shows runs only, or every input.
+    @AppStorage("AOMInsightsLogRunsOnly") private var logRunsOnly = true
     @StateObject private var toast = AOMToastModel()
 
     /// The question each figure answers is scoped to one period.
@@ -122,6 +124,9 @@ struct StatisticsView: View {
                     inputsSection
                     configurationSection
                 }
+                // D30: the events themselves, apart from the figures above,
+                // under the same period (and the chart's selected bar).
+                eventLogSection
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -215,6 +220,53 @@ struct StatisticsView: View {
                 AOMInlineEmpty(symbol: "chart.bar", message: "No automations ran in the \(span).")
             } else {
                 activityChart(buckets, hourly: hourly, total: total, span: span)
+            }
+        }
+    }
+
+    // MARK: Event log (D30)
+
+    private var eventLogSection: some View {
+        let hourly = period == .day
+        let bucketStart = bucket(at: selectedBucket,
+                                 in: Self.activityBuckets(events: stats.events, hourly: hourly), hourly: hourly)?.start
+        let shown = AOMActivityLog.events(stats.events, now: Date(), within: period.interval,
+                                          bucketStart: bucketStart, hourly: hourly, runsOnly: logRunsOnly)
+        let scope = bucketStart.map { start in
+            hourly ? start.formatted(date: .omitted, time: .shortened) : start.formatted(date: .abbreviated, time: .omitted)
+        } ?? period.rawValue
+        return AOMSection("Event log", detail: shown.isEmpty ? nil : "\(shown.count.formatted()) · \(scope)",
+                          help: "The newest inputs AOM recognised, up to \(AOMActivityLog.limit). Select a bar in Activity to see only that \(hourly ? "hour" : "day").") {
+            HStack(spacing: AOMSpace.x2) {
+                Toggle("Runs only", isOn: $logRunsOnly).toggleStyle(.checkbox).font(AOMFont.callout)
+                if bucketStart != nil {
+                    Button("Show the whole period") { selectedBucket = nil }.buttonStyle(.link).font(AOMFont.callout)
+                }
+            }
+        } content: {
+            if shown.isEmpty {
+                AOMInlineEmpty(symbol: "list.bullet.rectangle",
+                               message: logRunsOnly ? "No automation ran in this period." : "No inputs in this period.")
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(shown.enumerated()), id: \.offset) { index, event in
+                        HStack(spacing: AOMSpace.x3) {
+                            Text(event.timestamp.formatted(date: hourly ? .omitted : .abbreviated, time: .standard))
+                                .font(AOMFont.callout.monospacedDigit())
+                                .foregroundStyle(AOMColor.textSecondary)
+                                .frame(minWidth: 96, alignment: .leading)
+                            Text(event.gesture).font(AOMFont.body).lineLimit(1)
+                            Spacer(minLength: AOMSpace.x2)
+                            Text(event.fired ? "Ran" : "No automation")
+                                .font(AOMFont.callout)
+                                .foregroundStyle(event.fired ? AOMColor.success : AOMColor.textTertiary)
+                        }
+                        .frame(minHeight: AOMSize.rowSingle + AOMSpace.x2)
+                        .padding(.horizontal, AOMSpace.rowInset)
+                        .overlay(alignment: .top) { if index > 0 { AOMRowDivider(inset: AOMSpace.rowInset) } }
+                        .accessibilityElement(children: .combine)
+                    }
+                }
             }
         }
     }
@@ -485,4 +537,26 @@ private enum StatisticsMetrics {
     static let chartHeight: CGFloat = 150
     /// The rank column in Most used (two digits of Headline).
     static let rankColumn: CGFloat = 24
+}
+
+/// D30: which logged inputs the event log lists — inside the page's period,
+/// inside the chart's selected hour or day when one is selected, runs only
+/// if asked — newest first, at most `limit`.
+enum AOMActivityLog {
+    static let limit = 50
+
+    static func events(_ events: [GestureEvent], now: Date, within interval: TimeInterval?, bucketStart: Date?,
+                       hourly: Bool, runsOnly: Bool, calendar: Calendar = .current) -> [GestureEvent] {
+        let earliest = interval.map { now.addingTimeInterval(-$0) }
+        let unit: Calendar.Component = hourly ? .hour : .day
+        var result: [GestureEvent] = []
+        for event in events.reversed() {
+            if let earliest, event.timestamp < earliest { break }
+            if runsOnly && !event.fired { continue }
+            if let bucketStart, !calendar.isDate(event.timestamp, equalTo: bucketStart, toGranularity: unit) { continue }
+            result.append(event)
+            if result.count == limit { break }
+        }
+        return result
+    }
 }
