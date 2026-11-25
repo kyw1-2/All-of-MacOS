@@ -1,307 +1,147 @@
-### HomePod continuity corrections (3.4.6)
+# All of MacOS (AOM)
 
-Fixes extra sample loss during HAL gap repair, handles missing capture packets using their sample timestamps, and avoids destroying every app tap after an isolated device glitch. Transient device-property read failures preserve playback, and physical HomePod buffer-size writes are removed. Sustained faults and long stalls still receive bounded recovery. Shared macOS/HomePod HAL errors remain subject to physical validation; see [the evidence and limits](docs/homepod-continuity-3.4.6.md).
+**All of MacOS** is a native macOS productivity suite built with SwiftUI and AppKit for macOS 14 and later. It brings input automation, window management, screen capture & annotation, encrypted clipboard history, a floating command launcher with local/API AI queries, file organization, focus timers, per-app audio control, menu bar management, and system utilities together into one cohesive desktop workbench.
 
-### HomePod immediate HAL recovery (3.4.5)
+[![Latest Release](https://img.shields.io/github/v/release/kyw1-2/All-of-MacOS?label=release)](https://github.com/kyw1-2/All-of-MacOS/releases)
+![Platform](https://img.shields.io/badge/macOS-14%2B-blue)
 
-When macOS reports an AirPlay HAL processor overload paired with an actual 128+-frame missing output cycle, AOM restores native playback, recreates the affected HomePod output and process taps, and retries the first reconnect after 0.75 seconds instead of waiting for a second event minutes later. A strict per-device budget prevents repeated restart loops. AOM's own PCM target is reduced from 150 to 120 ms and redundant HAL buffer-size writes are suppressed; neither change can alter the HomePod's driver-controlled 128-frame IO or cure underlying AirPlay/network overloads. Physical listening validation remains necessary.
+![All of MacOS Workspace](docs/images/workspace.png)
 
-### HomePod recurring HAL recovery (3.4.4)
+---
 
-AOM 3.4.4 recognizes repeated HomePod processor overloads and substantial missing device cycles even when they are minutes apart (five-minute correlation window). It keeps 3.4.3's in-place clock-skipping and crossfades on the first event and retains bounded per-device auto-reconnect for repeated events. Source-silence softening is unchanged. Physical HomePod listening and network stability still require real-world validation.
+## Core Features
 
-### HomePod audio continuity (3.4.3)
+### 1. Automation & Window Management
+- **Multi-Input Automation**: Trigger actions from Trackpad gestures, Keyboard shortcuts & key sequences, Mouse buttons (buttons 3–32 & side thumb-wheel), Drawing gestures, MIDI/Force Touch pressure, and system events. Build branching workflows with `If / Else`, `Wait`, variables (`{{var:name}}`), Hyper Key (`⌃⌥⇧⌘`), key remapping, and `.bttpreset` trigger import.
+- **Title-Bar Trackpad Window Snapping & Tiling**: Snap, maximize, center, minimize, close/quit, or fullscreen windows with two-finger gestures directly on window title bars (`2×2`, `3×2`, `3×3` grids), Drag-to-Snap screen zones, per-display layout profiles, Saved Windows restore previews, **Scenes** (launch apps → arrange windows → set audio/Focus), live keep-on-top **Window Pinning**, and a thumbnail **Window Switcher** (`⌃⇥`).
 
-AOM now reconciles missing AirPlay HAL sample-time intervals in the buffered PCM playback cursor, using a bounded skip and preallocated held-tail crossfade. It avoids live re-requests of a HomePod fixed-size IO buffer. Isolated recoverable skips no longer reconnect; repeated correlated failures can still invoke bounded recovery. The HAL realtime deadline and external network conditions remain managed by macOS.
+| Automation (`Steps \| Recipe`) | Window Tiling & Scenes |
+| :---: | :---: |
+| ![Automation](docs/images/automation.png) | ![Window Tiling](docs/images/window-tiling.png) |
 
-# All of MacOS
+### 2. Command Launcher (`⌥Space` / `⌘K`) & Ask AI
+- **Non-Activating Floating Panel**: Launch apps, search Spotlight files, browse folders, run system & Homebrew commands, view open browser tabs, expand dynamic snippets, convert units/math, kill/uninstall apps with `~/Library` cleanup, check upcoming calendar availability, and configure shortcuts — without stealing focus from the frontmost app.
+- **Ask AI (`⇥`)**: Stream answers using on-device Apple Intelligence, configured remote API endpoints, local LLM servers, or CLI agents, with explicit per-question context scoping (`@window`, `@screen`, `@clip`, `@wiki`, `@files`, `@~/path`, `@shell`, `@ssh`).
 
-All of MacOS (AOM) is a native macOS productivity application for gestures, keyboard shortcuts, window management, clipboard history, screen capture, recording, and local automation.
+| Floating Launcher (`⌥Space` / `⌘K`) | Menu Bar Control Panel |
+| :---: | :---: |
+| ![Launcher](docs/images/launcher.png) | ![Menu Bar Panel](docs/images/menu-bar-panel.png) |
 
-## Version 3.4.2
+### 3. Screen Capture, Clipboard & Text Actions
+- **Capture, Recording & Annotation**: Area (`⇧⌘4`), Window (`⇧⌘5`), Full Screen (`⇧⌘3`), Scrolling Capture (`⌥⇧⌘S`), Self-Timer, OCR Text Capture (`⇧⌘2`), QR recognition, **Screen Ruler (`⇧⌘7`)**, and MP4/GIF Screen Recording (with custom canvas backgrounds, click animations, cursor highlight, keystroke overlay, camera bubble, and trimming). Includes a Quick Access hover curtain and full annotation editor.
+- **Encrypted Clipboard History (`⇧⌘V`)**: Local Keychain-backed clipboard history with pinboards, image OCR indexing, region-selection OCR, plain-text/HTML/RTFD pasting, side-by-side text diff (**Compare With…**), secret detection, and structured search queries.
+- **Text Actions & Click Hints (`⇧⌘Space`)**: Contextual action bar over selected text (copy, search, translate, look up, calculate, pin, custom AI prompts) and keyboard-driven UI click labels.
 
-When HomePod reports an audio processor overload together with a substantial missed audio cycle, AOM now attempts a bounded automatic recovery of the AirPlay output and affected capture taps (native playback fallback first). A single small skip does not restart anything. HomePod listening validation remains outstanding.
+| Capture Studio | Clipboard Library & Inspector |
+| :---: | :---: |
+| ![Capture](docs/images/capture.png) | ![Clipboard](docs/images/clipboard.png) |
 
-## Version 3.4.1
+### 4. Files, Folder Rules & Focus
+- **Files & Drop Shelf**: Quick-jump folder sidebar beside macOS Open and Save panels (`⌘⌥1–⌘⌥9` for favorites), pointer-shake **Drop Shelf** with multiple named shelves, and local file utilities (**Compare PDFs**, **Compare Folders**, **Extract from ZIP**, **Storage Map**, **Batch Rename**, image/video/PDF conversion).
+- **Folder Rules**: Watch Downloads, Desktop, or custom directories with safe dry-run previews, `{year}-{month}` subfolder templates, image optimization, automatic `.dmg` installation, and local scanned-PDF OCR inspection.
+- **Focus**: Customizable focus/break intervals (`25/5`, `50/10`, `90/15`), menu bar countdown, session metrics, distracting-app hiding, and optional idle-app cleanup.
 
-HomePod audio dropout smoothing now spans capture block boundaries, covers large input buffers and resets correctly when output routes change. Homebrew tools are easier to discover in System Tools and Workspace search. 130 related tests passed; listening tests on a physical HomePod remain pending. See CHANGELOG.md.
+### 5. Menu Bar, Audio & System Tools
+- **Menu Bar Management**: Arrange status icons into **Shown**, **Hidden**, and **Always Hidden** lanes with saved **Presets**, open a collapsible secondary Bar strip, customize AOM's own menu/panel, and display live city-based Menu Bar Weather (`°C`/`°F`).
+- **Per-App Audio & Battery / Hardware**: Core Audio per-app volume (`0–400%` Overdrive), per-app Mute & Stereo Balance, 10-band Headphone EQ with AutoEQ import, Audio Unit v2 effect hosting, and HomePod/AirPlay stream continuity diagnostics; macOS native Charge Limit (`80–100%`), Hold Here, Discharge/Top Up controls, DDC/CI external monitor controls, and System Tools quick toggles.
 
-## Version 3.4.0
+| Folder Rules | Menu Bar Layout | System Tools |
+| :---: | :---: | :---: |
+| ![Folder Rules](docs/images/folder-rules.png) | ![Menu Bar](docs/images/menu-bar.png) | ![System Tools](docs/images/system-tools.png) |
 
-A redesigned main window with a Productivity section: Folder Rules tidies folders like Hazel, Text Actions puts a PopClip-style bar over selected text, Files adds an Open and Save dialog helper and a Drop Shelf, and Focus runs focus sessions and quits idle apps. Also new: Screen Ruler (⇧⌘7), Click Hints (⇧⌘Space), a larger ⌘K palette with a window switcher and link rules, input sources per app, 23 more System Tools (Homebrew, VPN, PDF pages), microphone mute, 25 fixes and softer HomePod dropouts. See CHANGELOG.md and the docs/*-3.4.0.md guides.
+---
 
-## Version 3.3.8
+## Usage Examples
 
-An L-shaped swipe on a title bar (left then up, or right then up, without lifting) now takes that side's top quarter, whether the turn is smooth or rests at the corner. A swipe up on its own still maximizes. See docs/window-snap-3.3.8.md.
+### Launcher Search & Calculator (`⌥Space` or `⌘K`)
+- **Arithmetic & Units**:
+  - `12 * 11` → `132`
+  - `20% of 150` → `30`
+  - `10 km in mi` → `6.21371 mi`
+  - `255 in hex` → `0xFF`
+- **File Search & Folder Navigation**:
+  - Search inside a folder by type and recency: `in:~/Documents kind:pdf modified:7d invoice`
+  - Search emoji by keyword: `:fire` or `:check` (press `↩` to type into the active app)
 
-## Version 3.3.7
-
-A two-finger swipe up on a title bar now always maximizes, from any half, quarter, third or sixth, and no title-bar gesture snaps to the top or bottom half any more. See docs/window-snap-3.3.7.md for the full gesture table, checked against the Swish 1.13.3 analysis.
-
-## Version 3.3.6
-
-Every page is redesigned on Apple's design guidance (docs/design-3.3.6.md, 95 references): macOS text styles with a 13 pt body, regular controls, the system sidebar and toolbar title, and a Workspace with module tiles, quick-action tiles and an overview of recent activity, today's actions and this Mac. System Tools drops the text and developer tools and grows to 104 tools in 13 groups, adding display, sound, battery, apps and processes, disk and Time Machine, network and system info tools (docs/system-tools-3.3.6.md).
-
-## Version 3.3.5
-
-System Tools grows from 12 to 69 tools in nine groups (live toggles, power and session, Finder, Dock and screenshot settings, maintenance, an uninstaller and Trash-only cleanup scans, clipboard text and developer tools, network), with a live status strip, favorites and recent tools. Title-bar gestures follow Swish's double swipes (up or down, rest, the same way again for the top or bottom half), a swipe down is the Down action at any length, a swipe taken back cancels, and unsnapped windows stay on screen. The main window uses 12 pt text with compact rows on every page. See CHANGELOG.md, docs/system-tools-3.3.5.md and docs/window-snap-3.3.5.md.
-
-## Version 3.3.4
-
-Fixes for the 3.3.3 re-audit (N333-01 to N333-08): MCP withholds passwords and tokens written as JSON or YAML, the Audio Unit effect hand-off can no longer use a released host, suggestions re-check excluded apps and secure input before they appear, failed volume and brightness writes are retried, tab detach and landing snaps re-check their target and the pause, Reset Preferences resets every preference, and Dock and menu-bar gestures no longer also run your two-finger triggers. A swipe up on a title bar now always maximizes (a quick second swipe up gives the top half), AirPlay outputs level boosted transients before the limiter so loud passages no longer crackle on a HomePod, and the main window is denser, with smaller headings and shorter rows and tiles. See CHANGELOG.md, docs/release-3.3.4-audit-resolution.md, docs/window-snap-3.3.4.md and docs/airplay-crackle-3.3.2.md.
-
-## Version 3.3.3
-
-Fixes for the three 3.3.2 audit reports and a calmer main window. Workspace opens with one status line and what needs attention, and every page uses the same sections, rows and ⓘ help. Title-bar gestures follow Swish further: rest briefly and move again for the next gesture in the same touch, pinch a tab closed or hold it to detach, reassign the Super, General, Screen, Secondary and Tertiary modifiers, ⌃⌥⌘/⇧ hotkeys with a center key, optional macOS native tiling and a gesture tooltip. Dock and menu-bar gestures no longer quit AOM or paused apps, a third finger cancels them, pinching twice on a Dock icon minimizes or restores all of an app's windows, the menu bar restores every minimized window, and Mission Control thumbnails take gestures (an option). Clipboard suggestions never read password fields or excluded apps, AI tools over MCP no longer see hidden secrets, and pinboards and search work like Paste, with optional link cards and region OCR in image previews. Import Preset reads whole BetterTouchTool `.bttpreset` files with a report. MIDI reads every channel message, and MIDI controls, Force Touch pressure or a modifier scroll can drive volume or brightness. Recordings get backgrounds and click and cursor options; Annotate gets text styles, an eraser and image layers. Audio gets Magic Boost presets, an EQ curve per output with AutoEQ import, an Audio Unit effect, a fade-in after each skipped HomePod cycle and output moves that no longer skip. New defaults (multi-motion, tab pinches, ⇧/⌃ swipes, the Dock pinch waiting for a second pinch, search across all pinboards) can each be turned off. Real-trackpad, MIDI, recording and HomePod listening checks still need a person. See [the audit resolution](docs/release-3.3.3-audit-resolution.md), [the window-snap notes](docs/window-snap-3.3.3.md) and [the AirPlay addendum](docs/airplay-crackle-3.3.2.md#333-addendum).
-
-## Version 3.3.2
-
-The title-bar snap now follows Swish: quick flicks snap at once, swipes chain from cell to cell (a window at the top reaches the bottom half and quarters), diagonals pick a quarter, and resting two fingers still for 2 s cancels. It adds pinches, double tap, tap and hold, ⌥/⇧/⌘ variants, a 2 × 2 (default, no thirds), 3 × 2 or 3 × 3 grid, almost maximize, ⌃⌥ keyboard shortcuts, drag to unsnap, re-snapping after display changes and resizing adjacent windows, plus Dock and menu-bar gestures. Swipe down on a free window now minimizes, pinch in closes (twice quits), and hold-then-swipe moves a window to another Space; each can be turned off in Window Tiling › Trackpad Gestures. The top-bar Space swipe switches on lift, so resting 2 s cancels it too. HomePod and AirPlay output gets a true-peak limiter with headroom for the receiver, sinc resampling with a drift loop, shaped discontinuities, larger IO buffers and fewer restarts; apps get a stereo balance. Real-trackpad and HomePod listening checks still need a person. See [the window-snap notes](docs/window-snap-3.3.2.md) and [the AirPlay crackle notes](docs/airplay-crackle-3.3.2.md).
-
-## Version 3.3.1
-
-Stability fixes from the 2026-10-28 audit: pausing AOM now pauses every gesture layer, Dock pinch never force-quits, MCP replies arrive whole and a closed AI tool can no longer terminate AOM, a steadier title-bar snap, an AirPlay mix clock that measures its own start-up and supply and keeps 48 kHz even when macOS throttles it, recordings longer than 50 minutes keep their pointer track, unreadable archives are kept instead of overwritten, backups that restore the automations and settings of their moment, and actions that report failure when a permission is missing. Real-trackpad, AirPlay-listening and 65-minute recording checks still need a person. See [the remediation report](docs/audit-3.3.1-stability-20261028.md).
-
-## Version 3.3.0
-
-The trackpad title-bar snap, round two. It adds:
-
-- A size → position → size commit that the window history records.
-- Edge anchoring for windows with a fixed or minimum size. This also covers the tiling actions.
-- A preview that settles on the real frame.
-- Unsnap with a swipe down.
-- Quarters in either order.
-- Haptics on each zone change.
-- A readiness checklist.
-
-There is also a UI/UX finishing pass informed by 86 new references: Reduce Motion and Increase Contrast throughout, one window minimum with a floating drawer, System Tools search, accessible names and consistent naming. See [the window-snap report](docs/window-snap-3.3.0-swish-dsh.md) and [the reference review](docs/ux-reference-review-3.3.0.md).
-
-## Version 3.2.0
-
-A denser Liquid Glass redesign (a behind-window content canvas so the desktop shows through the frosted cards, tighter spacing, and dashboards that fill the window instead of leaving a void), a curated and regrouped System Tools page, a leaner menu bar with a new Windows quick-snap section, and a Swish-style two-finger title-bar window snap with a live preview. See [the window-snap REA report](docs/window-snap-3.2.0-swish.md).
-
-## Version 3.1.0
-
-A Liquid Glass redesign with System Settings–style settings, clean HomePod/AirPlay audio with SoundSource-style Magic Boost and Volume Overdrive, 33 new automation actions, a Hyper key and key remapping, a live camera bubble while recording, and a new menu bar mark. See [the interface review (66 references)](docs/ui-liquid-glass-3.1.0.md), [the audio report](docs/audio-3.1.0-soundsource-boost.md) and [the parity report](docs/parity-3.1.0.md).
-
-## Version 3.0.14
-
-A compact audio mixer with separate Devices and Effects sections, an aligned window canvas, and a shorter capture launcher. See the [reference and UX review](docs/ux-reference-review-20261027.md).
-
-## Version 3.0.13
-
-Audio workspace navigation and accessibility improvements, plus independent per-app and mixed-output adaptive boost. See [the UX and audio review](docs/audio-workspace-ux-20261027.md) for scope and limitations.
-
-## Version 3.0.10
-
-Lock-free capture and AirPlay PCM delivery prevent silence blocks under callback
-lock contention. See [reproduction and verification](docs/audio-3.0.10-continuity.md).
-
-## Version 3.0.9
-
-EQ headroom and a stereo output limiter prevent boosted presets from hard
-clipping. Audio recovery, automation input validation and corrupt preset
-database handling are hardened. See [audit findings and measurements](docs/audit-3.0.9.md).
-
-## Version 3.0.8
-
-Follow-up fixes for mouse automation, scroll timing, EQ recovery, clipboard
-preview performance and recording trims. See [audit scope and findings](docs/audit-3.0.8.md).
-
-## Version 3.0.7
-
-File utility fixes, real bundled WebP conversion, cancellable GIF exports, and
-consistent automation URL aliases. See [audit findings and scope](docs/audit-3.0.7.md).
-
-## Version 3.0.0
-
-A design overhaul across the whole app. AOM now ships with its real build SDK, so macOS 26
-and later draw it with Liquid Glass. The Workspace shows one card per tool with its live state;
-every page shares one canvas, card and filter-chip layout; Settings follows System Settings
-with Shortcuts and Permissions panes; the command palette, first-run welcome and menu bar
-menu are rebuilt; and the floating capture and clipboard surfaces share one material.
-Stored settings, shortcuts and data are unchanged.
-
-## Version 2.3.0
-
-Capture surfaces now behave the same way: Copy, Save, Pin and Annotate close the card,
-preview or history they came from (⌥ keeps it), and a fresh capture can be trashed with one
-click on its hover curtain. After Capture = Copy or Save no longer leaves a second card, and
-cards close themselves after five minutes unless you chose otherwise. Clipboard gains Erase
-History (pinned items kept), filter chips and Remove Background; selections snap to window
-edges; recordings get keystroke-overlay options; activation groups gain time, power, display
-and window conditions; workflow variables can be inserted with `{{var:name}}`; and AOM has an
-AppleScript dictionary. Stored settings, shortcuts and data are unchanged.
-
-## Version 2.2.0
-
-The window itself is the redesign: the sidebar and toolbar now sit on a real behind-window
-blur (your desktop shows through the chrome, the System Settings / Things arrangement) and
-every page floats as an inset rounded card with a soft shadow. Reduce Transparency and
-Increase Contrast fall back to the opaque window. The rhythm is compact — tighter rows
-and page padding at the same readability — and filled buttons and shortcut key caps gained
-a vertical accent gradient with a lit top edge. Glass stays on chrome and floating layers;
-content you read remains opaque. Shortcuts, data formats and permissions are unchanged.
-
-## Version 2.1.0
-
-Readability and honest numbers on top of the 2.0.0 window. Selected list rows invert their
-text (and key caps) like macOS expects, the palette's keyboard selection is clearly visible,
-and empty-state buttons wrap instead of clipping in narrow columns. Every input type —
-keyboard, mouse buttons, drawing, system triggers — now counts toward Insights and the
-Workspace's last-run times, not just trackpad gestures. Clipboard chips and filled buttons
-pick a readable label for any accent colour (including yellow, orange and cyan), the shelf's
-empty state offers Resume / Open Settings, and the Paste Stack panel uses the standard empty
-state. Settings rows regained their category-coloured icons, menus stop truncating long
-labels, permissions show a live badge, and "shortcut" searches reach the clipboard shortcut
-recorder. The Automation editor's trackpad preview is a third smaller. Shortcuts, data
-formats and permissions are unchanged.
-
-## Version 2.0.0
-
-A redesign around the three things you do every day — find and edit an automation, find and
-paste something you copied, capture and use it. The window now follows macOS structure: a
-collapsible sidebar for navigation, each page's tools in its own toolbar, and content panes.
-The Workspace puts problems (only when there are any), quick actions, pinned and recent
-automations, recent captures and clipboard items first; the figures moved to Insights. The
-Automation editor takes the width and reads Name · Applies to · Enabled, When, Do, Options.
-The command palette has primary and secondary actions with their keys and avoids your own
-shortcuts. Data formats, shortcuts and permissions are unchanged.
-
-## Version 1.9.2
-
-Password typing never reaches the lock screen. The lock screen turns on Secure Input too, so
-AOM no longer registers its password-field shortcuts while the screen is locked, and Type Text
-refuses to run (or stops) until you unlock.
-
-After installing a new build, macOS asks once for your login keychain password: "All of
-MacOS wants to access key 'All of MacOS Clipboard History'". AOM is signed with its own
-certificate rather than an Apple Developer ID, so every build is a new identity to the
-keychain. Choose Always Allow; clipboard history stays empty, but intact, until you do. A
-Type Text shortcut works in that dialog like in any other password field (⌥P answers as ⌃⌥P).
-
-## Version 1.9.1
-
-Polish from checking 1.9.0 on a real setup: the Automation editor fits a 734 pt window
-(pin, duplicate and delete moved into its ⋯ menu), capture thumbnails sit on the same quiet
-grey as the rest of the sheet with captions that no longer truncate, and Insights' most-used
-list uses the larger type scale.
-
-## Version 1.9.0
-
-A flat, unified redesign in the Apple and Toss manner. One neutral canvas, and each page is
-one white sheet whose sections are divided by hairlines instead of a scatter of cards. The
-Workspace fits on one screen: a summary strip across the top, your automations on the left,
-this Mac's switches, health and quick actions on the right. Larger type (14 pt body, 26 pt
-titles), one primary blue, and the Automation editor now lives inside the page sheet.
-
-Type Text now works in macOS password dialogs. Synthetic keystrokes do reach them; what
-failed was the shortcut: macOS withholds ⌥ and ⌥⇧ hot keys while a password field has focus.
-AOM now also listens for the same shortcut with ⌃ added (⌥P becomes ⌃⌥P) only while Secure
-Input is on, types with a private event source so no modifier stays latched, and no longer
-round-trips the text through the pasteboard.
-
-## Version 1.8.2
-
-The window itself is opaque, so the top bar's material refracts the app surface instead of
-the desktop wallpaper.
-
-## Version 1.8.1
-
-Opaque canvas under the ambient field, so window chrome stays calm over a colourful
-wallpaper instead of picking it up.
-
-## Version 1.8.0
-
-Glass surfaces over an ambient gradient window, one language across the app (English),
-and a real fix for text expansion in password fields: macOS Secure Event Input drops
-synthetic keystrokes, so AOM now delivers through a concealed pasteboard round-trip.
-
-## Version 1.7.0
-
-Navigation moved from a left rail to one compact top bar with pill tabs, and the home
-screen became a bento grid: a gradient hero, a live summary card, four quick actions,
-three metrics and the activity groups below. Warm neutral palette, 22–26 pt corners,
-softer borders and hover lift throughout.
-
-## Version 1.6.0
-
-- **1.6.0 — Unified design:** A consistent visual language with compact navigation, elevated cards, improved page hierarchy, and a streamlined dashboard.
-- **1.5.0 — Navigation and Home:** A persistent navigation rail, shared page header, responsive workspace, and quick access to common actions.
-- **1.4.0 — Settings:** A searchable, single-surface settings hub with instantly applied preferences.
-- **1.3.1 — Capture visibility:** A unified visibility preference for AOM-managed windows during screen capture.
-- **1.3.0 — Expanded local workflows:** More capable clipboard collections, editable recording workflows, floating controls, local automation inputs, and Finder integration.
-
-**[Read the full English changelog](CHANGELOG.md)** for version-by-version changes. Individual [GitHub Releases](https://github.com/kyw1-2/All-of-MacOS/releases) retain their build numbers, source references, signing information, checksums, and verification limitations.
-
-## Features
-
-- Trackpad, keyboard, window-management and automation controls
-- [Live window pinning](docs/window-pinning.md): keep windows on top, with interaction, opacity and configurable shortcuts
-- Clipboard history, pinboards, configurable double-click insertion and copying
-- Screen capture, OCR, QR recognition, annotation, scrolling screenshots
-- MP4 screen recording with optional audio, trimming and animated GIF export
-
-## Identity
-
-- App name: **All of MacOS**
-- App identifier: `com.kyw.allofmacos`
-- Helper identifier: `com.kyw.allofmacos.ScriptRunner`
-- Separate Application Support folder: `AllOfMacOS`
-- Output: `build/All of MacOS.app`
-- Uses the local **self-signed Code Signing** identity `AOM Dev`. No paid Apple Developer membership is required for private local development. CI can request an ad-hoc build with `ALLOFMACOS_SIGN_ID=-`, which does not establish the same stable identity.
-
-## Build
-
-On macOS with Xcode:
-
-```bash
-brew list webp >/dev/null 2>&1 || brew install webp
-ALLOFMACOS_SCRATCH_PATH="$HOME/.cache/aom-build" ALLOFMACOS_SKIP_AUTO_RELEASE=1 ./build-and-sign.sh
-codesign --verify --deep --strict "build/All of MacOS.app"
+### Clipboard Filter Operators (`⇧⌘V` or Clipboard Search)
+```text
+type:image from:Safari board:"Project Notes" is:pinned after:7d -draft
 ```
+- Supported filters: `type:text|link|image|file|color`, `from:<App>`, `board:<Name>` / `pinboard:<Name>`, `is:pinned` / `is:unpinned`, `before:` / `after:` / `on:` (`yyyy-MM-dd`, `today`, `yesterday`, `7d`, `2w`, `3m`, `1y`), `"exact phrase"`, `-exclude`.
 
-Regression tests: `scripts/run-tests.sh -j 2` (SwiftPM). The opt-in checks that run every System Tools reader on this Mac: `AOM_LIVE_SYSTEM_TESTS=1 scripts/run-tests.sh --filter SystemToolsLiveTests`.
+### Ask AI Context Scopes (`⇥` in Launcher)
+```text
+@window summarize these error logs
+@screen explain what is selected here
+@files ~/Projects/notes find references to release signing
+```
+- Available explicit attachments: `@window` (front window OCR), `@screen` (active display OCR), `@clip` (clipboard text), `@wiki`, `@chats`, `@shell`, `@ssh` (non-secret SSH host config only), `@files` / `@~/path`.
 
-Xcode: open `Package.swift`, or generate a project from `project.yml` with [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`xcodegen generate`). The generated `AllOfMacOS.xcodeproj` is not tracked: a committed copy fell 417 sources behind and no longer built (Codex audit F06). Releases and CI build with SwiftPM through `build-and-sign.sh`; `bundle.sh` now calls it.
+### Dynamic Snippets & Folder Rules Tokens
+- **Interactive Snippet Template**:
+  ```text
+  Hello{arg:recipient},
 
-Create a local Keychain Access **Self Signed Root / Code Signing** identity named `AOM Dev` before a local release build. CI can use `ALLOFMACOS_SIGN_ID=-` to build an ad-hoc signed artifact for private testing only; it must never be confused with the local stable-signed DMG.
+  Shipping method: {choice:Delivery|Courier|*Visit}
+  Date: {date:yyyy-MM-dd}
 
-## Repository
+  {optional:Signature}Best regards,
+  {clipboard}{/optional}{cursor}
+  ```
+- **Folder Rules Path & Rename Pattern**:
+  - Subfolder template: `{year}-{month}` → e.g. `2026-11/Invoices`
+  - Rename template: `{name} {date:yyyy-MM-dd}` (or `{pdfdate}` / `{after:Vendor}` on scanned/text PDFs)
+- **Batch Rename Pattern**:
+  - `{date} {name} {nn}` with full collision preview and inode-checked Undo.
 
-Repository: https://github.com/kyw1-2/All-of-MacOS (public). The independent source tree is tracked on `main`.
+### Title-Bar Trackpad Window Gestures
+Hover two fingers over any window title bar:
 
-## Distribution
+| Gesture | Action |
+| --- | --- |
+| Swipe `←` / `→` | Snap Left Half / Right Half (continue for Thirds) |
+| Swipe `↑` | Maximize (`⇧` for Almost Maximize; `↑` twice for Top Half) |
+| Swipe `←↑` / `→↑` (L-shape) | Snap Top-Left / Top-Right Quarter |
+| Swipe `↓` | Unsnap to prior frame / Minimize free window |
+| Pinch In / Out | Close window (Pinch In twice to Quit) / Toggle Full Screen |
+| Hold still `2 s` | Cancel gesture before lifting |
 
-Releases are DMGs on [GitHub Releases](https://github.com/kyw1-2/All-of-MacOS/releases), signed with the self-signed **AOM Dev** identity. They are not Apple Developer ID signed or notarized, so Gatekeeper may ask for approval on first launch. AOM does not check for or install updates by itself; install a new DMG by hand, or use the owner's signature-pinned `scripts/auto-update-mac.sh`. Distribution of any third-party code or bundled assets is subject to the necessary licenses and permissions.
+### URL Automation (`aom://`)
+```bash
+open "aom://capture-area"
+open "aom://record-screen"
+open "aom://show-keystrokes?mode=shortcuts"
+open "aom://trigger?name=Tidy%20the%20front%20window"
+```
+External `aom://trigger` links prompt for explicit confirmation (`Run Once` / `Always Allow` / `Don't Run`).
 
-## Development DMG releases
+---
 
-**Headless build option:** the `All of MacOS signed release` workflow tests, signs (AOM Dev) and publishes a DMG as GitHub **Latest** from every trusted `main` push, without leaving the MacBook on. One-time signing setup is required before activation. See [Oracle → GitHub Actions deployment guide](docs/oracle-actions-release.md). The local Mac build-and-sign workflow remains supported.
+## Default Keyboard Shortcuts
 
-All of MacOS uses the **AOM Dev self-signed signing identity** for development builds. This is not an Apple Developer ID or notarized distribution certificate. A CI run with `ALLOFMACOS_SIGN_ID=-` produces an **ad-hoc signed test artifact** only, which is never published as an AOM Dev release.
+| Feature | Shortcut | Feature | Shortcut |
+| --- | --- | --- | --- |
+| Global Launcher | `⌥Space` (`⌘K` in app) | Capture Area | `⇧⌘4` |
+| Clipboard History Shelf | `⇧⌘V` | Capture Window | `⇧⌘5` |
+| Thumbnail Window Switcher | `⌃⇥` | Capture Full Screen | `⇧⌘3` |
+| Screen Ruler (Measure) | `⇧⌘7` | Capture Text (OCR) | `⇧⌘2` |
+| Click Hints | `⇧⌘Space` | Scrolling Capture | `⌥⇧⌘S` |
+| Capture History | `⇧⌘6` | Record Screen | `⌥⇧⌘R` |
+| Pin Last Capture | `⌥⇧⌘P` | Toggle Desktop Icons | `⌥⇧⌘D` |
 
-On the Mac, install and authenticate GitHub CLI (gh) once with write access to this repository, and pull the latest source from main. Every successful local build-and-sign.sh run using AOM Dev then:
+---
 
-1. Verifies the app signature and bundle identifier.
-2. Creates a unique DMG under build/releases/.
-3. Verifies the DMG and its mounted app/XPC signatures, computes SHA-256 internally, and uploads **only the DMG**. Fresh local AOM Dev builds become GitHub **Latest** releases; older imported DMGs remain prereleases.
-4. On the first successful release, scans recognizable All of MacOS/AOM DMGs in Downloads, Desktop and the repository build directory. Each archive is validated before uploading, and originals are never modified. Failed imports can be retried. Retired version **1.0.1** is excluded permanently from this import.
+## Identity, Build & Distribution
 
-To import previously created DMGs without rebuilding: bash scripts/publish-dmg.sh --import-existing
-
-To publish one eligible DMG from elsewhere: bash scripts/publish-dmg.sh --file "/path/to/All-of-MacOS.dmg"
-
-To build without a release, set ALLOFMACOS_SKIP_AUTO_RELEASE=1. If GitHub authentication or network access is unavailable, the local build stays intact and the upload failure is logged rather than being mistaken for a compilation failure. The signed release workflow imports the AOM Dev identity from repository secrets and publishes `aom-v<version>-b<build>-g<commit>` releases; an ad-hoc (`ALLOFMACOS_SIGN_ID=-`) build is never published.
-
-Standalone `.sha256` assets are not generated; a DMG digest remains in release metadata and GitHub also publishes its own asset digest for independent verification. Version 1.0.1 was intentionally removed from GitHub Releases.
-
-**Important:** the repository and its releases are public. The self-signed certificate does not remove macOS Gatekeeper warnings or notarize the build. A tag identifies an archived binary by checksum; it does not assert that GitHub's current source reproduces that historical binary.
-
-### 1.1.0 local workflows
-
-See [the local workflow release notes](docs/1.1.0-local-workflows.md) for interactive scrolling, clipboard stack/OCR/encrypted storage, recording controls, editable annotation projects and Finder integration. WebP packaging requires an existing Homebrew `webp` installation (or `AOM_WEBP_ROOT`); the build bundles the codec and its license so installed apps do not need Homebrew. The signed build scripts also compile the annotation Quick Look extension.
-
-## 1.1.1 clipboard interaction fixes
-
-See [the interaction fixes and complete local feature inventory](docs/1.1.1-ui-and-feature-inventory.md) for implementation paths, remaining limits, and the UI inspection scope.
+- **App Identifier**: `com.kyw.allofmacos` · **Helper**: `com.kyw.allofmacos.ScriptRunner`
+- **Build & Self-Sign (macOS with Xcode)**:
+  ```bash
+  brew list webp >/dev/null 2>&1 || brew install webp
+  ALLOFMACOS_SCRATCH_PATH="$HOME/.cache/aom-build" ALLOFMACOS_SKIP_AUTO_RELEASE=1 ./build-and-sign.sh
+  codesign --verify --deep --strict "build/All of MacOS.app"
+  ```
+- **Run Tests (SwiftPM)**:
+  ```bash
+  scripts/run-tests.sh -j 2
+  ```
+- **Distribution**: Prebuilt DMGs are published on [GitHub Releases](https://github.com/kyw1-2/All-of-MacOS/releases) signed with the self-signed **AOM Dev** certificate (not Apple Developer ID notarized; Gatekeeper may request manual approval on first launch). Version-by-version history is maintained in [CHANGELOG.md](CHANGELOG.md).
