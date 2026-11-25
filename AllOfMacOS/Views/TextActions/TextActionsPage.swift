@@ -54,6 +54,7 @@ struct TextActionsPage: View {
         } inspector: {
             previewPane.frame(maxHeight: .infinity, alignment: .top)
         }
+        .aomListDetailSelection(selection)
         .aomPage("Text Actions")
         .aomPageToolbar {
             ToolbarItem(placement: .automatic) {

@@ -33,6 +33,6 @@ enum FolderRulesPageSamples {
         let steps = FolderRulePlanDescriber.describe(rule, info: file, now: Date(), counter: 1)
         let item = FolderRulePreviewItem(id: url.path, info: file, state: .willRun,
                                          steps: steps, conditionResults: rule.conditions.map { _ in true })
-        return FolderRulePreview(ruleID: rule.id, folderState: .ok(1), items: [item], inProgress: 0, scanned: 1)
+        return FolderRulePreview(ruleID: rule.id, folderState: .ok(items: 1), items: [item], inProgress: 0, scanned: 1)
     }
 }

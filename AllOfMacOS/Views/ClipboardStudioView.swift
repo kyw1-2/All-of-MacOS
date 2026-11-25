@@ -412,6 +412,7 @@ struct ClipboardStudioView: View {
                 } inspector: {
                     inspector(entries.first(where: { $0.id == previewID }))
                 }
+                .aomListDetailSelection(target.selected)
             }
         }
     }
