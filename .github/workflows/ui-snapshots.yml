@@ -1,6 +1,8 @@
 name: AOM UI snapshots
 
 on:
+  push:
+    branches: ['feat/**']
   workflow_dispatch:
     inputs:
       sizes:
@@ -15,6 +17,8 @@ permissions:
 
 jobs:
   snapshots:
+    # On feature branches only when the head commit asks for it.
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[snapshots]')
     runs-on: xcode-27
     timeout-minutes: 60
     steps:
@@ -24,7 +28,7 @@ jobs:
       - name: Render preview matrix
         run: |
           BIN="$(swift build --show-bin-path)/AllOfMacOS"
-          bash scripts/ui-snapshot-matrix.sh "$BIN" "$RUNNER_TEMP/aom-snapshots" "${{ inputs.sizes }}" "${{ inputs.tabs }}"
+          bash scripts/ui-snapshot-matrix.sh "$BIN" "$RUNNER_TEMP/aom-snapshots" "${{ inputs.sizes || '980x600 1320x860' }}" "${{ inputs.tabs || '1 2 3 4 5 6 7 8 9 10 11 12 13' }}"
       - uses: actions/upload-artifact@v4
         with:
           name: aom-ui-snapshots
