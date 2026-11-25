@@ -61,7 +61,13 @@ struct CustomSnapZonesEditor: View {
     @State private var previousZones: [CustomSnapZone]?
     let profileID: UUID?
     let profileName: String
-    init(preset: Preset, profile: SnapLayoutProfile? = nil) {
+    private let displayID: Int
+    private let presetID: UUID
+    @State private var saveMessage: String?
+
+    init(preset: Preset, profile: SnapLayoutProfile?, displayID: Int) {
+        self.displayID = displayID
+        presetID = preset.id
         let zones = profile?.zones ?? preset.customSnapZones
         _lastSet = State(initialValue: CustomSnapZone.Collection.allCases.first {
             $0.layouts.count == zones.count && Set($0.replacing(zones).map(\.id)) == Set(zones.map(\.id))

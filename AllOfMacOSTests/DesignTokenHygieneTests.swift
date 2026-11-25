@@ -4,10 +4,10 @@ final class DesignTokenHygieneTests: XCTestCase {
     private let files = [
         "Launcher/AOMLauncherCraftViews.swift", "Clipboard/AOMPasteCraftCard.swift",
         "Audio/AOMSoundSourceControlBoard.swift", "Automation/AOMAutomationRecipeView.swift",
-        "Capture/AOMAnnotateWorkbenchView.swift", "MenuBar/AOMMenuBarCraftPanel.swift"
+        "MenuBar/AOMMenuBarCraftPanel.swift"
     ]
 
-    /// A source convention for the six reviewed view files, not a Swift parser.
+    /// A source convention for the reviewed view files, not a Swift parser.
     private func violations(in source: String) -> [String] {
         let rules = [
             (#"\bwithAnimation\s*\(\s*(?!\s*AOMCraftMotion\.resolve\s*\()"#, "Use AOMCraftMotion.resolve"),
