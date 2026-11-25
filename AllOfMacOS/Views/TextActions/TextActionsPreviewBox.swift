@@ -59,7 +59,7 @@ struct TextActionsPreviewPane: View {
                         ForEach(TextActionsPreviewSample.allCases) { Text($0.title).tag($0) }
                     }
                     .labelsHidden()
-                    .fixedSize()
+                    .frame(minWidth: 96)
                     .layoutPriority(1)
                 }
             }

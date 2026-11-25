@@ -351,7 +351,7 @@ private struct AudioMixerHeader: View {
             Color.clear.frame(width: AOMRowControlMetrics.valueWidth, height: 1)
             title("Magic Boost")
                 .frame(width: AudioRowMetrics.buttonWidth + AOMSpace.x3 + AudioBoostPresetPicker.menuWidth, alignment: .leading)
-            title(inspectorShown ? "Inspect" : "Effects").frame(width: AudioRowMetrics.buttonWidth)
+            Color.clear.frame(width: AudioRowMetrics.buttonWidth, height: 1)
         }
         .padding(.horizontal, AOMSpace.rowInset)
         .padding(.vertical, AOMSpace.x1 + AOMSpace.x0_5)

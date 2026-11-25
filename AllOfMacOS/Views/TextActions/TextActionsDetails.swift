@@ -85,7 +85,8 @@ struct TextActionsBarDetail: View {
                     }
                     .pickerStyle(.menu)
                     .labelsHidden()
-                    .fixedSize()
+                    // 7.19: menu pickers in this row measured to one letter.
+                    .frame(minWidth: 170)
                 }
                 AOMSettingRow("Hide after", detail: "Once the pointer is away from the bar") {
                     AOMRowSlider("Hide after", value: $settings.hideDelay, in: TextActionsSettings.hideDelayRange, step: 0.5,

@@ -92,3 +92,9 @@ Capture, Files 980×600, Window Tiling, Settings.
 
 **NOT_RUN** (unchanged limits): real-window resize ×30, VoiceOver/Reduce Motion/Transparency, p50/p95 transitions, 15-minute idle,
 1320+ widths (the CI display is 1024×768).
+
+## 7.19.0 follow-up (2026-11-25, Claude)
+
+Done: Audio column titles + sample apps (D17 header; rows already shared fixed widths), Capture List view + sample captures (D19 list; thumbnails are already in memory, so no skeleton), Menu Bar calm lanes + bar strip + read freshness (N08), Settings per-result Show + catalog cache (R08, R09), permission states (N07), rail "As of" (R10), Clipboard Copy on the shown item, Text Actions picker widths, Automation title room, Audio mixer icon.
+Still open: Audio/Capture inspector width persistence and narrow sheet fallback (Audio already expands effects inline when narrow), R11 per-row routing beyond the existing status line, real-window QA (resize ×30, VoiceOver, p50/p95, idle).
+CI: `cb4de8a` snapshots 45612472483 success, `swift test` passed in 45612494633.

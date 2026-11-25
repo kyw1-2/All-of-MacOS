@@ -1,3 +1,16 @@
+## [7.19.0] - 2026-11-25 — Calm Workbench, finished
+
+The 7.18 ledger's open items and a second look at the 7.18 screenshots.
+
+- **Audio** (D17): the Applications mixer is a table — Application, Mute, Volume and Magic Boost titled once over aligned columns. The floating mixer button has its own icon, apart from the options menu.
+- **Capture** (D19): a List view beside the three thumbnail sizes — thumbnail, name, kind, pixel size, time and kept mark — with Open & Annotate, Copy, Show in Finder, Keep and Delete on each row.
+- **Menu Bar**: lanes are calm wells; the menu bar's own colour sits only in a strip behind the icons, so captured icons keep their background. The header says when the menu bar was last read and whether some items couldn't be (N08).
+- **Settings** (R08, R09): every search result has its own Show button (and Return/context menu); the catalog is built once per window.
+- **Workspace** (N07, R10): a permission that is off reads apart from one AOM hasn't asked for yet; the overview rail says when its figures were read.
+- **Clipboard**: Copy and the item menu act on the item you're looking at, even before you click a row.
+- **Text Actions**: the Position and sample pickers keep their full width. **Automation**: the name keeps room before "Every app" and the switch.
+- **Previews**: `--aom-preview-sample-data` also fills Audio (five apps with mixed states) and Capture (twelve drawn captures).
+
 ## [7.18.0] - 2026-11-25 — Calm Workbench
 
 From the 7.17.0 independent re-review (R01–R18), the 19-app design review's open items, and a static review of the shell — planned from CI-rendered screenshots of every page (`docs/design-7.18.md`). Built by five GPT-6.2 Sol workers plus Claude; status of every item in `docs/design-7.18.md`.
