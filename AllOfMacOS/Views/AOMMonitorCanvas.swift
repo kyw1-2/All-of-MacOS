@@ -63,21 +63,40 @@ enum AOMMonitorCanvasGeometry {
 /// reports a display change; nothing is polled.
 struct AOMMonitorCanvas: View {
     let zones: [CustomSnapZone]
-    var onEditZones: () -> Void = {}
+    @Binding var selectedID: Int?
+    var onEditZones: (Int) -> Void
     @State private var monitors: [AOMMonitorInfo] = []
-    @State private var selectedID: Int?
     private static let canvasHeight: CGFloat = 180
 
-    private static func readScreens() -> [AOMMonitorInfo] {
-        NSScreen.screens.enumerated().map { index, screen in
-            let number = (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.intValue ?? index
+    static func readScreens() -> [AOMMonitorInfo] {
+        NSScreen.screens.enumerated().compactMap { index, screen in
+            guard let number = (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.intValue else { return nil }
             return AOMMonitorInfo(id: number, name: screen.localizedName, frame: screen.frame,
-                                  visibleFrame: screen.visibleFrame, isMain: screen == NSScreen.main)
+                                  visibleFrame: screen.visibleFrame, isMain: index == 0)
         }
     }
 
+    static func isConnected(_ id: Int) -> Bool {
+        readScreens().contains { $0.id == id }
+    }
+
+    static let disconnectedMessage = "Display disconnected. Select a connected display to edit zones."
+
+    private func select(_ id: Int) {
+        // Keep the intended ID even if the click races the removal notification.
+        selectedID = id
+        if !Self.isConnected(id) { refreshScreens() }
+    }
+
     private var selected: AOMMonitorInfo? {
-        monitors.first { $0.id == selectedID } ?? monitors.first(where: \.isMain) ?? monitors.first
+        monitors.first { $0.id == selectedID }
+    }
+
+    private func refreshScreens() {
+        monitors = Self.readScreens()
+        // Choose an initial display once. Retain a disconnected ID until the
+        // user explicitly picks a different display.
+        if selectedID == nil { selectedID = (monitors.first(where: \.isMain) ?? monitors.first)?.id }
     }
 
     var body: some View {
@@ -99,13 +118,16 @@ struct AOMMonitorCanvas: View {
                 .accessibilityLabel("Display arrangement")
                 if let monitor = selected {
                     details(monitor)
+                } else {
+                    Text(selectedID == nil ? "No displays available." : Self.disconnectedMessage)
+                        .font(AOMFont.callout)
+                        .foregroundStyle(AOMColor.textSecondary)
                 }
             }
         }
-        .onAppear { monitors = Self.readScreens() }
+        .onAppear { refreshScreens() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)) { _ in
-            monitors = Self.readScreens()
-            if let id = selectedID, !monitors.contains(where: { $0.id == id }) { selectedID = nil }
+            refreshScreens()
         }
     }
 
@@ -143,13 +165,13 @@ struct AOMMonitorCanvas: View {
         .frame(width: place.frame.width, height: place.frame.height, alignment: .topLeading)
         .clipShape(RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous))
         .contentShape(Rectangle())
-        .onTapGesture { selectedID = monitor.id }
+        .onTapGesture { select(monitor.id) }
         .offset(x: place.frame.minX, y: place.frame.minY)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(monitor.name)
         .accessibilityValue("\(Int(monitor.frame.width)) by \(Int(monitor.frame.height)) points\(monitor.isMain ? ", main display" : "")")
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
-        .accessibilityAction { selectedID = monitor.id }
+        .accessibilityAction { select(monitor.id) }
     }
 
     private func details(_ monitor: AOMMonitorInfo) -> some View {
@@ -160,7 +182,7 @@ struct AOMMonitorCanvas: View {
                 Text(monitor.name + (monitor.isMain ? " · Main" : ""))
                     .font(AOMFont.headline)
                 Spacer(minLength: AOMSpace.x2)
-                Button("Edit Snap Zones…", action: onEditZones).controlSize(.small)
+                Button("Edit Snap Zones…") { onEditZones(monitor.id) }.controlSize(.small)
             }
             AOMInspectorRow("Display", text: "\(Int(monitor.frame.width)) × \(Int(monitor.frame.height)) pt")
             AOMInspectorRow("Usable", text: "\(Int(monitor.visibleFrame.width)) × \(Int(monitor.visibleFrame.height)) pt"

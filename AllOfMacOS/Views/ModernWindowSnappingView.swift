@@ -15,7 +15,26 @@ struct ModernWindowSnappingView: View {
     @EnvironmentObject var appState: AppState
     @State private var hoveredLayout: CustomSnapZone.Layout?
     @StateObject private var toast = AOMToastModel()
-    @State private var showingSnapZones = false
+    @State private var selectedDisplayID: Int?
+    @State private var zoneEdit: ZoneEdit?
+
+    private struct ZoneEdit: Identifiable {
+        let id: Int
+        let preset: Preset
+        let profile: SnapLayoutProfile?
+    }
+
+    private func editZones(for id: Int?) {
+        guard let id else {
+            toast.show("Select a display to edit zones.", tone: .warning)
+            return
+        }
+        guard AOMMonitorCanvas.isConnected(id) else {
+            toast.show(AOMMonitorCanvas.disconnectedMessage, tone: .warning)
+            return
+        }
+        zoneEdit = ZoneEdit(id: id, preset: appState.currentPreset, profile: appState.activeSnapProfile)
+    }
     @State private var showingProfiles = false
     @State private var showingWindowLayouts = false
     /// 7.3: work scenes.
@@ -112,7 +131,8 @@ struct ModernWindowSnappingView: View {
                 LazyVStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
                     header
                     // D21: the real displays and the active zones first.
-                    AOMMonitorCanvas(zones: appState.effectiveSnapZones, onEditZones: { showingSnapZones = true })
+                    AOMMonitorCanvas(zones: appState.effectiveSnapZones, selectedID: $selectedDisplayID,
+                                     onEditZones: { editZones(for: $0) })
                     quickZonesBar
                     if wide {
                         HStack(alignment: .top, spacing: AOMSpace.sectionGap) {
@@ -170,39 +190,9 @@ struct ModernWindowSnappingView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(AOMPageTint())
-        .aomPageToolbar {
-            ToolbarItemGroup(placement: .automatic) {
-                Button {
-                    showingSnapZones = true
-                } label: {
-                    Label("Snap Zones", systemImage: "rectangle.split.3x3")
-                }
-                .help("Draw and edit custom snap zones")
-                Button {
-                    showingProfiles = true
-                } label: {
-                    Label("Display Profiles", systemImage: "display.2")
-                }
-                .help("Per-monitor snap profiles")
-                Button {
-                    showingWindowLayouts = true
-                } label: {
-                    Label("Saved Windows", systemImage: "macwindow.on.rectangle")
-                }
-                .help("Save and restore multi-window layouts")
-            }
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    WindowSwitcherController.shared.show()
-                } label: {
-                    Label("Switch Windows", systemImage: "rectangle.stack")
-                }
-                .help("Thumbnail switcher for every open window (bind it in Settings › Shortcuts)")
-            }
-        }
         .aomToast(toast)
-        .sheet(isPresented: $showingSnapZones) {
-            CustomSnapZonesEditor(preset: appState.currentPreset, profile: appState.activeSnapProfile)
+        .sheet(item: $zoneEdit) { target in
+            CustomSnapZonesEditor(preset: target.preset, profile: target.profile, displayID: target.id)
                 .environmentObject(appState)
         }
         .sheet(isPresented: $showingProfiles) { SnapProfilesEditor().environmentObject(appState) }
