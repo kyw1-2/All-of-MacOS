@@ -2,139 +2,102 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
+/// Audio, arranged like SoundSource's one window: the system devices on top
+/// (output, input, sound effects), the applications below. Frequent controls
+/// — volume, mute, Magic Boost, routing — sit on each one-line row; effects
+/// (Volume Overdrive, equalizer, timed mute) open in place. The header holds
+/// the App Audio switch; the toolbar the application filter and recovery
+/// options.
 struct AudioWorkspaceView: View {
-    var body: some View {
-        if PresetManager.isUIPreview && ProcessInfo.processInfo.arguments.contains("--aom-preview-sample-data") {
-            AudioWorkspaceContent(service: nil)
-        } else {
-            LiveAudioWorkspace()
-        }
-    }
-}
-
-private struct LiveAudioWorkspace: View {
     @ObservedObject private var service = AppAudioMixerService.shared
-    @State private var refreshClock = AOMRefreshClock()
-    private static let refreshInterval: TimeInterval = 5
-
-    var body: some View {
-        AudioWorkspaceContent(service: service)
-            // Only the live page registers as a meter client.
-            .aomOnPageVisibilityChange { visible in
-                guard visible else { service.endMetering(); return }
-                service.beginMetering()
-                if refreshClock.remaining(of: Self.refreshInterval) == 0 {
-                    refreshClock.mark()
-                    service.refresh()
-                }
-            }
-    }
-}
-
-private struct AudioWorkspaceContent: View {
-    /// Nil only in sample previews, so these views never initialize the mixer or HAL.
-    let service: AppAudioMixerService?
     @State private var searchText = ""
     @State private var expandedOutput = true
-    @State private var outputDevices: [AudioOutputDevice] = []
+    /// Confirmations for the page and its rows (design-3.4.0 b.5).
     @StateObject private var toast = AOMToastModel()
+    /// When the apps were last re-read on selecting the page.
+    @State private var refreshClock = AOMRefreshClock()
+    private static let refreshInterval: TimeInterval = 5
+    /// D17/D18: the mixer on the left, the selected app's effects in a
+    /// trailing inspector when the page has room for both.
     @AppStorage("AOMAudioInspector") private var showsInspector = true
-    @AppStorage("AOMAudioInspectorWidth") private var inspectorWidth = Double(AOMSize.inspectorIdeal)
-    @State private var availableWidth: CGFloat = 0
-    @State private var arrangement: AOMWorkbenchArrangement = .drillIn
+    @State private var inspectorFits = false
     @State private var selectedBundleID: String?
-    @State private var inspectionRequest = 0
 
-    private static let inspectorAnchor = "audio-app-inspector"
-    /// The Audio page has two panes, so the workbench's list width is zero.
-    private static let mixerMinimum: CGFloat = 520
-    private static let reserved = mixerMinimum + 2 * AOMWorkbenchPolicy.dividerAllowance
-    private static let inspectorRange = Double(AOMSize.inspectorWidth.lowerBound)...Double(AOMSize.inspectorWidth.upperBound)
+    private var inspectorShown: Bool { showsInspector && inspectorFits && service.isSupported }
 
-    private var isSupported: Bool { service?.isSupported ?? true }
-    private var inspectorShown: Bool { showsInspector && isSupported }
-    private var inspectorBeside: Bool { inspectorShown && arrangement.showsInspectorBeside }
-    private var displayedInspectorWidth: CGFloat {
-        AOMPaneWidth.effective(stored: inspectorWidth, range: Self.inspectorRange,
-                               fallback: Double(AOMSize.inspectorIdeal), available: availableWidth, reserved: Self.reserved)
-    }
-
-    private var appGroups: [(title: String?, rows: [AppAudioState])] {
-        guard let service else {
-            let query = searchText.trimmingCharacters(in: .whitespaces)
-            return [(nil, AudioPreviewSamples.apps.filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) })]
-        }
+    /// Every app the list shows, in its order (favorites, active, other, hidden).
+    private var listedApps: [AppAudioState] {
         let lists = service.listedApps(matching: searchText)
-        return [("Favorites", lists.favorites), (lists.favorites.isEmpty ? nil : "Playing & adjusted", lists.active),
-                ("Other running apps", lists.other), ("Hidden", service.hiddenListed(matching: searchText))]
+        return lists.favorites + lists.active + lists.other + service.hiddenListed(matching: searchText)
     }
 
-    private var listedApps: [AppAudioState] { appGroups.flatMap(\.rows) }
-    private var selectedApp: AppAudioState? { listedApps.first { $0.bundleID == selectedBundleID } }
+    private var selectedApp: AppAudioState? {
+        guard let id = selectedBundleID else { return nil }
+        return listedApps.first { $0.bundleID == id }
+    }
 
     var body: some View {
         HStack(spacing: 0) {
-            ScrollViewReader { scroll in
-                AOMPage {
-                    header
-                    if let service { notices(service) }
-                    devicesCard
-                    applicationsCard
-                    if inspectorShown && !inspectorBeside {
-                        AOMSectionCard("Inspector", symbol: "sidebar.trailing", contentPadding: 0) {
-                            inspectorContent
-                        }
-                        .id(Self.inspectorAnchor)
-                    }
-                    if service != nil {
-                        MicMuteSection()
-                        HeadphoneEQCard()
-                        AudioUnitEffectCard()
-                    }
-                }
-                .onChange(of: inspectionRequest) {
-                    guard inspectorShown && !inspectorBeside else { return }
-                    withAnimation(AOMMotion.panel) { scroll.scrollTo(Self.inspectorAnchor, anchor: .top) }
-                }
+            AOMPage {
+                header
+                notices
+                devicesCard
+                // The microphone mute section sits under the input device it
+                // mutes (drawn by its module).
+                applicationsCard
+                MicMuteSection()
+                // Output-wide effects follow the devices (and the output
+                // equalizer inside them), before the per-app list.
+                HeadphoneEQCard()
+                AudioUnitEffectCard()
             }
-            if inspectorBeside {
-                AOMResizeDivider(width: $inspectorWidth, range: Self.inspectorRange, paneEdge: .leading,
-                                 displayed: displayedInspectorWidth, maximum: availableWidth - Self.reserved)
-                AOMInspector { inspectorContent }
-                    .frame(width: displayedInspectorWidth)
+            if inspectorShown {
+                AOMDivider(axis: .vertical)
+                audioInspector
+                    .frame(width: AOMSize.inspectorIdeal)
                     .frame(maxHeight: .infinity)
                     .accessibilityElement(children: .contain)
                     .accessibilityLabel("Inspector")
             }
         }
-        .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width in
-            availableWidth = width
-            updateArrangement(width)
+        .background {
+            GeometryReader { proxy in
+                Color.clear
+                    .onAppear { updateInspectorFits(proxy.size.width) }
+                    .onChange(of: proxy.size.width) { _, width in updateInspectorFits(width) }
+            }
         }
-        .onChange(of: inspectorShown) { updateArrangement(availableWidth) }
         .onChange(of: listedApps.map(\.bundleID)) { _, ids in reconcileSelection(ids) }
         .onAppear { reconcileSelection(listedApps.map(\.bundleID)) }
         .aomPage("Audio")
         .aomPageToolbar {
-            AOMToolbarSearchItem(text: $searchText, prompt: "Filter Apps")
             toolbarContent
+            AOMToolbarSearchItem(text: $searchText, prompt: "Filter Apps")
         }
         .environmentObject(toast)
         .aomToast(toast)
+        // Levels are metered while Audio is the selected page and on screen.
+        // The apps are re-read too, unless that happened in the last few seconds.
+        .aomOnPageVisibilityChange { visible in
+            guard visible else { service.endMetering(); return }
+            service.beginMetering()
+            if refreshClock.remaining(of: Self.refreshInterval) == 0 {
+                refreshClock.mark()
+                service.refresh()
+            }
+        }
     }
 
     // MARK: Inspector (D18)
 
-    private func updateArrangement(_ width: CGFloat) {
-        arrangement = AOMWorkbenchArrangement.resolve(
-            available: width, listMinimum: 0, detailMinimum: Self.mixerMinimum,
-            inspectorMinimum: AOMSize.inspectorWidth.lowerBound, inspectorRequested: inspectorShown, current: arrangement)
-    }
+    /// The mixer keeps at least this much beside the inspector.
+    private static let mixerMinimum: CGFloat = 600
 
-    private func inspect(_ app: AppAudioState) {
-        selectedBundleID = app.bundleID
-        showsInspector = true
-        inspectionRequest += 1
+    private func updateInspectorFits(_ width: CGFloat) {
+        let fits = AOMWorkbenchPolicy.sideBySide(
+            available: width, minimum: Self.mixerMinimum + AOMSize.inspectorIdeal + AOMWorkbenchPolicy.dividerAllowance,
+            current: inspectorFits)
+        if fits != inspectorFits { inspectorFits = fits }
     }
 
     /// The selected app stays while it is listed; the filter never moves it
@@ -145,31 +108,30 @@ private struct AudioWorkspaceContent: View {
         if next != selectedBundleID { selectedBundleID = next }
     }
 
-    @ViewBuilder private var inspectorContent: some View {
-        if let app = selectedApp {
-            AOMInspectorSection(app.name, showsDivider: false) {
-                AOMInspectorRow("Playback", text: app.muted ? "Muted" : (app.isPlaying ? "Playing" : "Silent"))
-                AOMInspectorRow("Volume", text: "\(Int((min(max(app.gain, 0), 1) * app.overdrive * 100).rounded()))%")
-                if let ends = service?.timedMuteEnds[app.bundleID] {
-                    AOMInspectorRow("Muted until", text: ends.formatted(date: .omitted, time: .shortened))
-                }
-            }
-            AOMInspectorSection("Output & effects") {
-                if let service {
-                    ApplicationAudioEffects(app: app, service: service)
-                        .id(app.bundleID)
-                } else {
-                    AOMInspectorRow("Output", text: AudioPreviewSamples.outputName(for: app))
+    private var audioInspector: some View {
+        AOMInspector {
+            if let app = selectedApp {
+                AOMInspectorSection(app.name, showsDivider: false) {
+                    AOMInspectorRow("Status", text: app.muted ? "Muted" : (app.isPlaying ? "Playing" : "Silent"))
+                    AOMInspectorRow("Volume", text: "\(Int((min(max(app.gain, 0), 1) * app.overdrive * 100).rounded()))%")
                     AOMInspectorRow("Magic Boost", text: app.magicBoost ? "On" : "Off")
+                    AOMInspectorRow("Output", text: app.outputDeviceUID == nil ? "System Default" : "Routed to its own output")
+                    if let ends = service.timedMuteEnds[app.bundleID] {
+                        AOMInspectorRow("Muted until", text: ends.formatted(date: .omitted, time: .shortened))
+                    }
                 }
-            }
-        } else {
-            AOMInspectorSection("Output & effects", showsDivider: false) {
-                Text(listedApps.isEmpty ? "Apps appear here while they play."
-                                        : "Select an app to adjust its effects and output.")
-                    .font(AOMFont.callout)
-                    .foregroundStyle(AOMColor.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                AOMInspectorSection("Effects") {
+                    ApplicationAudioEffects(app: app, stacked: true)
+                        .id(app.bundleID)
+                }
+            } else {
+                AOMInspectorSection("Effects", showsDivider: false) {
+                    Text(listedApps.isEmpty ? "Apps appear here while they play."
+                                            : "Select an app to adjust its effects and output.")
+                        .font(AOMFont.callout)
+                        .foregroundStyle(AOMColor.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
     }
@@ -181,9 +143,9 @@ private struct AudioWorkspaceContent: View {
     private var header: some View {
         AOMPageHeader(headerTitle, subtitle: subtitle,
                       help: "App Audio sends each app through AOM, so every app gets its own volume, Magic Boost and equalizer. Turned off, audio plays directly and every setting is kept.",
-                      active: isSupported && (service?.soundEnabled ?? true)) {
-            if let service, service.isSupported {
-                Toggle("App Audio", isOn: Binding(get: { service.soundEnabled }, set: { service.soundEnabled = $0 }))
+                      active: service.isSupported && service.soundEnabled) {
+            if service.isSupported {
+                Toggle("App Audio", isOn: $service.soundEnabled)
                     .toggleStyle(.switch)
                     .help(service.soundEnabled ? "Turn off app audio processing" : "Turn on app audio processing")
                     .accessibilityLabel("App audio processing")
@@ -192,7 +154,6 @@ private struct AudioWorkspaceContent: View {
     }
 
     private var headerTitle: String {
-        guard let service else { return "App audio preview" }
         guard service.isSupported else { return "Per-app audio isn't available" }
         return service.soundEnabled ? "App audio is on" : "App audio is off"
     }
@@ -242,7 +203,7 @@ private struct AudioWorkspaceContent: View {
                 Divider()
                 Button("Open Mixer Panel", systemImage: "slider.horizontal.3") { service.showPanel() }
             } label: {
-                Label("Audio Options", systemImage: "ellipsis.circle")
+                Label("Audio Options", systemImage: "slider.horizontal.3")
             }
             .help("Applications, recovery and permissions")
         }
@@ -1292,7 +1253,7 @@ private struct EqualizerSheet: View {
                 .controlSize(.small).fixedSize()
                 Button("Flat") { preset = "Flat" }.controlSize(.small)
                     .help("Set every band to 0 dB")
-                Button("Done", action: onDone).keyboardShortcut(.defaultAction).buttonStyle(AOMPrimaryButtonStyle()).aomPrimaryButton()
+                Button("Done", action: onDone).keyboardShortcut(.defaultAction).aomPrimaryButton()
             }
             AudioEqualizerControls(gains: gains, enabled: enabled, onChange: onBand)
             Text("Boosted bands lower the overall level first so loud passages stay clean; Magic Boost restores loudness.")

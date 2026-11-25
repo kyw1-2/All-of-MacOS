@@ -521,7 +521,7 @@ struct ClipboardStudioView: View {
     @ViewBuilder private func entryMenu(_ entry: ClipboardEntry, fromRow: Bool = true) -> some View {
         let expected = fromRow ? nil : entry.id
         let addressed = fromRow ? entry.id : nil
-        func resolve() -> ClipboardEntry? { liveEntry(expecting: expected, addressedTo: addressed) }
+        let resolve: () -> ClipboardEntry? = { liveEntry(expecting: expected, addressedTo: addressed) }
         Button("Copy") { copy(expecting: expected, addressedTo: addressed) }
         if entry.kind == .text || entry.kind == .link {
             Button("Copy as Plain Text") { copy(expecting: expected, addressedTo: addressed, plainText: true) }

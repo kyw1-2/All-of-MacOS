@@ -214,7 +214,7 @@ private struct WhatsNewView: View {
                 }
                 Spacer(minLength: AOMSpace.x2)
                 Button("Continue", action: close)
-                    .keyboardShortcut(.defaultAction).buttonStyle(AOMPrimaryButtonStyle())
+                    .keyboardShortcut(.defaultAction)
                     .aomPrimaryButton()
             }
         }
