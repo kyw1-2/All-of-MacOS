@@ -293,3 +293,16 @@ final class AOMWorkbench2MonitorCanvasTests: XCTestCase {
         XCTAssertEqual(reserved.leading, 0)
     }
 }
+
+/// D25: the Files inspector's path.
+final class AOMWorkbench2FilesTests: XCTestCase {
+    func testBreadcrumbsCollapseHome() {
+        let home = URL(fileURLWithPath: "/Users/someone")
+        let crumbs = FilesBreadcrumb.crumbs(for: URL(fileURLWithPath: "/Users/someone/Downloads/report.pdf"), home: home)
+        XCTAssertEqual(crumbs.map(\.name), ["~", "Downloads", "report.pdf"])
+        XCTAssertEqual(crumbs.first?.url.path, "/Users/someone")
+        let outside = FilesBreadcrumb.crumbs(for: URL(fileURLWithPath: "/Volumes/Backup/a.zip"), home: home)
+        XCTAssertEqual(outside.map(\.name), ["/", "Volumes", "Backup", "a.zip"])
+        XCTAssertEqual(FilesBreadcrumb.crumbs(for: URL(fileURLWithPath: "/"), home: home).map(\.name), ["/"])
+    }
+}
