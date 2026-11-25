@@ -335,3 +335,33 @@ final class AOMWorkbench2AutomationStatusTests: XCTestCase {
         XCTAssertEqual(AOMAutomationEditorStatus.invalidSteps("x").tone, .warning)
     }
 }
+
+/// D30: the Activity event log follows the page's period and the chart's bar.
+final class AOMWorkbench2ActivityLogTests: XCTestCase {
+    func testLogFiltersByPeriodBucketAndRuns() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let events = [
+            GestureEvent(gesture: "old", timestamp: now.addingTimeInterval(-3 * 86_400), fired: true),
+            GestureEvent(gesture: "a", timestamp: now.addingTimeInterval(-7_200), fired: true),
+            GestureEvent(gesture: "b", timestamp: now.addingTimeInterval(-3_600), fired: false),
+            GestureEvent(gesture: "c", timestamp: now.addingTimeInterval(-60), fired: true)
+        ]
+        let day = AOMActivityLog.events(events, now: now, within: 86_400, bucketStart: nil, hourly: true,
+                                        runsOnly: false, calendar: calendar)
+        XCTAssertEqual(day.map(\.gesture), ["c", "b", "a"], "newest first, inside the period")
+        let runs = AOMActivityLog.events(events, now: now, within: 86_400, bucketStart: nil, hourly: true,
+                                         runsOnly: true, calendar: calendar)
+        XCTAssertEqual(runs.map(\.gesture), ["c", "a"])
+        let hour = AOMActivityLog.events(events, now: now, within: 86_400, bucketStart: now.addingTimeInterval(-7_200),
+                                         hourly: true, runsOnly: false, calendar: calendar)
+        XCTAssertEqual(hour.map(\.gesture), ["a"], "only the selected bar's hour")
+        let all = AOMActivityLog.events(events, now: now, within: nil, bucketStart: nil, hourly: false,
+                                        runsOnly: false, calendar: calendar)
+        XCTAssertEqual(all.count, 4)
+        let many = (0..<120).map { GestureEvent(gesture: "g\($0)", timestamp: now.addingTimeInterval(Double($0)), fired: true) }
+        XCTAssertEqual(AOMActivityLog.events(many, now: now.addingTimeInterval(200), within: nil, bucketStart: nil,
+                                             hourly: false, runsOnly: true, calendar: calendar).count, AOMActivityLog.limit)
+    }
+}
