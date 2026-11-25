@@ -96,6 +96,10 @@ struct ClipboardStudioView: View {
     /// inspector when the window has room; in the detail otherwise.
     @AppStorage("AOMClipboardInspector") private var showsInspector = true
     @State private var inspectorBeside = false
+    /// D16: the pinboard and type the library was narrowed to, kept across
+    /// the page being rebuilt (LRU eviction, relaunch). The search text isn't.
+    @AppStorage("AOMClipboardLibraryBoard") private var savedBoard = ""
+    @AppStorage("AOMClipboardLibraryKind") private var savedKind = ""
     @Environment(\.undoManager) private var undoManager
     @State private var showingNewTextSheet = false
     @State private var newText = ""
@@ -211,8 +215,15 @@ struct ClipboardStudioView: View {
             }
         }
         .sheet(isPresented: $showingNewBoardSheet) { newBoardSheet }
+        .onChange(of: search.board) { _, board in savedBoard = board?.uuidString ?? "" }
+        .onChange(of: search.kind) { _, kind in savedKind = kind?.rawValue ?? "" }
         .sheet(isPresented: $showingNewTextSheet) { newTextSheet }
         .onAppear {
+            // D16: back to the pinboard and type last shown, if they still exist.
+            let restored = ClipboardLibraryFilterMemory.restore(board: savedBoard, kind: savedKind,
+                                                               boards: store.boards.map(\.id))
+            if search.board == nil { search.board = restored.board }
+            if search.kind == nil { search.kind = restored.kind }
             // Isolated previews can open the settings sheet for review
             // (`--aom-preview-clipboard-settings`).
             if PresetManager.isUIPreview, ProcessInfo.processInfo.arguments.contains("--aom-preview-clipboard-settings") {
@@ -1207,5 +1218,14 @@ private extension Color {
             blue:  Double(b) / 255,
             opacity: Double(a) / 255
         )
+    }
+}
+
+/// D16: which saved pinboard and type filter to restore. A pinboard that was
+/// deleted meanwhile, or a value an older build wrote, restores nothing.
+enum ClipboardLibraryFilterMemory {
+    static func restore(board: String, kind: String, boards: [UUID]) -> (board: UUID?, kind: ClipboardEntry.Kind?) {
+        let id = UUID(uuidString: board).flatMap { boards.contains($0) ? $0 : nil }
+        return (id, ClipboardEntry.Kind(rawValue: kind))
     }
 }

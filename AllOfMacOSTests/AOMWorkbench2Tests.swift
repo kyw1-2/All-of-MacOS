@@ -374,3 +374,17 @@ final class AOMWorkbench2SystemToolsTests: XCTestCase {
         XCTAssertEqual(SystemToolUndoNote.note(.trash, kind: .toggle), "Emptied items can't be restored.", "the tool's own note wins")
     }
 }
+
+/// D16: the Clipboard library's pinboard and type survive a rebuild.
+final class AOMWorkbench2ClipboardMemoryTests: XCTestCase {
+    func testRestore() {
+        let board = UUID()
+        let restored = ClipboardLibraryFilterMemory.restore(board: board.uuidString, kind: "image", boards: [board])
+        XCTAssertEqual(restored.board, board)
+        XCTAssertEqual(restored.kind, .image)
+        let gone = ClipboardLibraryFilterMemory.restore(board: board.uuidString, kind: "nonsense", boards: [])
+        XCTAssertNil(gone.board, "a deleted pinboard isn't restored")
+        XCTAssertNil(gone.kind)
+        XCTAssertNil(ClipboardLibraryFilterMemory.restore(board: "", kind: "", boards: [board]).board)
+    }
+}
