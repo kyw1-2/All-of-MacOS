@@ -63,6 +63,8 @@ struct AutomationListHeader: View {
             .padding(.bottom, AOMSpace.x2)
     }
 
+    /// An app's icon, 16 pt, cached by bundle identifier.
+    @MainActor private static var iconCache: [String: NSImage] = [:]
     @MainActor static func appIcon(_ bundleID: String?) -> NSImage? {
         guard let bundleID, !bundleID.isEmpty else { return nil }
         if let cached = iconCache[bundleID] { return cached }
