@@ -49,6 +49,6 @@ Status values: DONE, PARTIAL, NOT_DONE, NA. "(code)" means compiled and unit-tes
 
 ## Verification
 
-- macOS CI (`tests.yml`, workflow_dispatch on this branch): `swift test -j 2` and `./build-and-sign.sh`. Results are in the commit/PR notes.
+- macOS CI (`tests.yml`, workflow_dispatch on this branch, `xcode-27` runner): `swift test -j 2`, `./build-and-sign.sh`, codesign verify and DMG. Run 45535629093 (`4fcc38a`), run 45536022197 (`667d1e8`) and run 45541290607 (`4193c58`) all succeeded. Run 45536022197 executed 614 tests: 17 skipped, 0 failures, all 13 `AOMWorkbench2*` tests passed.
 - NOT_RUN: the 84-screenshot matrix (13 routes + Settings × 980×600 / 1320×820 / 1600×1000 × light/dark), resize ×30 with draft and scroll, keyboard/VoiceOver/Reduce Motion/Transparency, warm/cold page transitions p50/p95, 15-minute idle CPU/RSS/wakeups. No Mac was attached to this session.
 - No release, install or version bump. 7.16.1 is unchanged.
