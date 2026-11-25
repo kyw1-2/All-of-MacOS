@@ -252,8 +252,10 @@ struct SystemToolsView: View {
 enum SystemToolUndoNote {
     static func note(_ id: SystemToolID, kind: SystemToolKind) -> String? {
         switch id {
-        case .trash: return "Emptied items can't be restored."
-        case .cache: return "Deleted caches can't be restored; apps rebuild them."
+        // Free Up Space empties the Trash and clears caches (both confirmed
+        // first); what it moves to the Trash can still be put back.
+        case .freeUpSpace: return "Items moved to the Trash can be put back; an emptied Trash or cleared caches can't."
+        case .resetSavedState: return "Saved window state can't be restored once reset."
         default: break
         }
         switch kind {

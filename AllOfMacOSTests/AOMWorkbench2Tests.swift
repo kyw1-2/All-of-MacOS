@@ -369,9 +369,10 @@ final class AOMWorkbench2ActivityLogTests: XCTestCase {
 /// D29: System Tools says which results can't be undone.
 final class AOMWorkbench2SystemToolsTests: XCTestCase {
     func testUndoNotes() {
-        XCTAssertNotNil(SystemToolUndoNote.note(.trash, kind: .command))
-        XCTAssertNotNil(SystemToolUndoNote.note(.cache, kind: .command))
-        XCTAssertEqual(SystemToolUndoNote.note(.trash, kind: .toggle), "Emptied items can't be restored.", "the tool's own note wins")
+        XCTAssertNotNil(SystemToolUndoNote.note(.freeUpSpace, kind: .sheet))
+        XCTAssertNotNil(SystemToolUndoNote.note(.resetSavedState, kind: .command))
+        XCTAssertEqual(SystemToolUndoNote.note(.darkMode, kind: .toggle), "Run it again to switch it back.")
+        XCTAssertNil(SystemToolUndoNote.note(.networkInfo, kind: .sheet))
     }
 }
 
