@@ -1313,7 +1313,7 @@ final class SystemToolsModel: ObservableObject {
     /// Called by the process sheet's Quit button.
     func quitProcess(_ row: ProcessReview.Row) {
         let id = processTool
-        guard confirm("Quit \(row.command)?", "Process \(row.pid) is asked to quit. Unsaved work in it may be lost.", button: "Quit") else { return }
+        guard confirm("Quit \(row.command)?", "Process \(row.pid) is asked to quit. Unsaved work may be lost. This can’t be undone.", button: "Quit") else { return }
         do {
             try NetworkTools.quit(pid: row.pid)
             processReview?.rows.removeAll { $0.pid == row.pid }

@@ -8,15 +8,25 @@ import UniformTypeIdentifiers
 struct TextActionsAppList: View {
     @Binding var bundleIDs: [String]
     @Environment(\.undoManager) private var undoManager
+    @State private var filter = ""
 
     var body: some View {
-        if bundleIDs.isEmpty {
-            AOMInlineEmpty(symbol: "hand.raised", message: "The bar can appear in every app.")
+        let needle = filter.trimmingCharacters(in: .whitespacesAndNewlines)
+        let apps = bundleIDs.map { (id: $0, name: Self.name($0)) }
+            .filter { needle.isEmpty || $0.id.localizedCaseInsensitiveContains(needle) || $0.name.localizedCaseInsensitiveContains(needle) }
+        if !bundleIDs.isEmpty || !needle.isEmpty {
+            TextField("Filter excluded apps", text: $filter)
+                .textFieldStyle(.roundedBorder)
+                .padding(.horizontal, AOMSpace.rowInset)
+                .padding(.vertical, AOMSpace.x2)
         }
-        ForEach(bundleIDs, id: \.self) { bundleID in
-            TextActionsAppRow(bundleID: bundleID, name: Self.name(bundleID)) { remove(bundleID) }
+        if apps.isEmpty {
+            AOMInlineEmpty(symbol: "hand.raised", message: needle.isEmpty ? "No apps excluded." : "No excluded apps match.")
         }
-        AOMSettingRow("Add an app", detail: "The bar stays away from it") {
+        ForEach(apps, id: \.id) { app in
+            TextActionsAppRow(bundleID: app.id, name: app.name) { remove(app.id) }
+        }
+        AOMSettingRow("Exclude apps") {
             HStack(spacing: AOMSpace.x2) {
                 Menu("Add Running App") {
                     let running = Self.runningApps(excluding: bundleIDs)
@@ -38,6 +48,7 @@ struct TextActionsAppList: View {
         guard !added.isEmpty else { return }
         AOMUndo.perform("Add App", undoManager: undoManager,
                         perform: { bundleIDs = before + added }, revert: { bundleIDs = before })
+        filter = ""
     }
 
     private func remove(_ bundleID: String) {

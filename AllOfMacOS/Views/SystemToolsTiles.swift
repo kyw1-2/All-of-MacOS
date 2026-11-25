@@ -52,8 +52,11 @@ struct SystemToolTile: View {
         HStack(spacing: 0) {
             Button(action: run) {
                 HStack(spacing: AOMSpace.x2 + AOMSpace.x0_5) {
-                    // 6.1: the tool's glyph on a tinted plate in the page hue.
-                    AOMAppIcon(AOMIdentity(symbol: info.symbol, color: AOMModule.systemTools.hue), size: 24)
+                    Image(systemName: info.symbol)
+                        .font(AOMFont.body)
+                        .foregroundStyle(AOMColor.textSecondary)
+                        .frame(width: AOMIcon.hitArea)
+                        .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
                         Text(info.title)
                             .font(AOMFont.body.weight(.medium))
@@ -136,16 +139,14 @@ struct SystemToggleTile: View {
         Button(action: run) {
             HStack(spacing: AOMSpace.x3) {
                 ZStack {
-                    // 6.1: Control Center — the glyph's circle fills with the
-                    // accent while on, a quiet plate while off.
-                    Circle().fill(isOn ? AnyShapeStyle(AOMColor.accent.gradient) : AnyShapeStyle(AOMColor.track))
+                    Circle().fill(AOMColor.track)
                     if isRunning {
                         ProgressView().controlSize(.small)
                     } else {
                         Image(systemName: info.symbol)
                             .font(AOMFont.bodyEmphasis)
                             .symbolRenderingMode(.monochrome)
-                            .foregroundStyle(isOn ? Color.white : AOMColor.text)
+                            .foregroundStyle(isOn ? AOMColor.successText : AOMColor.textSecondary)
                     }
                 }
                 .frame(width: Self.glyph, height: Self.glyph)
