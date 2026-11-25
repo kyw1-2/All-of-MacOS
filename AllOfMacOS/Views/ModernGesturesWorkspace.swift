@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Automation: find → select → edit, left to right.
 ///
@@ -22,22 +23,13 @@ struct ModernGesturesWorkspace: View {
     @State private var searchQuery = ""
     @State private var searchPresented = false
     @FocusState private var listFocused: Bool
-    @State private var runStates: [UUID: AOMRunState] = [:]
+    @State private var runStates: [AutomationEditorID: AOMRunState] = [:]
     /// 7.0: the steps drawn as a recipe (kept per Mac).
     @AppStorage("AOMAutomationShowsRecipe") private var showsRecipe = false
-    @State private var expandedActionIDs: Set<UUID> = []
-    @State private var showOptions = false
-    @State private var showInputSettings = false
-    /// 6.1 (Codex review): what you opened in each automation's editor,
-    /// restored when you come back to it instead of a rule (≤ 6 steps all
-    /// open, 7+ all closed) that flipped between the 6th and 7th step.
-    @State private var editorMemory: [UUID: EditorMemory] = [:]
-
-    private struct EditorMemory {
-        var steps: Set<UUID> = []
-        var input = false
-        var options = false
-    }
+    @Environment(\.aomPageActivity) private var pageActivity
+    @State private var explicitSelection: AutomationEditorID?
+    @State private var editorMemory: [AutomationEditorID: AutomationEditorDraft] = [:]
+    @State private var stepDragSession = UUID()
     @State private var sortOrder: [KeyPathComparator<Trigger>] = []
     @State private var parentID: UUID?
     @State private var toElse = false
@@ -55,8 +47,12 @@ struct ModernGesturesWorkspace: View {
     /// the step inspector only appears where list, editor and inspector fit.
     @AppStorage("AOMAutomationStepInspector") private var showsStepInspector = true
     @AppStorage("AOMAutomationStepInspectorWidth") private var stepInspectorWidth = Double(AOMSize.inspectorIdeal)
-    /// The step whose options the inspector shows (kept across resizes).
-    @State private var inspectedStepID: UUID?
+    /// The inspector only opens on an explicit step selection.
+    private var inspectedStepID: UUID? {
+        guard let trigger = selectedTrigger, let id = editorMemory[identity(trigger)]?.inspectedStep,
+              ActionTree.rows(trigger.actions).contains(where: { $0.id == id }) else { return nil }
+        return id
+    }
 
     private static var stepInspectorRange: ClosedRange<Double> {
         Double(AOMSize.inspectorWidth.lowerBound)...Double(AOMSize.inspectorWidth.upperBound)
@@ -66,9 +62,6 @@ struct ModernGesturesWorkspace: View {
     private var stepInspectorShown: Bool {
         showsStepInspector && arrangement.showsInspectorBeside && selectedTrigger != nil
     }
-    /// The editor title reads as a heading, so it edits on click — a hoverable
-    /// text field this large would put the I-beam over the whole header.
-    @State private var editingName = false
     @FocusState private var nameFieldFocused: Bool
 
     enum ViewMode: String { case list, table }
@@ -156,50 +149,14 @@ struct ModernGesturesWorkspace: View {
         }
     }
 
-    /// 6.2 header: title and count, search with the scope at its end, and
-    /// the input kinds as a category bar (AutomationListHeader.swift).
     private var listHeader: some View {
-        let triggers = appState.currentPreset.triggers
-        var scopes = [
-            AutomationScopeChoice(kind: .all, title: "All apps", count: triggers.count),
-            AutomationScopeChoice(kind: .everywhere, title: "Every app",
-                                  count: triggers.filter { $0.activationGroupID == nil && ($0.appBundleID?.isEmpty ?? true) }.count)
-        ]
-        for target in appState.currentPreset.appTargets where !target.isGlobal {
-            let count = triggers.filter { $0.activationGroupID == nil && $0.appBundleID == target.bundleID }.count
-            scopes.append(AutomationScopeChoice(kind: .app(target.id), title: target.name, count: count, bundleID: target.bundleID))
-        }
-        for group in appState.currentPreset.activationGroups {
-            scopes.append(AutomationScopeChoice(kind: .group(group.id), title: group.name,
-                                                count: triggers.filter { $0.activationGroupID == group.id }.count))
-        }
         let scoped = scopedTriggers
         let inputs = TriggerCategory.allCases.map { category in
             AutomationInputChoice(category: category, title: Self.shortTitle(category),
                                   symbol: category == .all ? "square.grid.2x2.fill" : AddTriggerSheet.railSymbol(category),
                                   count: category == .all ? scoped.count : scoped.filter { $0.input.category == category }.count)
         }
-        let kind: AutomationScopeChoice.Kind = {
-            switch scopeTab {
-            case .all: return .all
-            case .everywhere: return .everywhere
-            case .app(let id): return .app(id)
-            case .group(let id): return .group(id)
-            }
-        }()
-        return AutomationListHeader(
-            total: scoped.count, query: $searchQuery, focusRequest: $searchPresented,
-            scopes: scopes, scope: kind,
-            selectScope: { choice in
-                switch choice {
-                case .all: selectScope(.all)
-                case .everywhere: selectScope(.everywhere)
-                case .app(let id): selectScope(.app(id))
-                case .group(let id): selectScope(.group(id))
-                }
-            },
-            inputs: inputs, input: $selectedDeviceCategory,
-            editGroups: { showingGroupsEditor = true })
+        return AutomationListHeader(inputs: inputs, input: $selectedDeviceCategory)
     }
 
 
@@ -209,16 +166,39 @@ struct ModernGesturesWorkspace: View {
     }
 
     private var selection: Binding<UUID?> {
-        Binding(get: { appState.selectedTrigger?.id }, set: { id in
-            appState.selectedTrigger = id.flatMap { id in appState.currentPreset.triggers.first { $0.id == id } }
+        Binding(get: { explicitTrigger?.id }, set: { id in
+            let trigger = id.flatMap { id in filteredTriggers.first { $0.id == id } }
+            explicitSelection = trigger.map(identity)
+            appState.selectedTrigger = trigger
             appState.selectedAction = nil
-            if id != nil { compactShowsEditor = true }
+            if trigger != nil { compactShowsEditor = true }
         })
     }
 
+    private var explicitTrigger: Trigger? {
+        guard let explicitSelection, explicitSelection.preset == appState.currentPreset.id else { return nil }
+        return filteredTriggers.first { $0.id == explicitSelection.trigger }
+    }
+
+    /// A preview can follow an external Reveal request or the first visible row,
+    /// but never supplies the Delete/Run shortcut's actionable selection.
     private var selectedTrigger: Trigger? {
-        guard let id = appState.selectedTrigger?.id else { return nil }
-        return appState.currentPreset.triggers.first { $0.id == id }
+        let visible = rows
+        if let explicitTrigger { return explicitTrigger }
+        if let requested = appState.selectedTrigger?.id,
+           let trigger = visible.first(where: { $0.id == requested }) { return trigger }
+        return searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? visible.first : nil
+    }
+
+    private func identity(_ trigger: Trigger) -> AutomationEditorID {
+        AutomationEditorID(preset: appState.currentPreset.id, trigger: trigger.id)
+    }
+
+    private func draft(_ trigger: Trigger) -> Binding<AutomationEditorDraft> {
+        let id = identity(trigger)
+        let steps = ActionTree.rows(trigger.actions)
+        let initial = AutomationEditorDraft(expandedSteps: steps.count == 1 ? Set(steps.map(\.id)) : [])
+        return Binding(get: { editorMemory[id] ?? initial }, set: { editorMemory[id] = $0 })
     }
 
     private var subtitle: String {
@@ -248,8 +228,8 @@ struct ModernGesturesWorkspace: View {
         .aomPane()
         .aomToolbarSubtitle(subtitle)
         .aomPageToolbar {
-            // 6.2: the search moved into the list's header, beside its scope.
             toolbarContent
+            AOMToolbarSearchItem(text: $searchQuery, prompt: "Search automations", focusRequest: $searchPresented)
         }
         // File ▸ New Automation (⌘N) and Edit ▸ Search Automations (⌘F) act on
         // this page while it is selected; the toolbar help promises ⌘N.
@@ -273,7 +253,7 @@ struct ModernGesturesWorkspace: View {
         // Automations can change while the page is hidden.
         .aomPageLifecycle(onActivate: reconcileSelection)
         .onAppear {
-            syncExpandedEditorState()
+            seedPreviewAutomations()
             applyPreviewEditorHook()
             let args = ProcessInfo.processInfo.arguments
             if PresetManager.isUIPreview, args.contains("--aom-preview-add-midi-trigger") {
@@ -289,51 +269,45 @@ struct ModernGesturesWorkspace: View {
             }
         }
         .onChange(of: filteredTriggers.map(\.id)) { _, _ in reconcileSelection() }
-        .onChange(of: expandedActionIDs) { _, _ in rememberEditorState() }
-        .onChange(of: showInputSettings) { _, _ in rememberEditorState() }
-        .onChange(of: showOptions) { _, _ in rememberEditorState() }
-        .onChange(of: appState.selectedTrigger?.id) { _, _ in
-            syncExpandedEditorState()
+        .onChange(of: appState.currentPreset.id) { _, _ in reconcileSelection() }
+        .onChange(of: appState.selectedTrigger?.id) { _, id in
+            if id != nil { compactShowsEditor = true }
             applyPreviewEditorHook()
-            reconcileInspectedStep(resetToFirst: true)
         }
-        .onChange(of: selectedTrigger.map { ActionTree.rows($0.actions).map(\.id) } ?? []) { _, _ in
-            reconcileInspectedStep(resetToFirst: false)
+        .onChange(of: selectedTrigger.map { ActionTree.rows($0.actions).map(\.id) } ?? []) { _, ids in
+            guard let trigger = selectedTrigger else { return }
+            let key = identity(trigger)
+            editorMemory[key]?.reconcileSteps(Set(ids))
         }
-        // D05: ⌫ goes through the same check as the bar's Delete.
         .aomPageDeleteCommand {
-            if let id = appState.selectedTrigger?.id, let trigger = actionable(id) { delete(trigger) }
+            if let id = explicitSelection, let trigger = actionable(id) { delete(trigger) }
         }
-        // 6.0: the selected automation and what can be done to it, in the
-        // action bar (Test ⌘↩ is the primary).
-        .aomBarContext(id: BarContextKey(trigger: selectedTrigger,
-                                         running: selectedTrigger.map { runStates[$0.id] == .running } ?? false)) { barContext() }
+        .aomBarContext(id: BarContextKey(preset: appState.currentPreset.id, trigger: explicitTrigger,
+                                         running: explicitSelection.map { runStates[$0] == .running } ?? false)) { barContext() }
     }
 
     @ToolbarContentBuilder private var toolbarContent: some ToolbarContent {
-        ToolbarItemGroup(placement: .automatic) {
-            Button {
-                showingGroupsEditor = true
-            } label: {
-                Label("Groups", systemImage: "square.stack.3d.up")
-            }
-            .help("Edit Activation Groups")
-            Picker("View", selection: $viewMode) {
-                Label("List", systemImage: "list.bullet").tag(ViewMode.list)
-                Label("Table", systemImage: "tablecells").tag(ViewMode.table)
-            }
-            .pickerStyle(.segmented)
-            .help("Show as a list or a sortable table")
-            Button {
-                withAnimation(AOMMotion.panel) { showsStepInspector.toggle() }
-            } label: {
-                Label(showsStepInspector ? "Hide Step Inspector" : "Show Step Inspector", systemImage: "sidebar.trailing")
-            }
-            .keyboardShortcut("i", modifiers: [.command, .option])
-            .help(showsStepInspector
-                  ? "Hide the step inspector; options open in each step's card (⌥⌘I)"
-                  : "Show the selected step's options beside the editor when the window has room (⌥⌘I)")
+        ToolbarItem(placement: .automatic) {
             Menu {
+                Picker("Layout", selection: $viewMode) {
+                    Label("List", systemImage: "list.bullet").tag(ViewMode.list)
+                    Label("Table", systemImage: "tablecells").tag(ViewMode.table)
+                }
+                Picker("Scope", selection: Binding(get: { scopeTab }, set: selectScope)) {
+                    Text("All automations").tag(ScopeTab.all)
+                    Text("Every app only").tag(ScopeTab.everywhere)
+                    ForEach(appState.currentPreset.appTargets.filter { !$0.isGlobal }) { target in
+                        Text(target.name).tag(ScopeTab.app(target.id))
+                    }
+                    ForEach(appState.currentPreset.activationGroups) { group in
+                        Text("Group: " + group.name).tag(ScopeTab.group(group.id))
+                    }
+                }
+                Button(showsStepInspector ? "Hide Step Inspector" : "Show Step Inspector", systemImage: "sidebar.trailing") {
+                    withAnimation(AOMMotion.panel) { showsStepInspector.toggle() }
+                }
+                .keyboardShortcut("i", modifiers: [.command, .option])
+                Divider()
                 Button("Browse Actions…", systemImage: "square.grid.3x3") { showingBrowseActions = true }
                 Button("Floating Menus & Widgets…", systemImage: "menubar.rectangle") {
                     FloatingMenuController.shared.edit()
@@ -344,9 +318,9 @@ struct ModernGesturesWorkspace: View {
                 Button("Import Preset…", systemImage: "square.and.arrow.down") { appState.presentPresetImport() }
                 Button("Export Preset…", systemImage: "square.and.arrow.up") { appState.presentPresetExport() }
             } label: {
-                Label("More", systemImage: "ellipsis.circle")
+                Label("View", systemImage: "slider.horizontal.3")
             }
-            .help("Actions, floating menus and presets")
+            .help("Automation layout, scope, inspector and presets")
         }
         ToolbarItem(placement: .primaryAction) {
             Menu {
@@ -388,19 +362,8 @@ struct ModernGesturesWorkspace: View {
         if next != arrangement { arrangement = next }
     }
 
-    /// D12: the inspected step follows the automation (its first step when
-    /// another automation is selected) and never points at a step that was
-    /// deleted; a step that still exists stays inspected.
-    private func reconcileInspectedStep(resetToFirst: Bool) {
-        let ids = selectedTrigger.map { ActionTree.rows($0.actions).map(\.id) } ?? []
-        let next = AOMStableSelection.reconcile(resetToFirst ? nil : inspectedStepID, visible: ids, autoSelectFirst: true)
-        if next != inspectedStepID { inspectedStepID = next }
-    }
-
-    /// Both arrangements in one hierarchy (D03): the list keeps its place
-    /// (only its width changes, and it is hidden while the editor fills a
-    /// narrow window), so its scroll position and selection survive a resize
-    /// across the threshold and going Back from the editor.
+    /// List, editor and selected step are mounted once. A narrow window stacks
+    /// an already open inspector below the editor without replacing its form.
     private func panes(totalWidth: CGFloat) -> some View {
         let compact = arrangement == .drillIn
         let showsEditor = !compact || (compactShowsEditor && selectedTrigger != nil)
@@ -424,18 +387,33 @@ struct ModernGesturesWorkspace: View {
                                  displayed: splitWidth,
                                  maximum: totalWidth - AOMSize.editorMinimum - AOMWorkbenchPolicy.dividerAllowance)
             }
-            if showsEditor {
-                editorPane(compact: compact).frame(maxWidth: .infinity)
+            let editorLayout = stepInspectorShown ? AnyLayout(HStackLayout(spacing: 0)) : AnyLayout(VStackLayout(spacing: 0))
+            editorLayout {
+                editorPane(compact: compact, visible: showsEditor).frame(maxWidth: .infinity)
+                Group {
+                    if stepInspectorShown, inspectedStepID != nil {
+                        AOMResizeDivider(width: $stepInspectorWidth, range: Self.stepInspectorRange, paneEdge: .trailing,
+                                         displayed: inspectorShown, maximum: inspectorRoom)
+                    } else if showsStepInspector, inspectedStepID != nil {
+                        AOMDivider()
+                    }
+                }
+                if showsStepInspector, let trigger = selectedTrigger, let step = inspectedStepID {
+                    stepInspector(trigger)
+                        .id(AutomationEditorID(preset: trigger.id, trigger: step))
+                        .frame(width: stepInspectorShown ? inspectorShown : nil)
+                        .frame(maxHeight: stepInspectorShown ? .infinity : 220)
+                        .accessibilityElement(children: .contain)
+                        .accessibilityLabel("Step Inspector")
+                }
             }
-            if stepInspectorShown, let trigger = selectedTrigger {
-                AOMResizeDivider(width: $stepInspectorWidth, range: Self.stepInspectorRange, paneEdge: .trailing,
-                                 displayed: inspectorShown, maximum: inspectorRoom)
-                stepInspector(trigger)
-                    .frame(width: inspectorShown)
-                    .frame(maxHeight: .infinity)
-                    .accessibilityElement(children: .contain)
-                    .accessibilityLabel("Step Inspector")
-            }
+            .frame(width: compact ? totalWidth : nil)
+            .frame(width: showsEditor ? nil : 0, alignment: .leading)
+            .clipped()
+            .opacity(showsEditor ? 1 : 0)
+            .allowsHitTesting(showsEditor)
+            .accessibilityHidden(!showsEditor)
+            .disabled(!showsEditor)
         }
     }
 
@@ -482,53 +460,22 @@ struct ModernGesturesWorkspace: View {
         appState.showingAddTrigger = true
     }
 
-    /// Workbench 2 (D03, D05): a visible selection stays. Switching scope or
-    /// input (or arriving) highlights the first automation; while a search is
-    /// typed, an automation the search hides leaves nothing selected, so ⌘↩
-    /// and ⌫ never move to a different automation.
     private func reconcileSelection() {
-        let visible = filteredTriggers
-        let searching = !searchQuery.trimmingCharacters(in: .whitespaces).isEmpty
-        let next = AOMStableSelection.reconcile(appState.selectedTrigger?.id, visible: visible.map(\.id),
-                                                autoSelectFirst: !searching)
-        guard next != appState.selectedTrigger?.id else { return }
-        appState.selectedTrigger = next.flatMap { id in visible.first { $0.id == id } }
-        appState.selectedAction = nil
-    }
-
-    /// The automation a bar button may act on: still in the preset and still
-    /// one of the rows on screen (not hidden by the search since).
-    private func actionable(_ id: UUID) -> Trigger? {
-        guard AOMStableSelection.actionTarget(id, visible: filteredTriggers.map(\.id)) != nil else { return nil }
-        return latest(id)
-    }
-
-    /// Summary first (6.1): an automation opens with its steps as one-line
-    /// summaries and its input and options folded, unless you had opened
-    /// them before; a single-step automation opens its one step.
-    private func syncExpandedEditorState() {
-        guard let trigger = selectedTrigger else {
-            expandedActionIDs.removeAll()
-            showInputSettings = false
-            showOptions = false
-            return
+        if let id = explicitSelection, explicitTrigger == nil {
+            explicitSelection = nil
+            if appState.selectedTrigger?.id == id.trigger { appState.selectedTrigger = nil }
+            appState.selectedAction = nil
+            if arrangement == .drillIn { compactShowsEditor = false }
         }
-        if let memory = editorMemory[trigger.id] {
-            let live = Set(ActionTree.rows(trigger.actions).map(\.id))
-            expandedActionIDs = memory.steps.intersection(live)
-            showInputSettings = memory.input
-            showOptions = memory.options
-        } else {
-            let allRows = ActionTree.rows(trigger.actions)
-            expandedActionIDs = allRows.count == 1 ? Set(allRows.map(\.id)) : []
-            showInputSettings = false
-            showOptions = false
-        }
+        let preset = appState.currentPreset
+        let live = Set(preset.triggers.map(\.id))
+        editorMemory = editorMemory.filter { $0.key.preset == preset.id && live.contains($0.key.trigger) }
     }
 
-    private func rememberEditorState() {
-        guard let id = selectedTrigger?.id else { return }
-        editorMemory[id] = EditorMemory(steps: expandedActionIDs, input: showInputSettings, options: showOptions)
+    private func actionable(_ id: AutomationEditorID, fromRow: Bool = false) -> Trigger? {
+        guard pageActivity.isActive, id.preset == appState.currentPreset.id,
+              fromRow || explicitSelection == id else { return nil }
+        return filteredTriggers.first { $0.id == id.trigger }
     }
 
     // MARK: - List column
@@ -556,10 +503,13 @@ struct ModernGesturesWorkspace: View {
             // The list's + − ⋯ bar (design-3.4.0 b.2, System Settings #230).
             AOMAddRemoveBar(addLabel: "New Automation", add: { presentAddTrigger(selectedDeviceCategory) },
                             removeLabel: "Delete Automation",
-                            remove: selectedTrigger.map { trigger in { delete(trigger) } }) {
-                if let trigger = selectedTrigger {
-                    Button("Duplicate") { duplicate(trigger) }
-                    Button(trigger.isFavorite ? "Unpin from Workspace" : "Pin to Workspace") { appState.toggleFavorite(trigger) }
+                            remove: explicitSelection.map { id in { if let trigger = actionable(id) { delete(trigger) } } }) {
+                if let trigger = explicitTrigger {
+                    let id = identity(trigger)
+                    Button("Duplicate") { if let current = actionable(id) { duplicate(current) } }
+                    Button(trigger.isFavorite ? "Unpin from Workspace" : "Pin to Workspace") {
+                        if let current = actionable(id) { appState.toggleFavorite(current) }
+                    }
                     Divider()
                 }
                 Button("Import Preset…") { appState.presentPresetImport() }
@@ -712,15 +662,20 @@ struct ModernGesturesWorkspace: View {
 
     /// Flat, no shortcuts, unavailable items hidden (b.4). Delete doesn't
     /// ask: it undoes (toast Undo, ⌘Z).
-    @ViewBuilder private func triggerMenu(_ trigger: Trigger) -> some View {
+    @ViewBuilder private func triggerMenu(_ trigger: Trigger, fromRow: Bool = true) -> some View {
+        let id = identity(trigger)
         if !trigger.actions.isEmpty, ActionTree.problem(trigger.actions) == nil {
-            Button("Test") { test(trigger) }
+            Button("Run") { run(id, fromRow: fromRow) }
         }
-        Button(trigger.isEnabled ? "Turn Off" : "Turn On") { appState.toggleTrigger(trigger) }
-        Button(trigger.isFavorite ? "Unpin from Workspace" : "Pin to Workspace") { appState.toggleFavorite(trigger) }
-        Button("Duplicate") { duplicate(trigger) }
+        Button(trigger.isEnabled ? "Turn Off" : "Turn On") {
+            if let current = actionable(id, fromRow: fromRow) { appState.toggleTrigger(current) }
+        }
+        Button(trigger.isFavorite ? "Unpin from Workspace" : "Pin to Workspace") {
+            if let current = actionable(id, fromRow: fromRow) { appState.toggleFavorite(current) }
+        }
+        Button("Duplicate") { if let current = actionable(id, fromRow: fromRow) { duplicate(current) } }
         Divider()
-        Button("Delete", role: .destructive) { delete(trigger) }
+        Button("Delete", role: .destructive) { if let current = actionable(id, fromRow: fromRow) { delete(current) } }
     }
 
     private struct BarContextKey: Equatable {
@@ -731,7 +686,9 @@ struct ModernGesturesWorkspace: View {
         var name = ""
         var running = false
         var steps = 0
-        init(trigger: Trigger?, running: Bool = false) {
+        let preset: UUID
+        init(preset: UUID, trigger: Trigger?, running: Bool = false) {
+            self.preset = preset
             self.running = running
             steps = trigger?.actions.count ?? 0
             id = trigger?.id
@@ -742,22 +699,18 @@ struct ModernGesturesWorkspace: View {
         }
     }
 
-    /// 7.16 (GPT V02): the bar's buttons keep only the automation's id and
-    /// look it up when pressed, so an edit since the bar was built (a changed
-    /// step, a rename) is what runs, and a deleted one does nothing.
-    private func latest(_ id: UUID) -> Trigger? {
-        appState.currentPreset.triggers.first { $0.id == id }
+    private func latest(_ id: UUID, presetID: UUID) -> Trigger? {
+        AutomationEditorID(preset: presetID, trigger: id).latest(in: appState.currentPreset)
     }
 
     private func barContext() -> AOMBarContext? {
-        guard let trigger = selectedTrigger else { return nil }
-        let id = trigger.id
+        guard let id = explicitSelection, let trigger = actionable(id) else { return nil }
         let hue = AOMModule.automation.hue
         var actions: [AOMBarAction] = []
         if !trigger.actions.isEmpty, ActionTree.problem(trigger.actions) == nil {
-            actions.append(AOMBarAction(id: "auto.test", title: runStates[trigger.id] == .running ? "Running…" : "Run",
+            actions.append(AOMBarAction(id: "auto.test", title: runStates[id] == .running ? "Running…" : "Run",
                                         identity: AOMIdentity(symbol: "play.fill", color: hue),
-                                        run: { if let now = actionable(id), !now.actions.isEmpty, ActionTree.problem(now.actions) == nil { test(now) } },
+                                        run: { run(id) },
                                         key: SwiftUI.KeyboardShortcut(.return, modifiers: .command)))
         }
         actions.append(AOMBarAction(id: "auto.toggle", title: trigger.isEnabled ? "Turn Off" : "Turn On",
@@ -790,17 +743,19 @@ struct ModernGesturesWorkspace: View {
         let next = visible.firstIndex { $0.id == saved.id }.flatMap { position -> Trigger? in
             visible.indices.contains(position + 1) ? visible[position + 1] : (position > 0 ? visible[position - 1] : nil)
         }
-        let wasSelected = appState.selectedTrigger?.id == saved.id
+        let id = identity(saved)
+        let wasSelected = selectedTrigger?.id == saved.id
         let state = appState
         let revert: @MainActor () -> Void = {
-            guard !state.currentPreset.triggers.contains(where: { $0.id == saved.id }) else { return }
+            guard state.currentPreset.id == id.preset, id.latest(in: state.currentPreset) == nil else { return }
             state.currentPreset.triggers.insert(saved, at: min(index, state.currentPreset.triggers.count))
-            state.selectedTrigger = state.currentPreset.triggers.first { $0.id == saved.id }
             state.save()
         }
         AOMUndo.perform("Delete Automation", undoManager: undoManager, perform: {
-            state.removeTrigger(saved)
-            // Selection moves to the neighbouring row (#97).
+            guard let live = id.latest(in: state.currentPreset) else { return }
+            if explicitSelection == id { explicitSelection = nil }
+            state.removeTrigger(live)
+            // The neighbouring row is a preview only, never actionable.
             if wasSelected, let next { state.selectedTrigger = state.currentPreset.triggers.first { $0.id == next.id } }
         }, revert: revert)
         let manager = undoManager
@@ -811,34 +766,44 @@ struct ModernGesturesWorkspace: View {
 
     // MARK: - Editor
 
-    @ViewBuilder private func editorPane(compact: Bool) -> some View {
+    @ViewBuilder private func editorPane(compact: Bool, visible: Bool) -> some View {
         if let current = selectedTrigger {
-            ScrollView {
-                // e.1: section title → card → footer, 24 pt apart.
-                VStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
-                    if compact {
-                        Button { compactShowsEditor = false } label: {
-                            Label("All Automations", systemImage: "chevron.left")
-                        }
-                        .buttonStyle(.link)
-                        .aomShortcut("[")
+            let memory = draft(current)
+            VStack(spacing: 0) {
+                if compact {
+                    Button {
+                        memory.restoreNameFocus.wrappedValue = nameFieldFocused
+                        compactShowsEditor = false
+                    } label: {
+                        Label("All Automations", systemImage: "chevron.left")
                     }
-                    editorHeader(current)
-                    editorStatus(current)
-                    whenSection(current)
-                    doSection(current)
-                    optionsSection(current)
+                    .buttonStyle(AOMSoftButtonStyle())
+                    .aomShortcut("[")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, AOMSpace.pageMargin)
+                    .padding(.top, AOMSpace.x2)
                 }
-                .frame(maxWidth: AOMSize.readableWidth, alignment: .leading)
-                .padding(.horizontal, AOMSpace.pageMargin)
-                .padding(.top, AOMSpace.pageTop)
-                .padding(.bottom, AOMSpace.x8)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
+                        editorHeader(current, visible: visible).id("header")
+                        editorStatus(current).id("status")
+                        whenSection(current).id("when")
+                        doSection(current).id("then")
+                        optionsSection(current).id("options")
+                    }
+                    .scrollTargetLayout()
+                    .frame(maxWidth: AOMSize.readableWidth, alignment: .leading)
+                    .padding(.horizontal, AOMSpace.pageMargin)
+                    .padding(.top, AOMSpace.pageTop)
+                    .padding(.bottom, AOMSpace.x8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .scrollPosition(id: memory.scrollAnchor)
+                .scrollIndicators(.never)
+                .defaultScrollAnchor(AOMPreviewHooks.scrollAnchor)
             }
-            .scrollIndicators(.never)
-            .defaultScrollAnchor(AOMPreviewHooks.scrollAnchor)
             .background(AOMPageTint())
-            .id(current.id)
+            .id(identity(current))
         } else {
             AOMEmptyState("No Automation Selected", systemImage: "bolt",
                           message: "Select an automation to edit what starts it and what it does.")
@@ -864,42 +829,58 @@ struct ModernGesturesWorkspace: View {
     /// One line: the name (Title 3) on the leading edge, where it applies and
     /// its regular switch (the primary setting, HIG Toggles) on the trailing
     /// edge; the name truncates first.
-    private func editorHeader(_ trigger: Trigger) -> some View {
-        HStack(spacing: AOMSpace.x3) {
+    private func editorHeader(_ trigger: Trigger, visible: Bool) -> some View {
+        let id = identity(trigger)
+        let memory = draft(trigger)
+        return HStack(spacing: AOMSpace.x3) {
             // 6.0: the input's mark and a summary line under the name, so the
             // header says what this automation is before any section is read.
             AOMAppIcon(AOMIdentity(symbol: AOMTriggerGlyph.symbol(name: trigger.input.displayName, category: trigger.input.category), color: AOMModule.automation.hue),
                        size: 36, active: trigger.isEnabled)
             VStack(alignment: .leading, spacing: 1) {
             HStack(spacing: AOMSpace.x1) {
-                if editingName {
-                    TextField("Name", text: Binding(
-                        get: { trigger.name },
-                        set: { value in var updated = trigger; updated.name = value; appState.updateTrigger(updated) }),
-                              prompt: Text(trigger.input.displayName).foregroundStyle(AOMColor.text))
+                if memory.name.wrappedValue != nil {
+                    TextField("Name", text: Binding(get: { memory.name.wrappedValue ?? "" },
+                                                    set: { memory.name.wrappedValue = $0 }),
+                              prompt: Text(trigger.input.displayName))
                         .textFieldStyle(.plain)
                         .font(AOMFont.title)
                         .focused($nameFieldFocused)
-                        .onSubmit { editingName = false }
-                        .onExitCommand { editingName = false }
-                        .help("Name (optional). Unnamed automations are titled by their input.")
-                        .accessibilityLabel("Name")
-                        .onChange(of: trigger.id) { _, _ in editingName = false }
-                } else {
-                    Text(trigger.name.isEmpty ? trigger.input.displayName : trigger.name)
-                        .font(AOMFont.title)
-                        .foregroundStyle(trigger.name.isEmpty ? AOMColor.textSecondary : AOMColor.text)
-                        .lineLimit(1)
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            editingName = true
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { nameFieldFocused = true }
+                        .task(id: visible) {
+                            guard visible, memory.restoreNameFocus.wrappedValue else { return }
+                            await Task.yield()
+                            guard !Task.isCancelled, pageActivity.isActive, selectedTrigger.map(identity) == id,
+                                  memory.name.wrappedValue != nil else { return }
+                            nameFieldFocused = true
                         }
-                        .help("Click to rename")
-                        .accessibilityLabel("Name, \(trigger.displayName). Click to rename.")
-                        .onChange(of: trigger.id) { _, _ in editingName = false }
+                        .onSubmit {
+                            guard let name = memory.name.wrappedValue, var live = id.latest(in: appState.currentPreset) else { return }
+                            memory.name.wrappedValue = nil
+                            memory.restoreNameFocus.wrappedValue = false
+                            live.name = name
+                            appState.updateTrigger(live)
+                        }
+                        .onExitCommand {
+                            memory.name.wrappedValue = nil
+                            memory.restoreNameFocus.wrappedValue = false
+                        }
+                        .help("Press Return to save the name, or Escape to cancel.")
+                        .accessibilityLabel("Name")
+                } else {
+                    Button {
+                        memory.name.wrappedValue = trigger.name
+                        memory.restoreNameFocus.wrappedValue = true
+                    } label: {
+                        Text(trigger.name.isEmpty ? trigger.input.displayName : trigger.name)
+                            .font(AOMFont.title)
+                            .foregroundStyle(trigger.name.isEmpty ? AOMColor.textSecondary : AOMColor.text)
+                            .lineLimit(1)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Rename automation")
+                    .accessibilityLabel("Rename \(trigger.displayName)")
                 }
-                Menu { triggerMenu(trigger) } label: {
+                Menu { triggerMenu(trigger, fromRow: false) } label: {
                     Image(systemName: "ellipsis.circle").font(AOMFont.title.weight(.regular))
                 }
                 .menuStyle(.borderlessButton)
@@ -985,7 +966,8 @@ struct ModernGesturesWorkspace: View {
     /// When: the input as one row in an opaque card; Edit Input opens the
     /// input's own settings as groups inside the same card.
     private func whenSection(_ trigger: Trigger) -> some View {
-        VStack(alignment: .leading, spacing: AOMSpace.titleGap) {
+        let input = draft(trigger).showsInput
+        return VStack(alignment: .leading, spacing: AOMSpace.titleGap) {
             AOMSectionTitle("When", help: "The input that starts this automation. Edit Input changes it and its own settings; Options tune how it runs.")
             VStack(alignment: .leading, spacing: 0) {
                 // The input as a settings row with a squircle (System Settings,
@@ -1014,15 +996,16 @@ struct ModernGesturesWorkspace: View {
                         }
                     }
                     Spacer(minLength: AOMSpace.x2)
-                    Button(showInputSettings ? "Close" : "Edit Input") {
-                        withAnimation(AOMMotion.panel) { showInputSettings.toggle() }
+                    Button(input.wrappedValue ? "Close" : "Edit Input") {
+                        withAnimation(AOMMotion.panel) { input.wrappedValue.toggle() }
                     }
-                    .help(showInputSettings ? "Hide input settings" : "Change the input and its settings")
+                    .buttonStyle(AOMSoftButtonStyle())
+                    .help(input.wrappedValue ? "Hide input settings" : "Change the input and its settings")
                 }
                 .padding(.horizontal, AOMSpace.rowInset)
                 .padding(.vertical, AOMSpace.x2)
                 .frame(minHeight: AOMSize.rowDetail + AOMSpace.x2)
-                if showInputSettings {
+                if input.wrappedValue {
                     // Its groups draw their own hairline above.
                     TriggerConfigView(trigger: trigger, part: .input)
                         .id(trigger.id)
@@ -1036,7 +1019,9 @@ struct ModernGesturesWorkspace: View {
     /// last result sit at the trailing end of the section title.
     private func doSection(_ trigger: Trigger) -> some View {
         let rows = ActionTree.rows(trigger.actions)
-        let runState = runStates[trigger.id] ?? .idle
+        let id = identity(trigger)
+        let runState = runStates[id] ?? .idle
+        let canRun = explicitSelection == id && runState != .running && ActionTree.problem(trigger.actions) == nil
         return VStack(alignment: .leading, spacing: AOMSpace.titleGap) {
             AOMSectionTitle("Then",
                             help: "The steps run in order, top to bottom. Test runs them now; each step's options open from its chevron.") {
@@ -1053,19 +1038,20 @@ struct ModernGesturesWorkspace: View {
                 }
                 AOMRunStatusView(state: runState)
                 if !trigger.actions.isEmpty {
-                    Button { test(trigger) } label: {
+                    Button { run(id) } label: {
                         Label("Run", systemImage: "play.fill")
                     }
-                    .disabled(runState == .running || ActionTree.problem(trigger.actions) != nil)
+                    .buttonStyle(AOMSoftButtonStyle())
+                    .disabled(!canRun)
                     .help(ActionTree.problem(trigger.actions) ?? "Runs these steps now, for real (⌘↩)")
                 }
             }
             if trigger.valueBinding != nil, ContinuousValueBinding.supports(trigger.input) {
-                valueBindingNotice
+                valueBindingNotice(trigger)
             }
             if rows.isEmpty {
                 AOMSection {
-                    Button { addAction() } label: {
+                    Button { addAction(for: id) } label: {
                         HStack(spacing: AOMSpace.x3) {
                             Image(systemName: "plus.circle.fill")
                                 .font(AOMFont.title)
@@ -1094,9 +1080,10 @@ struct ModernGesturesWorkspace: View {
                     scopeLabel: recipeScope(trigger),
                     conditionChips: recipeConditions(trigger),
                     steps: Self.recipeSteps(trigger.actions, runState: runState),
-                    onRun: { test(trigger) },
-                    onAddStep: { addAction() },
-                    scrolls: false)
+                    onRun: { run(id) },
+                    onAddStep: { addAction(for: id) },
+                    scrolls: false,
+                    canRun: canRun && !trigger.actions.isEmpty)
             } else {
                 VStack(spacing: 0) {
                     ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
@@ -1110,10 +1097,14 @@ struct ModernGesturesWorkspace: View {
                                 .padding(.leading, AOMSpace.rowInset + CGFloat(row.depth) * AOMSpace.x5)
                                 .accessibilityHidden(true)
                         }
-                        actionCard(row: row, index: index, trigger: trigger)
+                        AutomationStepDropTarget(payload: stepPayload(id, step: row.id), onDrop: { payload, after in
+                            dropStep(payload, onto: row.id, after: after, in: id)
+                        }) {
+                            actionCard(row: row, index: index, trigger: trigger)
+                        }
                     }
                 }
-                Button { addAction() } label: {
+                Button { addAction(for: id) } label: {
                     Label("Add Action", systemImage: "plus")
                 }
                 .buttonStyle(AOMTintedButtonStyle())
@@ -1176,59 +1167,93 @@ struct ModernGesturesWorkspace: View {
     }
 
     private func actionCard(row: ActionTree.Row, index: Int, trigger: Trigger) -> some View {
-        ActionCardView(
-            action: row.action,
-            index: index + 1,
-            depth: row.depth,
-            isElse: row.isElse,
-            // D12: with the step inspector on screen the chevron opens the
-            // step there instead of expanding the card.
-            isExpanded: !stepInspectorShown && expandedActionIDs.contains(row.id),
-            trigger: trigger,
-            keyboardMonitor: appState.keyboardMonitor,
+        let id = identity(trigger)
+        let memory = draft(trigger)
+        let inspected = showsStepInspector && inspectedStepID == row.id
+        func step(_ action: (Trigger, TriggerAction) -> Void) {
+            guard let live = actionable(id), let step = ActionTree.rows(live.actions).first(where: { $0.id == row.id }) else { return }
+            action(live, step.action)
+        }
+        func browse(parent: UUID? = nil, alternate: Bool = false, replace: UUID? = nil) {
+            step { live, _ in
+                appState.selectedTrigger = live
+                parentID = parent
+                toElse = alternate
+                replaceActionID = replace
+                appState.showingAddAction = true
+            }
+        }
+        return ActionCardView(
+            action: row.action, index: index + 1, depth: row.depth, isElse: row.isElse,
+            isExpanded: !inspected && memory.expandedSteps.wrappedValue.contains(row.id),
+            trigger: trigger, keyboardMonitor: appState.keyboardMonitor,
             onToggleExpand: {
-                if stepInspectorShown {
-                    inspectedStepID = row.id
-                } else if expandedActionIDs.contains(row.id) { expandedActionIDs.remove(row.id) }
-                else { expandedActionIDs.insert(row.id) }
+                step { _, _ in
+                    if showsStepInspector {
+                        memory.inspectedStep.wrappedValue = inspected ? nil : row.id
+                    } else if memory.expandedSteps.wrappedValue.contains(row.id) {
+                        memory.expandedSteps.wrappedValue.remove(row.id)
+                    } else {
+                        memory.expandedSteps.wrappedValue.insert(row.id)
+                    }
+                }
             },
-            onChangeAction: {
-                replaceActionID = row.action.id
-                parentID = nil
-                toElse = false
-                appState.showingAddAction = true
-            },
-            onMoveUp: { appState.moveAction(in: trigger, action: row.action, offset: -1) },
-            onMoveDown: { appState.moveAction(in: trigger, action: row.action, offset: 1) },
-            onDuplicate: { appState.duplicateAction(in: trigger, action: row.action) },
-            onDelete: { appState.removeAction(from: trigger, action: row.action) },
+            onChangeAction: { browse(replace: row.id) },
+            onMoveUp: { reorderSteps(in: id) { AutomationStepOrder.move($0, source: row.id, offset: -1) } },
+            onMoveDown: { reorderSteps(in: id) { AutomationStepOrder.move($0, source: row.id, offset: 1) } },
+            onDuplicate: { step { appState.duplicateAction(in: $0, action: $1) } },
+            onDelete: { step { appState.removeAction(from: $0, action: $1) } },
             onToggleEnable: {
-                var updated = row.action
-                updated.isEnabled.toggle()
-                appState.updateAction(in: trigger, action: updated)
+                step { live, action in
+                    var changed = action
+                    changed.isEnabled.toggle()
+                    appState.updateAction(in: live, action: changed)
+                }
             },
-            onCopy: { ActionClipboard.copied = row.action },
-            onAddInside: {
-                parentID = row.id
-                toElse = false
-                replaceActionID = nil
-                appState.showingAddAction = true
-            },
-            onAddElse: {
-                parentID = row.id
-                toElse = true
-                replaceActionID = nil
-                appState.showingAddAction = true
-            },
-            isInspected: stepInspectorShown && inspectedStepID == row.id
+            onCopy: { step { _, action in ActionClipboard.copied = action } },
+            onAddInside: { browse(parent: row.id) },
+            onAddElse: { browse(parent: row.id, alternate: true) },
+            isInspected: inspected
         )
+        .disabled(explicitSelection != id)
+    }
+
+    private func stepPayload(_ id: AutomationEditorID, step: UUID) -> String {
+        "\(stepDragSession.uuidString):\(id.preset.uuidString):\(id.trigger.uuidString):\(step.uuidString)"
+    }
+
+    private func dropStep(_ payload: String, onto target: UUID, after: Bool, in id: AutomationEditorID) -> Bool {
+        let parts = payload.split(separator: ":")
+        guard parts.count == 4, let source = UUID(uuidString: String(parts[3])),
+              payload == stepPayload(id, step: source) else { return false }
+        return reorderSteps(in: id) { AutomationStepOrder.move($0, source: source, target: target, after: after) }
+    }
+
+    @discardableResult
+    private func reorderSteps(in id: AutomationEditorID, move: ([TriggerAction]) -> [TriggerAction]?) -> Bool {
+        guard let current = actionable(id), let reordered = move(current.actions) else { return false }
+        let state = appState
+        let original = current.actions
+        func apply(_ steps: [TriggerAction], replacing expected: [TriggerAction]) {
+            guard var latest = id.latest(in: state.currentPreset), latest.actions == expected else { return }
+            latest.actions = steps
+            // Do not change another automation's selection while undoing.
+            state.currentPreset.updateTrigger(latest)
+            if state.selectedTrigger?.id == latest.id { state.selectedTrigger = latest }
+            state.save()
+        }
+        AOMUndo.perform("Reorder Steps", undoManager: undoManager,
+                        perform: { apply(reordered, replacing: original) },
+                        revert: { apply(original, replacing: reordered) })
+        return true
     }
 
     /// A value-bound trigger drives its value and never runs its steps
     /// (SystemTriggerMonitor / TrackpadMonitor), so the steps say so.
-    private var valueBindingNotice: some View {
-        AOMNotice(.info, "Actions don't run while a value binding is on.") {
-            Button("Show Binding") { withAnimation(AOMMotion.panel) { showOptions = true } }
+    private func valueBindingNotice(_ trigger: Trigger) -> some View {
+        let options = draft(trigger).showsOptions
+        return AOMNotice(.info, "Actions don't run while a value binding is on.") {
+            Button("Show Binding") { withAnimation(AOMMotion.panel) { options.wrappedValue = true } }
         }
     }
 
@@ -1237,7 +1262,7 @@ struct ModernGesturesWorkspace: View {
     private func optionsSection(_ trigger: Trigger) -> some View {
         AOMSection("Options",
                    help: "How this automation runs. Only the settings that apply to its input are shown.") {
-            AOMDisclosureRows("Advanced", detail: Self.optionsSummary(trigger), isExpanded: $showOptions) {
+            AOMDisclosureRows("Advanced", detail: Self.optionsSummary(trigger), isExpanded: draft(trigger).showsOptions) {
                 TriggerConfigView(trigger: trigger, part: .options)
                     .id(trigger.id)
             }
@@ -1261,31 +1286,43 @@ struct ModernGesturesWorkspace: View {
     private func applyPreviewEditorHook() {
         guard PresetManager.isUIPreview, ProcessInfo.processInfo.arguments.contains("--aom-preview-editor-open"),
               let trigger = selectedTrigger else { return }
-        showInputSettings = true
-        showOptions = true
-        if let first = ActionTree.rows(trigger.actions).first { expandedActionIDs = [first.id] }
+        let memory = draft(trigger)
+        memory.showsInput.wrappedValue = true
+        memory.showsOptions.wrappedValue = true
+        if let first = ActionTree.rows(trigger.actions).first { memory.expandedSteps.wrappedValue = [first.id] }
     }
 
-    /// Runs the automation's actions for real (not a dry run), with the
-    /// latest saved version of it — the bar's ⌘↩ may hold an older copy —
-    /// and never twice at once.
-    private func test(_ stale: Trigger) {
-        guard runStates[stale.id] != .running else { return }
-        guard let trigger = latest(stale.id), !trigger.actions.isEmpty,
-              ActionTree.problem(trigger.actions) == nil else { return }
-        runStates[trigger.id] = .running
+    private func seedPreviewAutomations() {
+        guard AOMWorkbenchPreviewData.enabled, appState.currentPreset.triggers.isEmpty else { return }
+        appState.currentPreset.triggers = AOMWorkbenchPreviewData.automations()
+        // Keep the actual page layout and selection policy in the snapshot.
+        // An optional explicit recipe preview gives nested steps coverage too.
+        if ProcessInfo.processInfo.arguments.contains("--aom-preview-editor-open"),
+           let first = appState.currentPreset.triggers.first { selection.wrappedValue = first.id }
+    }
+
+    /// All Run entry points validate the current preset and the latest saved
+    /// actions at execution, never the value captured by an older menu.
+    private func run(_ id: AutomationEditorID, fromRow: Bool = false) {
+        guard !PresetManager.isUIPreview, actionable(id, fromRow: fromRow) != nil,
+              runStates[id] != .running, let trigger = latest(id.trigger, presetID: id.preset),
+              !trigger.actions.isEmpty, ActionTree.problem(trigger.actions) == nil else { return }
+        runStates[id] = .running
         let name = trigger.displayName
         ActionExecutor.executeActions(trigger.actions, fromTrackpad: trigger.input.category == .trackpad,
                                       triggerID: trigger.id) { ok in
             DispatchQueue.main.async {
-                runStates[trigger.id] = ok ? .succeeded(Date()) : .failed(Date())
-                // A failed test says so where you are, not only in the title's status.
-                if !ok { toast.show("“\(name)” didn't finish. A step failed or was stopped.", tone: .danger) }
+                runStates[id] = ok ? .succeeded(Date()) : .failed(Date())
+                if !ok, pageActivity.isActive, latest(id.trigger, presetID: id.preset) != nil {
+                    toast.show("“\(name)” didn't finish. A step failed or was stopped.", tone: .danger)
+                }
             }
         }
     }
 
-    private func addAction() {
+    private func addAction(for id: AutomationEditorID) {
+        guard let live = actionable(id) else { return }
+        appState.selectedTrigger = live
         parentID = nil
         toElse = false
         replaceActionID = nil

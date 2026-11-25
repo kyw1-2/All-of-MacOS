@@ -28,178 +28,127 @@ struct AOMAutomationRecipeCanvas: View {
     let steps: [AOMRecipeStepViewModel]
     let onRun: () -> Void
     let onAddStep: () -> Void
-    /// 7.0: false inside a page that already scrolls (the Automation editor).
+    /// False inside the Automation editor, which already scrolls.
     var scrolls = true
+    var canRun = true
 
     var body: some View {
         if scrolls {
-            ScrollView { spine.padding(20) }
-                .background(AOMCraftColor.canvas)
+            ScrollView { spine.padding(AOMSpace.pageMargin) }.background(AOMPageTint())
         } else {
             spine
         }
     }
 
     private var spine: some View {
-            VStack(alignment: .leading, spacing: 0) {
-                // 1. WHEN 카드
-                HStack(spacing: 12) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(Color.indigo.opacity(0.14))
-                            .frame(width: 40, height: 40)
-                        Image(systemName: triggerSymbol)
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundStyle(.indigo)
-                    }
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("WHEN")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(AOMCraftColor.inkSecondary)
-                        Text(triggerName)
-                            .font(.system(size: 15, weight: .semibold))
-                    }
-                    Spacer()
-                    Text(scopeLabel)
-                        .font(.system(size: 11.5, weight: .medium))
-                        .foregroundStyle(AOMCraftColor.inkSecondary)
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 4)
-                        .background(Color.primary.opacity(0.06), in: Capsule())
-
-                    Button(action: onRun) {
-                        Label("Run", systemImage: "play.fill")
-                            .font(.system(size: 12, weight: .semibold))
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: AOMSpace.x3) {
+                AOMModuleBadge(symbol: triggerSymbol, size: AOMIcon.tileBadge)
+                VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
+                    Text("WHEN").font(AOMFont.caption.weight(.semibold)).foregroundStyle(AOMColor.textSecondary)
+                    Text(triggerName).font(AOMFont.headline).lineLimit(2)
                 }
-                .aomContentCard(radius: AOMCraftRadius.card, padding: 14)
-
-                // 2. IF 조건 스트립 (조건이 있을 때만 스파인에 연결)
-                if !conditionChips.isEmpty {
-                    spineConnector(height: 16)
-                    HStack(spacing: 6) {
-                        Text("IF")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(.orange)
-                        ForEach(conditionChips, id: \.self) { chip in
-                            Text(chip)
-                                .font(.system(size: 11.5, weight: .medium))
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 3)
-                                .background(Color.orange.opacity(0.12), in: Capsule())
-                        }
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(AOMCraftColor.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(AOMCraftColor.hairline, lineWidth: 0.5))
-                }
-
-                // 3. DO 스텝 타임라인
-                ForEach(steps) { step in
-                    spineConnector(height: 14)
-                    AOMRecipeStepCard(step: step)
-                }
-
-                spineConnector(height: 14)
-
-                Button(action: onAddStep) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "plus.circle.fill")
-                        Text("Add Action")
-                    }
-                    .font(.system(size: 12.5, weight: .medium))
-                    .foregroundStyle(AOMCraftColor.inkSecondary)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .strokeBorder(AOMCraftColor.hairline, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                    )
-                }
-                .buttonStyle(.plain)
+                Spacer(minLength: 0)
+                Text(scopeLabel).font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary).lineLimit(1)
+                Button(action: onRun) { Label("Run", systemImage: "play.fill") }
+                    .buttonStyle(AOMSoftButtonStyle())
+                    .disabled(!canRun)
             }
-            .frame(maxWidth: 740, alignment: .leading)
+            .aomContentCard(radius: AOMRadius.card, padding: AOMSpace.x3)
+
+            if !conditionChips.isEmpty {
+                spineConnector
+                HStack(spacing: AOMSpace.x2) {
+                    Text("IF").font(AOMFont.caption.weight(.semibold)).foregroundStyle(AOMColor.warningText)
+                    ForEach(conditionChips, id: \.self) { chip in
+                        Text(chip).font(AOMFont.caption)
+                            .padding(.horizontal, AOMSpace.x2).padding(.vertical, AOMSpace.x1)
+                            .background(AOMColor.track, in: Capsule())
+                    }
+                }
+                .padding(AOMSpace.x2)
+            }
+
+            ForEach(steps) { step in
+                spineConnector
+                AOMRecipeStepCard(step: step)
+            }
+            spineConnector
+            Button(action: onAddStep) { Label("Add Action", systemImage: "plus") }
+                .buttonStyle(AOMTintedButtonStyle())
+        }
+        .frame(maxWidth: AOMSize.readableWidth, alignment: .leading)
     }
 
-    private func spineConnector(height: CGFloat) -> some View {
-        Rectangle()
-            .fill(Color.primary.opacity(0.14))
-            .frame(width: 2, height: height)
-            .padding(.leading, 32)
+    private var spineConnector: some View {
+        Rectangle().fill(AOMColor.hairline)
+            .frame(width: 1, height: AOMSpace.x3)
+            .padding(.leading, AOMSpace.x8)
+            .accessibilityHidden(true)
     }
 }
 
 struct AOMRecipeStepCard: View {
     let step: AOMRecipeStepViewModel
+    var body: some View {
+        AOMRecipeStepRows(step: step)
+            .aomContentCard(radius: AOMRadius.card, padding: AOMSpace.x3)
+    }
+}
+
+/// A recursive body, but only the top-level step receives a card surface.
+private struct AOMRecipeStepRows: View {
+    let step: AOMRecipeStepViewModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: AOMSpace.x2) {
+            HStack(spacing: AOMSpace.x2) {
                 stepBadge
                 Image(systemName: step.symbol)
-                    .font(.system(size: 13))
-                    .foregroundStyle(AOMCraftColor.inkSecondary)
-                    .frame(width: 18)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(step.title)
-                        .font(.system(size: 13, weight: .medium))
-                        .opacity(step.isEnabled ? 1 : 0.45)
-                    if let sub = step.subtitle {
-                        Text(sub)
-                            .font(.system(size: 11.5))
-                            .foregroundStyle(AOMCraftColor.inkSecondary)
+                    .font(AOMFont.body)
+                    .foregroundStyle(AOMColor.textSecondary)
+                    .frame(width: AOMIcon.row)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
+                    Text(step.title).font(AOMFont.body.weight(.medium))
+                        .foregroundStyle(step.isEnabled ? AOMColor.text : AOMColor.textSecondary)
+                    if let subtitle = step.subtitle {
+                        Text(subtitle).font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
                     }
                     if case .failed(let reason) = step.runStatus {
-                        Text(reason)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(.red)
+                        Text(reason).font(AOMFont.callout).foregroundStyle(AOMColor.dangerText)
                     }
                 }
-                Spacer()
+                Spacer(minLength: 0)
             }
-
-            // 중첩 분기 컨테이너: 좌측 컬러 레일 + 명시적 Otherwise / End 경계
             if step.isBranchContainer {
-                VStack(alignment: .leading, spacing: 8) {
-                    branchSection(label: "THEN", tint: .accentColor, children: step.thenChildren)
+                VStack(alignment: .leading, spacing: AOMSpace.x2) {
+                    branch("THEN", tint: AOMColor.accent, steps: step.thenChildren)
                     if !step.elseChildren.isEmpty {
-                        branchSection(label: "OTHERWISE", tint: .orange, children: step.elseChildren)
+                        branch("OTHERWISE", tint: AOMColor.warningText, steps: step.elseChildren)
                     }
-                    Text("END")
-                        .font(.system(size: 9.5, weight: .bold))
-                        .foregroundStyle(.tertiary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.primary.opacity(0.05), in: Capsule())
+                    Text("END").font(AOMFont.caption.weight(.semibold)).foregroundStyle(AOMColor.textSecondary)
                 }
-                .padding(.leading, 18)
-                .padding(.top, 4)
-            }
-        }
-        .aomContentCard(radius: AOMCraftRadius.card, padding: 12)
-    }
-
-    private func branchSection(label: String, tint: Color, children: [AOMRecipeStepViewModel]) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            RoundedRectangle(cornerRadius: 1.5)
-                .fill(tint.opacity(0.55))
-                .frame(width: 3)
-            VStack(alignment: .leading, spacing: 6) {
-                Text(label)
-                    .font(.system(size: 9.5, weight: .bold))
-                    .foregroundStyle(tint)
-                ForEach(children) { child in
-                    AOMRecipeStepCard(step: child)
-                }
+                .padding(.leading, AOMSpace.x4)
             }
         }
     }
 
-    private var statusLabel: LocalizedStringKey {
+    private func branch(_ title: String, tint: Color, steps: [AOMRecipeStepViewModel]) -> some View {
+        VStack(alignment: .leading, spacing: AOMSpace.x1) {
+            Text(title).font(AOMFont.caption.weight(.semibold)).foregroundStyle(tint)
+            ForEach(steps) { child in
+                AOMRecipeStepRows(step: child)
+                    .padding(.vertical, AOMSpace.x1)
+            }
+        }
+        .padding(.leading, AOMSpace.x3)
+        .overlay(alignment: .leading) {
+            Capsule().fill(tint.opacity(0.65)).frame(width: 2).accessibilityHidden(true)
+        }
+    }
+
+    private var statusLabel: String {
         switch step.runStatus {
         case .idle: "Idle"
         case .running: "Running"
@@ -208,34 +157,24 @@ struct AOMRecipeStepCard: View {
         }
     }
 
-    @ViewBuilder
     private var stepBadge: some View {
         ZStack {
+            Circle().fill(AOMColor.track)
             switch step.runStatus {
             case .idle:
-                Circle().fill(Color.primary.opacity(0.08))
-                Text("\(step.index)")
-                    .font(.system(size: 11, weight: .semibold))
-                    .monospacedDigit()
-                    .foregroundStyle(AOMCraftColor.inkSecondary)
+                Text("\(step.index)").font(AOMFont.caption.weight(.semibold)).monospacedDigit()
+                    .foregroundStyle(AOMColor.textSecondary)
             case .running:
-                Circle().fill(Color.accentColor.opacity(0.16))
                 ProgressView().controlSize(.mini)
             case .succeeded:
-                Circle().fill(Color.green.opacity(0.18))
-                Image(systemName: "checkmark")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(.green)
+                Image(systemName: "checkmark").font(AOMFont.caption.weight(.bold)).foregroundStyle(AOMColor.successText)
             case .failed:
-                Circle().fill(Color.red.opacity(0.18))
-                Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(.red)
+                Image(systemName: "xmark").font(AOMFont.caption.weight(.bold)).foregroundStyle(AOMColor.dangerText)
             }
         }
-        .frame(width: 24, height: 24)
+        .frame(width: AOMIcon.tileMark, height: AOMIcon.tileMark)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text("Step \(step.index)"))
-        .accessibilityValue(Text(statusLabel))
+        .accessibilityLabel("Step \(step.index)")
+        .accessibilityValue(statusLabel)
     }
 }
