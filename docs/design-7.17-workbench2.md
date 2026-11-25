@@ -68,6 +68,6 @@ Status values: DONE (code) means compiled and unit-tested on macOS CI, but not c
 
 ## Verification
 
-- macOS CI (`tests.yml`, workflow_dispatch, `xcode-27`): results are recorded per commit in the pull request / session report.
+- macOS CI (`tests.yml`, workflow_dispatch, `xcode-27`): run 45579158640 on `86efcc5` succeeded — `swift test` executed 629 tests, 17 skipped, 0 failures (all 28 `AOMWorkbench2*` tests in 14 suites passed), then app build, codesign verify and DMG. Run 45573478352 (`6b7151d`, review follow-up) also succeeded. Run 45578386641 (`a4c7529`) failed to compile: the System Tools note named tool ids that don't exist; fixed in `86efcc5`.
 - NOT_RUN: the 84-screenshot matrix, resize ×30 with draft and scroll, keyboard/VoiceOver/Reduce Motion/Transparency, warm/cold page transitions p50/p95, 15-minute idle CPU/RSS/wakeups. No Mac was attached to this session.
 - No release, install, version bump or merge.
