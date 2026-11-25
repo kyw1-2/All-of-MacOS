@@ -194,3 +194,61 @@ final class AOMWorkbench2SettingsTests: XCTestCase {
         XCTAssertNil(permissions?.rowID, "dashboard panes open at the top")
     }
 }
+
+/// Review follow-ups: the resolver is what the pages call, so its edge cases
+/// are the pages' edge cases.
+final class AOMWorkbench2FollowUpTests: XCTestCase {
+    // P0-3: a list dragged wider closes the inspector; narrower reopens it with hysteresis.
+    func testInspectorFollowsTheDrawnListWidth() {
+        let available: CGFloat = 1_000
+        let narrowList = AOMWorkbenchArrangement.resolve(available: available, listMinimum: 240, detailMinimum: 420,
+                                                         inspectorMinimum: 260, inspectorRequested: true,
+                                                         current: .listDetail, list: 240)
+        XCTAssertEqual(narrowList, .listDetailInspector)
+        let wideList = AOMWorkbenchArrangement.resolve(available: available, listMinimum: 240, detailMinimum: 420,
+                                                       inspectorMinimum: 260, inspectorRequested: true,
+                                                       current: .listDetailInspector, list: 340)
+        XCTAssertEqual(wideList, .listDetail, "1000 − 340 − 420 − 16 = 224 < 260")
+        let back = AOMWorkbenchArrangement.resolve(available: available, listMinimum: 240, detailMinimum: 420,
+                                                   inspectorMinimum: 260, inspectorRequested: true,
+                                                   current: .listDetail, list: 300)
+        XCTAssertEqual(back, .listDetail, "264 pt is inside the 20 pt band: stays closed")
+        XCTAssertEqual(AOMWorkbenchArrangement.resolve(available: available, listMinimum: 240, detailMinimum: 420,
+                                                       inspectorMinimum: 260, inspectorRequested: true,
+                                                       current: .listDetail, list: 100), .listDetailInspector,
+                       "a list below its minimum counts as the minimum")
+    }
+
+    // P0-2: Automation's table needs 420 pt, the list 300.
+    func testAutomationTableMinimumSwitchesEarlier() {
+        let width: CGFloat = 860   // 300 + 440 + 8 = 748 fits, 420 + 440 + 8 = 868 doesn't
+        let list = AOMWorkbenchArrangement.resolve(available: width, listMinimum: 300, detailMinimum: 440,
+                                                   inspectorMinimum: 260, inspectorRequested: false, current: .listDetail)
+        let table = AOMWorkbenchArrangement.resolve(available: width, listMinimum: 420, detailMinimum: 440,
+                                                    inspectorMinimum: 260, inspectorRequested: false, current: .listDetail)
+        XCTAssertEqual(list, .listDetail)
+        XCTAssertEqual(table, .drillIn)
+        XCTAssertEqual(AOMWorkbenchArrangement.resolve(available: 0, listMinimum: 420, detailMinimum: 440,
+                                                       inspectorMinimum: 260, inspectorRequested: false, current: .drillIn),
+                       .drillIn, "no measurement keeps the arrangement")
+    }
+
+    // P1-6: picked Folder Rules items don't run while the preview refreshes or is stale.
+    func testFolderRulesRunSelectedGate() {
+        XCTAssertTrue(FolderRulesPreviewFreshness.canRun(picked: 2, loading: false, stale: false))
+        XCTAssertFalse(FolderRulesPreviewFreshness.canRun(picked: 2, loading: true, stale: false))
+        XCTAssertFalse(FolderRulesPreviewFreshness.canRun(picked: 2, loading: false, stale: true))
+        XCTAssertFalse(FolderRulesPreviewFreshness.canRun(picked: 0, loading: false, stale: false))
+    }
+
+    // P1-7: the control a revealed setting focuses.
+    func testRevealFocusPicksTheTopLeadingControlInsideTheRow() {
+        let row = CGRect(x: 0, y: 100, width: 600, height: 44)
+        let frames = [CGRect(x: 500, y: 110, width: 40, height: 22),   // switch on the row's line
+                      CGRect(x: 20, y: 200, width: 80, height: 22),    // another row, above
+                      CGRect(x: 300, y: 110, width: 120, height: 22)]  // pop-up on the same line, leading
+        XCTAssertEqual(AOMRevealFocus.pick(frames, in: row), 2)
+        XCTAssertNil(AOMRevealFocus.pick([CGRect(x: 20, y: 200, width: 80, height: 22)], in: row))
+        XCTAssertNil(AOMRevealFocus.pick([], in: row))
+    }
+}

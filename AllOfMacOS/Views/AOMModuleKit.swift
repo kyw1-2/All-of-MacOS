@@ -190,13 +190,25 @@ struct AOMFlowLayout: Layout {
 /// trailing edge, so the detail never drops below its minimum. Neither the
 /// stored list width nor the selection changes when the window does.
 struct AOMListDetail<ListContent: View, Detail: View, InspectorContent: View>: View {
+    /// What an inspector that was asked for does when it doesn't fit beside
+    /// the detail.
+    enum NarrowInspector {
+        /// Floats over the detail's trailing edge.
+        case overlay
+        /// Isn't drawn; the page shows the same content in its detail
+        /// (`onArrangementChange` says when).
+        case inDetail
+    }
+
     @Binding var listWidth: Double
     var showsInspector: Binding<Bool>?
+    var narrowInspector: NarrowInspector
+    var onArrangementChange: ((AOMWorkbenchArrangement) -> Void)?
     @ViewBuilder var list: ListContent
     @ViewBuilder var detail: Detail
     @ViewBuilder var inspector: InspectorContent
     @State private var available: CGFloat = 0
-    @State private var inspectorBeside = false
+    @State private var arrangement: AOMWorkbenchArrangement = .listDetail
     @State private var inspectorWidth = Double(AOMSize.inspectorIdeal)
 
     private static var inspectorRange: ClosedRange<Double> {
@@ -204,11 +216,15 @@ struct AOMListDetail<ListContent: View, Detail: View, InspectorContent: View>: V
     }
 
     init(listWidth: Binding<Double>, showsInspector: Binding<Bool>? = nil,
+         narrowInspector: NarrowInspector = .overlay,
+         onArrangementChange: ((AOMWorkbenchArrangement) -> Void)? = nil,
          @ViewBuilder list: () -> ListContent,
          @ViewBuilder detail: () -> Detail,
          @ViewBuilder inspector: () -> InspectorContent = { EmptyView() }) {
         self._listWidth = listWidth
         self.showsInspector = showsInspector
+        self.narrowInspector = narrowInspector
+        self.onArrangementChange = onArrangementChange
         self.list = list()
         self.detail = detail()
         self.inspector = inspector()
@@ -222,23 +238,33 @@ struct AOMListDetail<ListContent: View, Detail: View, InspectorContent: View>: V
                                reserved: AOMSize.detailMinimum + AOMWorkbenchPolicy.dividerAllowance)
     }
 
-    private var shownInspectorWidth: CGFloat {
-        let room = AOMWorkbenchPolicy.inspectorRoom(available: available, list: shownListWidth,
-                                                    detailMinimum: AOMSize.detailMinimum)
-        return AOMPaneWidth.effective(stored: inspectorWidth, range: Self.inspectorRange,
-                                      fallback: Double(AOMSize.inspectorIdeal),
-                                      available: room, reserved: 0)
+    private var inspectorRoom: CGFloat {
+        AOMWorkbenchPolicy.inspectorRoom(available: available, list: shownListWidth, detailMinimum: AOMSize.detailMinimum)
     }
 
+    private var shownInspectorWidth: CGFloat {
+        AOMPaneWidth.effective(stored: inspectorWidth, range: Self.inspectorRange,
+                               fallback: Double(AOMSize.inspectorIdeal), available: inspectorRoom, reserved: 0)
+    }
+
+    /// The shared decision (D02), re-run when the width, the request or the
+    /// list's own width changes (D03: dragging the list wider can close the
+    /// inspector; it reopens with 20 pt to spare).
     private func updateArrangement() {
-        let fits = inspectorRequested && AOMWorkbenchPolicy.inspectorFits(
-            available: available, list: shownListWidth, detailMinimum: AOMSize.detailMinimum,
-            inspectorMinimum: AOMSize.inspectorWidth.lowerBound, current: inspectorBeside)
-        if fits != inspectorBeside { inspectorBeside = fits }
+        guard available > 0 else { return }
+        let next = AOMWorkbenchArrangement.resolve(
+            available: available, listMinimum: CGFloat(AOMSize.moduleListRange.lowerBound),
+            detailMinimum: AOMSize.detailMinimum, inspectorMinimum: AOMSize.inspectorWidth.lowerBound,
+            inspectorRequested: inspectorRequested, current: arrangement, list: shownListWidth)
+        guard next != arrangement else { return }
+        arrangement = next
+        onArrangementChange?(next)
     }
 
     var body: some View {
         let listShown = shownListWidth
+        // The list keeps its place in the hierarchy in every arrangement, so
+        // its scroll position and selection survive a resize (D03).
         HStack(spacing: 0) {
             list
                 .frame(width: listShown)
@@ -248,9 +274,9 @@ struct AOMListDetail<ListContent: View, Detail: View, InspectorContent: View>: V
                              maximum: available > 0 ? available - AOMSize.detailMinimum - AOMWorkbenchPolicy.dividerAllowance : nil)
             detail
                 .frame(minWidth: AOMSize.detailMinimum, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            if inspectorRequested && inspectorBeside {
+            if inspectorRequested && arrangement.showsInspectorBeside {
                 AOMResizeDivider(width: $inspectorWidth, range: Self.inspectorRange, paneEdge: .trailing,
-                                 displayed: shownInspectorWidth)
+                                 displayed: shownInspectorWidth, maximum: inspectorRoom)
                 inspector
                     .frame(width: shownInspectorWidth)
                     .frame(maxHeight: .infinity)
@@ -260,7 +286,7 @@ struct AOMListDetail<ListContent: View, Detail: View, InspectorContent: View>: V
         }
         .overlay(alignment: .trailing) {
             // Asked for but no room beside the detail: over its trailing edge.
-            if inspectorRequested && !inspectorBeside && available > 0 {
+            if narrowInspector == .overlay, inspectorRequested, !arrangement.showsInspectorBeside, available > 0 {
                 inspector
                     .frame(width: AOMSize.inspectorWidth.lowerBound)
                     .frame(maxHeight: .infinity)
@@ -282,6 +308,7 @@ struct AOMListDetail<ListContent: View, Detail: View, InspectorContent: View>: V
             }
         }
         .onChange(of: inspectorRequested) { _, _ in updateArrangement() }
+        .onChange(of: listWidth) { _, _ in updateArrangement() }
     }
 }
 

@@ -31,6 +31,12 @@ final class FolderRulesPageModel: ObservableObject {
     var isPreviewStale: Bool {
         preview != nil && FolderRulesPreviewFreshness.isStale(previewFor: previewRule, draft: draft)
     }
+
+    /// Items picked from the preview may run only while it is current and
+    /// not being replaced (a refresh can drop or change them).
+    var canRunPicked: Bool {
+        FolderRulesPreviewFreshness.canRun(picked: pickedItems.count, loading: previewLoading, stale: isPreviewStale)
+    }
     /// 7.2.2 (audit N03): preview items picked for Run Selected, by id.
     @Published var pickedPreviewItems: Set<String> = []
     /// The preview shown in place before a rule is turned on.
@@ -238,7 +244,7 @@ final class FolderRulesPageModel: ObservableObject {
 
     func refreshPreview() {
         previewTask?.cancel()
-        guard let rule = draft else { preview = nil; return }
+        guard let rule = draft else { preview = nil; previewRule = nil; previewLoading = false; return }
         previewLoading = true
         previewTask = Task { [weak self] in
             guard let self else { return }
@@ -265,7 +271,7 @@ final class FolderRulesPageModel: ObservableObject {
     }
 
     func runPicked() {
-        guard let rule = draft, !isPreviewStale else { return }
+        guard let rule = draft, canRunPicked else { return }
         let items = pickedItems
         guard !items.isEmpty else { return }
         engine.runSelected(rule, items: items)
@@ -439,5 +445,10 @@ enum FolderRulesPreviewFreshness {
         return made.folderID != draft.folderID || made.match != draft.match
             || made.conditions != draft.conditions || made.actions != draft.actions
             || made.includeSubfolders != draft.includeSubfolders || made.recognizesScans != draft.recognizesScans
+    }
+
+    /// Run Selected: something picked, the preview current and not refreshing.
+    static func canRun(picked: Int, loading: Bool, stale: Bool) -> Bool {
+        picked > 0 && !loading && !stale
     }
 }

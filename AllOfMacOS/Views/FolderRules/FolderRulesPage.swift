@@ -36,10 +36,12 @@ struct FolderRulesPage: View {
     /// The inspector only opens when the list, a 420 pt detail and the
     /// inspector all fit; in a narrower window the preview shows in the detail.
     private func updateInspectorFits() {
-        let fits = AOMWorkbenchPolicy.inspectorFits(available: pageWidth, list: clampedListWidth,
-                                                    detailMinimum: AOMSize.detailMinimum,
-                                                    inspectorMinimum: AOMSize.inspectorWidth.lowerBound,
-                                                    current: inspectorFits)
+        guard pageWidth > 0 else { return }
+        let fits = AOMWorkbenchArrangement.resolve(
+            available: pageWidth, listMinimum: CGFloat(AOMSize.moduleListRange.lowerBound),
+            detailMinimum: AOMSize.detailMinimum, inspectorMinimum: AOMSize.inspectorWidth.lowerBound,
+            inspectorRequested: true, current: inspectorFits ? .listDetailInspector : .listDetail,
+            list: clampedListWidth).showsInspectorBeside
         if fits != inspectorFits { inspectorFits = fits }
     }
 
@@ -72,6 +74,8 @@ struct FolderRulesPage: View {
                 }
             }
             .onChange(of: inspectorFits) { _, fits in if fits { model.showsInlinePreview = false } }
+            // Dragging the list wider can leave no room for the inspector.
+            .onChange(of: listWidth) { _, _ in updateInspectorFits() }
         .aomPage("Folder Rules")
         .aomToolbarSubtitle(toolbarSubtitle)
         .aomPageToolbar { toolbarContent }

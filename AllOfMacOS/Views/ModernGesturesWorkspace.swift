@@ -48,10 +48,9 @@ struct ModernGesturesWorkspace: View {
     @StateObject private var toast = AOMToastModel()
     /// Narrow windows: whether the editor replaces the list.
     @State private var compactShowsEditor = false
-    /// Workbench 2 (D02, D03): the arrangement, decided from the measured
-    /// width with 20 pt of hysteresis, so resizing across the threshold
-    /// doesn't rebuild the panes (and drop their scroll position) each point.
-    @State private var compactLayout = false
+    /// Workbench 2 (D02, D03): the arrangement, from the shared resolver with
+    /// the measured width and 20 pt of hysteresis.
+    @State private var arrangement: AOMWorkbenchArrangement = .listDetail
     /// The editor title reads as a heading, so it edits on click — a hoverable
     /// text field this large would put the I-beam over the whole header.
     @State private var editingName = false
@@ -218,19 +217,15 @@ struct ModernGesturesWorkspace: View {
             Group {
                 if scopedTriggers.isEmpty {
                     onboardingView
-                } else if compactLayout {
-                    if compactShowsEditor, selectedTrigger != nil {
-                        editorPane(compact: true)
-                    } else {
-                        listPane
-                    }
                 } else {
-                    split(totalWidth: geometry.size.width)
+                    panes(totalWidth: geometry.size.width)
                 }
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
             .onAppear { updateArrangement(geometry.size.width) }
             .onChange(of: geometry.size.width) { _, width in updateArrangement(width) }
+            // The table needs more room than the list (420 vs 300 pt).
+            .onChange(of: viewMode) { _, _ in updateArrangement(geometry.size.width) }
         }
         .aomPane()
         .aomToolbarSubtitle(subtitle)
@@ -283,7 +278,10 @@ struct ModernGesturesWorkspace: View {
             syncExpandedEditorState()
             applyPreviewEditorHook()
         }
-        .aomPageDeleteCommand { if let trigger = selectedTrigger { delete(trigger) } }
+        // D05: ⌫ goes through the same check as the bar's Delete.
+        .aomPageDeleteCommand {
+            if let id = appState.selectedTrigger?.id, let trigger = actionable(id) { delete(trigger) }
+        }
         // 6.0: the selected automation and what can be done to it, in the
         // action bar (Test ⌘↩ is the primary).
         .aomBarContext(id: BarContextKey(trigger: selectedTrigger,
@@ -333,27 +331,50 @@ struct ModernGesturesWorkspace: View {
         }
     }
 
-    /// List and editor side by side while both minimums fit (the threshold
-    /// 7.x used), one at a time below it; back only with 20 pt to spare.
+    /// The list column's range and minimum in the current view mode.
+    private var listRange: ClosedRange<Double> { viewMode == .table ? Self.tableWidthRange : AOMSize.listColumnRange }
+
+    /// List and editor side by side while both minimums and the divider fit
+    /// (the shared resolver, D02), one at a time below that; back only with
+    /// 20 pt to spare.
     private func updateArrangement(_ width: CGFloat) {
-        let minimum = CGFloat(AOMSize.listColumnRange.lowerBound) + AOMSize.editorMinimum
-        let compact = !AOMWorkbenchPolicy.sideBySide(available: width, minimum: minimum, current: !compactLayout)
-        if compact != compactLayout { compactLayout = compact }
+        guard width > 0 else { return }
+        let next = AOMWorkbenchArrangement.resolve(
+            available: width, listMinimum: CGFloat(listRange.lowerBound), detailMinimum: AOMSize.editorMinimum,
+            inspectorMinimum: AOMSize.inspectorWidth.lowerBound, inspectorRequested: false, current: arrangement)
+        if next != arrangement { arrangement = next }
     }
 
-    private func split(totalWidth: CGFloat) -> some View {
+    /// Both arrangements in one hierarchy (D03): the list keeps its place
+    /// (only its width changes, and it is hidden while the editor fills a
+    /// narrow window), so its scroll position and selection survive a resize
+    /// across the threshold and going Back from the editor.
+    private func panes(totalWidth: CGFloat) -> some View {
+        let compact = arrangement == .drillIn
+        let showsEditor = !compact || (compactShowsEditor && selectedTrigger != nil)
+        let showsList = !compact || !showsEditor
         let stored = viewMode == .table ? tableWidth : listWidth
-        let range = viewMode == .table ? Self.tableWidthRange : AOMSize.listColumnRange
         let fallback = viewMode == .table ? Self.tableWidthRange.lowerBound : AOMSize.listColumnIdeal
         // D04: the stored width checked and drawn narrower while the editor
         // needs the room; it is only written by dragging, so it comes back.
-        let width = AOMPaneWidth.effective(stored: stored, range: range, fallback: fallback,
-                                           available: totalWidth, reserved: AOMSize.editorMinimum)
+        let splitWidth = AOMPaneWidth.effective(stored: stored, range: listRange, fallback: fallback, available: totalWidth,
+                                                reserved: AOMSize.editorMinimum + AOMWorkbenchPolicy.dividerAllowance)
+        let listShown: CGFloat = compact ? (showsList ? totalWidth : 0) : splitWidth
         return HStack(spacing: 0) {
-            listPane.frame(width: width)
-            AOMResizeDivider(width: viewMode == .table ? $tableWidth : $listWidth, range: range, paneEdge: .leading,
-                             displayed: width, maximum: totalWidth - AOMSize.editorMinimum)
-            editorPane(compact: false).frame(maxWidth: .infinity)
+            listPane
+                .frame(width: listShown)
+                .clipped()
+                .opacity(showsList ? 1 : 0)
+                .allowsHitTesting(showsList)
+                .accessibilityHidden(!showsList)
+            if !compact {
+                AOMResizeDivider(width: viewMode == .table ? $tableWidth : $listWidth, range: listRange, paneEdge: .leading,
+                                 displayed: splitWidth,
+                                 maximum: totalWidth - AOMSize.editorMinimum - AOMWorkbenchPolicy.dividerAllowance)
+            }
+            if showsEditor {
+                editorPane(compact: compact).frame(maxWidth: .infinity)
+            }
         }
     }
 

@@ -92,6 +92,10 @@ struct ClipboardStudioView: View {
     @StateObject private var toast = AOMToastModel()
     /// List + detail (design-3.4.0 b.2): the list column's width.
     @AppStorage("AOMClipboardListWidth") private var listWidth: Double = 320
+    /// Workbench 2 (D15, D09): the selected item's details in a trailing
+    /// inspector when the window has room; in the detail otherwise.
+    @AppStorage("AOMClipboardInspector") private var showsInspector = true
+    @State private var inspectorBeside = false
     @Environment(\.undoManager) private var undoManager
     @State private var showingNewTextSheet = false
     @State private var newText = ""
@@ -328,7 +332,8 @@ struct ClipboardStudioView: View {
                 // draws plain columns now (no `.inspector` inset under the
                 // header), and keeps the detail at its minimum in a narrow
                 // window by drawing the list narrower than its stored width.
-                AOMListDetail(listWidth: $listWidth) {
+                AOMListDetail(listWidth: $listWidth, showsInspector: $showsInspector, narrowInspector: .inDetail,
+                              onArrangementChange: { inspectorBeside = $0.showsInspectorBeside }) {
                     AOMListColumn(rows: {
                         List(selection: $selectedEntryID) {
                             ForEach(entries) { entry in libraryRow(entry) }
@@ -373,6 +378,8 @@ struct ClipboardStudioView: View {
                                               : "Select an item to see all of it, copy it or pin it.")
                         }
                     }
+                } inspector: {
+                    inspector(entries.first(where: { $0.id == selectedEntryID }))
                 }
                 // The detail shows the highlighted row: the first item is
                 // selected on arrival and when the library isn't narrowed.
@@ -496,12 +503,11 @@ struct ClipboardStudioView: View {
                     .background(AOMColor.surface, in: RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous))
                     .clipShape(RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous))
                     .onDrag { ClipboardStudioDrag.provider(for: entry) }
-                AOMSection("Details") {
-                    detailRow("Kind", entry.kind.displayName)
-                    detailRow("From", entry.sourceName ?? "Unknown app")
-                    detailRow("Copied", entry.lastCopiedAt.formatted(date: .abbreviated, time: .shortened))
-                    detailRow("Contents", detailSummary[entry.id] ?? "…")
-                    detailRow("Pinboards", pinboardNames(entry) ?? "None")
+                // In the inspector when it is beside the preview (D15).
+                if !(showsInspector && inspectorBeside) {
+                    AOMSection("Details") {
+                        ForEach(details(entry)) { row in detailRow(row.label, row.value) }
+                    }
                 }
             }
             .padding(AOMSpace.pageMargin)
@@ -514,6 +520,51 @@ struct ClipboardStudioView: View {
             let content = await ClipboardPreviewCache.shared.content(for: entry)
             guard !Task.isCancelled else { return }
             detailSummary[entry.id] = content.summary
+        }
+    }
+
+    /// The fixed metadata of an item, in one order for the detail and the
+    /// inspector: what it is, where and when it came from, how big, where pinned.
+    private struct DetailRow: Identifiable {
+        let label: String
+        let value: String
+        var id: String { label }
+    }
+
+    private func details(_ entry: ClipboardEntry) -> [DetailRow] {
+        [DetailRow(label: "Kind", value: entry.kind.displayName),
+         DetailRow(label: "From", value: entry.sourceName ?? "Unknown app"),
+         DetailRow(label: "Copied", value: entry.lastCopiedAt.formatted(date: .abbreviated, time: .shortened)),
+         DetailRow(label: "Contents", value: detailSummary[entry.id] ?? "…"),
+         DetailRow(label: "Pinboards", value: pinboardNames(entry) ?? "None")]
+    }
+
+    /// The trailing inspector: the selected item's details as aligned
+    /// label/value rows (AOMInspectorRow), nothing when no item is selected.
+    @ViewBuilder private func inspector(_ entry: ClipboardEntry?) -> some View {
+        AOMInspector {
+            if let entry {
+                AOMInspectorSection("Details", showsDivider: false) {
+                    ForEach(details(entry)) { row in
+                        AOMInspectorRow(row.label) {
+                            Text(row.value).monospacedDigit().textSelection(.enabled)
+                        }
+                    }
+                }
+                AOMInspectorSection("Source") {
+                    AOMInspectorRow("App", text: entry.sourceName ?? "Unknown app")
+                    if let bundle = entry.sourceBundleID, !bundle.isEmpty {
+                        AOMInspectorRow("Bundle ID") { Text(bundle).textSelection(.enabled) }
+                    }
+                }
+            } else {
+                AOMInspectorSection("Details", showsDivider: false) {
+                    Text("Select an item to see where it came from and what it holds.")
+                        .font(AOMFont.callout)
+                        .foregroundStyle(AOMColor.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
         }
     }
 
@@ -657,6 +708,15 @@ struct ClipboardStudioView: View {
             }
             .pickerStyle(.segmented)
             .help("List with preview, or a gallery of cards")
+            if !gridLayout {
+                Button {
+                    withAnimation(AOMMotion.panel) { showsInspector.toggle() }
+                } label: {
+                    Label(showsInspector ? "Hide Inspector" : "Show Inspector", systemImage: "sidebar.trailing")
+                }
+                .keyboardShortcut("i", modifiers: [.command, .option])
+                .help(showsInspector ? "Hide the item's details (⌥⌘I)" : "Show the item's details beside the preview (⌥⌘I)")
+            }
             // Pause lives with the other history commands; while paused the
             // filter bar and the sidebar say so, with Resume one click away.
             Menu {

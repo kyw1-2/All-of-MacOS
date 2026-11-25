@@ -759,6 +759,8 @@ struct SettingsHubView: View {
     /// D31: the row a search result was revealed at, marked for a moment.
     @State private var revealedRowID: String?
     @State private var revealTask: Task<Void, Never>?
+    /// Bumped on each reveal: the revealed row focuses its control.
+    @State private var revealFocusToken = 0
     @AppStorage("AOMAppearance") private var appearance = "system"
 
     private var allItems: [SettingItem] {
@@ -952,6 +954,7 @@ struct SettingsHubView: View {
         guard let target = SettingsSearchReveal.target(category: rowCategory, rowID: row.id, sheetOpen: sheet != nil) else { return }
         revealTask?.cancel()
         revealedRowID = target.rowID
+        revealFocusToken &+= 1
         query = ""
         category = target.category
         revealTask = Task {
@@ -990,6 +993,10 @@ struct SettingsHubView: View {
                         } else {
                             row.content
                                 .background(revealedRowID == row.id ? AOMColor.accent.opacity(0.12) : Color.clear)
+                                // D31: the revealed row's control takes keyboard focus.
+                                .background {
+                                    if revealedRowID == row.id { AOMFocusFirstControl(token: revealFocusToken) }
+                                }
                         }
                     }
                     .id(row.id)

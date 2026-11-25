@@ -97,20 +97,26 @@ enum AOMWorkbenchArrangement: Equatable {
     case listDetailInspector
 
     /// One decision from the measured width, the panes' minimums and what is
-    /// shown now (for hysteresis on both thresholds).
+    /// shown now (for hysteresis on both thresholds). `list` is the width the
+    /// list is drawn at (its minimum when omitted): the inspector has to fit
+    /// beside that, so widening the list by its divider can close it.
     static func resolve(available: CGFloat, listMinimum: CGFloat, detailMinimum: CGFloat,
                         inspectorMinimum: CGFloat, inspectorRequested: Bool,
-                        current: AOMWorkbenchArrangement) -> AOMWorkbenchArrangement {
-        let twoPane = listMinimum + detailMinimum + AOMWorkbenchPolicy.dividerAllowance
+                        current: AOMWorkbenchArrangement, list: CGFloat? = nil,
+                        dividers: CGFloat = AOMWorkbenchPolicy.dividerAllowance) -> AOMWorkbenchArrangement {
+        let twoPane = listMinimum + detailMinimum + dividers
         guard AOMWorkbenchPolicy.sideBySide(available: available, minimum: twoPane, current: current != .drillIn) else {
             return .drillIn
         }
         guard inspectorRequested else { return .listDetail }
-        let fits = AOMWorkbenchPolicy.inspectorFits(available: available, list: listMinimum, detailMinimum: detailMinimum,
+        let fits = AOMWorkbenchPolicy.inspectorFits(available: available, list: max(listMinimum, list ?? listMinimum),
+                                                    detailMinimum: detailMinimum,
                                                     inspectorMinimum: inspectorMinimum,
                                                     current: current == .listDetailInspector)
         return fits ? .listDetailInspector : .listDetail
     }
+
+    var showsInspectorBeside: Bool { self == .listDetailInspector }
 }
 
 // MARK: - Selection (D03, D05)
@@ -226,6 +232,69 @@ struct AOMInspectorDisclosure<Content: View>: View {
                 .padding(.top, AOMSpace.x1)
         } label: {
             Text(title).font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
+        }
+    }
+}
+
+// MARK: - Focus after a reveal (D31)
+
+enum AOMRevealFocus {
+    /// Which of the controls found under a revealed row gets focus: the
+    /// first one whose centre is inside the row, top to bottom then leading
+    /// to trailing (window coordinates, y up). Nil when none is inside.
+    static func pick(_ frames: [CGRect], in row: CGRect) -> Int? {
+        frames.indices
+            .filter { row.contains(CGPoint(x: frames[$0].midX, y: frames[$0].midY)) }
+            .min { a, b in
+                let fa = frames[a], fb = frames[b]
+                if abs(fa.maxY - fb.maxY) > 1 { return fa.maxY > fb.maxY }
+                return fa.minX < fb.minX
+            }
+    }
+}
+
+/// Put behind a row: when `token` changes (and isn't 0), the first focusable
+/// AppKit control drawn inside the row becomes first responder, so a search
+/// result opened with "Show in…" can be changed from the keyboard at once.
+/// It doesn't take clicks and draws nothing.
+struct AOMFocusFirstControl: NSViewRepresentable {
+    let token: Int
+
+    func makeNSView(context: Context) -> AnchorView { AnchorView() }
+
+    func updateNSView(_ view: AnchorView, context: Context) {
+        guard token != view.lastToken else { return }
+        view.lastToken = token
+        guard token != 0 else { return }
+        // After the scroll that brought the row into view has laid it out.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak view] in view?.focusFirstControl() }
+    }
+
+    final class AnchorView: NSView {
+        var lastToken = 0
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        func focusFirstControl() {
+            guard let window, let root = window.contentView else { return }
+            let row = convert(bounds, to: nil)
+            var candidates: [NSView] = []
+            collect(in: root, row: row, into: &candidates)
+            let frames = candidates.map { $0.convert($0.bounds, to: nil) }
+            guard let index = AOMRevealFocus.pick(frames, in: row) else { return }
+            window.makeFirstResponder(candidates[index])
+        }
+
+        private func collect(in view: NSView, row: CGRect, into result: inout [NSView]) {
+            for sub in view.subviews where sub !== self && !sub.isHidden && sub.alphaValue > 0 {
+                let frame = sub.convert(sub.bounds, to: nil)
+                guard frame.intersects(row) else { continue }
+                if sub is NSControl, sub.acceptsFirstResponder || sub.canBecomeKeyView {
+                    result.append(sub)
+                } else {
+                    collect(in: sub, row: row, into: &result)
+                }
+            }
         }
     }
 }

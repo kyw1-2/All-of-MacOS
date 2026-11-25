@@ -40,7 +40,11 @@ struct FolderRulesInspector: View {
             Spacer(minLength: AOMSpace.x1)
             AOMIconButton("arrow.clockwise", label: "Refresh Preview") { model.refreshPreview() }
         }
-        if model.isPreviewStale {
+        if model.previewLoading, model.preview != nil {
+            Label("Updating the preview…", systemImage: "arrow.triangle.2.circlepath")
+                .font(AOMFont.callout)
+                .foregroundStyle(AOMColor.textSecondary)
+        } else if model.isPreviewStale {
             // D27: an edit since the preview; the list below is the old answer.
             HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x2) {
                 Label("Out of date: the rule changed since this preview.", systemImage: "clock.arrow.circlepath")
@@ -85,8 +89,8 @@ struct FolderRulesInspector: View {
             Spacer(minLength: AOMSpace.x1)
             Button(count == 0 ? "Run Selected" : "Run on \(count) Selected") { model.runPicked() }
                 .controlSize(.small)
-                // D05/D27: items picked from an out-of-date preview don't run.
-                .disabled(count == 0 || engine.isRunning || model.isPreviewStale)
+                // D05/D27: items picked from an out-of-date or refreshing preview don't run.
+                .disabled(!model.canRunPicked || engine.isRunning)
                 .help(rule.actionsNeedingApproval.isEmpty
                       ? "Runs the rule on the checked items now"
                       : "Runs the rule on the checked items now — this counts as your OK for them")
