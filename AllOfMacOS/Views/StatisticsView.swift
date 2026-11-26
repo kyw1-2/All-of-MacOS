@@ -139,7 +139,7 @@ struct StatisticsView: View {
                 Picker("Period", selection: $period) {
                     ForEach(Period.allCases) { Text($0.rawValue).tag($0) }
                 }
-                .pickerStyle(.segmented)
+                .aomSegmented()
                 .help("The period every figure on this page covers")
                 Button { confirmingReset = true } label: {
                     Label("Reset Statistics", systemImage: "arrow.counterclockwise")

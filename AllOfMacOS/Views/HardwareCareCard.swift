@@ -111,7 +111,7 @@ struct BatteryCareSection: View {
                     Text("Off").tag(0)
                     ForEach(Self.limits, id: \.self) { Text("\($0)%").tag($0) }
                 }
-                .pickerStyle(.segmented).labelsHidden().frame(maxWidth: 360)
+                .aomSegmented().labelsHidden().frame(maxWidth: 360)
                 .disabled(model.busy || !model.nativeAvailable)
                 Spacer()
             }

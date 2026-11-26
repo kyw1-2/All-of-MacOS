@@ -685,28 +685,28 @@ final class PaletteAIChat: ObservableObject {
         process.standardOutput = output
         process.standardError = errors
         process.standardInput = FileHandle.nullDevice
-        var buffer = Data()
+        // 7.21: one locked reader (stderr was a raced `Data`; the last
+        // stdout line was dropped when the process exited first).
+        let reader = AgentPipeReader()
         output.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            let chunk = handle.availableData
-            guard !chunk.isEmpty else { return }
-            buffer.append(chunk)
-            var lines: [String] = []
-            while let newline = buffer.firstIndex(of: 0x0A) {
-                lines.append(String(decoding: buffer[buffer.startIndex..<newline], as: UTF8.self))
-                buffer.removeSubrange(buffer.startIndex...newline)
-            }
-            let events = lines.flatMap { PaletteAIEvent.parse($0, provider: provider) }
+            let events = reader.appendOutput(handle.availableData).flatMap { PaletteAIEvent.parse($0, provider: provider) }
             guard !events.isEmpty else { return }
             DispatchQueue.main.async { MainActor.assumeIsolated { self?.applyAgent(events) } }
         }
-        var errorText = Data()
-        errors.fileHandleForReading.readabilityHandler = { handle in errorText.append(handle.availableData) }
+        errors.fileHandleForReading.readabilityHandler = { handle in reader.appendError(handle.availableData) }
         process.terminationHandler = { [weak self] finished in
             output.fileHandleForReading.readabilityHandler = nil
             errors.fileHandleForReading.readabilityHandler = nil
             let status = finished.terminationStatus
-            let stderr = String(decoding: errorText.suffix(2000), as: UTF8.self)
-            DispatchQueue.main.async { MainActor.assumeIsolated { self?.finish(status: status, stderr: stderr, title: provider.title) } }
+            let tail = reader.finishOutput(output.fileHandleForReading.drainWithoutWaiting())
+                .flatMap { PaletteAIEvent.parse($0, provider: provider) }
+            let stderr = reader.errorText(errors.fileHandleForReading.drainWithoutWaiting())
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    if !tail.isEmpty { self?.applyAgent(tail) }
+                    self?.finish(status: status, stderr: stderr, title: provider.title)
+                }
+            }
         }
         do {
             try process.run()
@@ -815,39 +815,24 @@ final class PaletteAgentSession {
         process.standardOutput = output
         process.standardError = errors
         process.standardInput = stdin
-        var buffer = Data()
+        let reader = AgentPipeReader()
         output.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            let chunk = handle.availableData
-            guard !chunk.isEmpty else { return }
-            buffer.append(chunk)
-            var lines: [String] = []
-            while let newline = buffer.firstIndex(of: 0x0A) {
-                lines.append(String(decoding: buffer[buffer.startIndex..<newline], as: UTF8.self))
-                buffer.removeSubrange(buffer.startIndex...newline)
-            }
-            let events = lines.flatMap { PaletteAIEvent.parse($0, provider: .claude) }
+            let events = reader.appendOutput(handle.availableData).flatMap { PaletteAIEvent.parse($0, provider: .claude) }
             guard !events.isEmpty else { return }
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self else { return }
-                    if events.contains(where: { if case .done = $0 { return true }; if case .failure = $0 { return true }; return false }) {
-                        self.isBusy = false
-                        self.armIdleTimer()
-                    }
-                    self.onEvents?(events)
-                }
-            }
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.deliver(events) } }
         }
-        var errorText = Data()
-        errors.fileHandleForReading.readabilityHandler = { handle in errorText.append(handle.availableData) }
+        errors.fileHandleForReading.readabilityHandler = { handle in reader.appendError(handle.availableData) }
         process.terminationHandler = { [weak self] finished in
             output.fileHandleForReading.readabilityHandler = nil
             errors.fileHandleForReading.readabilityHandler = nil
             let status = finished.terminationStatus
-            let stderr = String(decoding: errorText.suffix(2000), as: UTF8.self)
+            let tail = reader.finishOutput(output.fileHandleForReading.drainWithoutWaiting())
+                .flatMap { PaletteAIEvent.parse($0, provider: .claude) }
+            let stderr = reader.errorText(errors.fileHandleForReading.drainWithoutWaiting())
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     guard let self, self.process === finished else { return }
+                    if !tail.isEmpty { self.deliver(tail) }
                     self.process = nil
                     self.input = nil
                     self.isBusy = false
@@ -858,12 +843,21 @@ final class PaletteAgentSession {
         do {
             try process.run()
             self.process = process
+            AgentPipeReader.disableSIGPIPE(stdin.fileHandleForWriting)
             self.input = stdin.fileHandleForWriting
             self.key = key
             armIdleTimer()
         } catch {
             onExit?(-1, error.localizedDescription)
         }
+    }
+
+    private func deliver(_ events: [PaletteAIEvent]) {
+        if events.contains(where: { if case .done = $0 { return true }; if case .failure = $0 { return true }; return false }) {
+            isBusy = false
+            armIdleTimer()
+        }
+        onEvents?(events)
     }
 
     func send(_ text: String) {

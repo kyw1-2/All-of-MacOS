@@ -1107,7 +1107,7 @@ struct ModernGesturesWorkspace: View {
                         Text("Steps").tag(false)
                         Text("Recipe").tag(true)
                     }
-                    .pickerStyle(.segmented)
+                    .aomSegmented()
                     .labelsHidden()
                     .fixedSize()
                     .help("Recipe: when, if and then on one spine, with branches and the last run")

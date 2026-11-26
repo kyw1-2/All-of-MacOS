@@ -169,7 +169,7 @@ struct ParityActionForm: View {
         case .hapticFeedback:
             Picker("Pattern", selection: string(\.hapticPattern, default: "generic")) {
                 Text("Generic").tag("generic"); Text("Alignment").tag("alignment"); Text("Level Change").tag("levelChange")
-            }.pickerStyle(.segmented)
+            }.aomSegmented()
             note("Felt only on a Force Touch trackpad while a finger rests on it.")
         case .postDistributedNotification:
             TextField("Notification name", text: string(\.notificationName, default: "")).textFieldStyle(.roundedBorder)
@@ -204,7 +204,7 @@ struct ParityActionForm: View {
     private func modePicker(on: String, off: String) -> some View {
         Picker("Mode", selection: string(\.switchMode, default: "toggle")) {
             Text("Toggle").tag("toggle"); Text(on).tag("on"); Text(off).tag("off")
-        }.pickerStyle(.segmented)
+        }.aomSegmented()
         .onAppear { loadLists() }
     }
 

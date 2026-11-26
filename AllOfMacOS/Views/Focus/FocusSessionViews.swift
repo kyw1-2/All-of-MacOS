@@ -130,7 +130,7 @@ struct FocusLengthPicker: View {
                 }
                 Text(plan.preset == nil ? "Custom · \(plan.focusMinutes)/\(plan.breakMinutes)" : "Custom…").tag("custom")
             }
-            .pickerStyle(.segmented)
+            .aomSegmented()
             .labelsHidden()
             .fixedSize()
             .help("Focus and break lengths in minutes")

@@ -480,7 +480,7 @@ struct CaptureStudioView: View {
                 // 7.19 (D19): a list — name, kind, size and time beside a small thumbnail.
                 Image(systemName: "list.bullet").tag(3).help("List")
             }
-            .pickerStyle(.segmented)
+            .aomSegmented()
             .labelsHidden()
             .fixedSize()
             .help("Thumbnail size")

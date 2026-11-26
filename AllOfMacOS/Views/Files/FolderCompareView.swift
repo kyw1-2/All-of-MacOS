@@ -174,7 +174,7 @@ struct FolderCompareView: View {
                     Picker("Show", selection: $model.filter) {
                         ForEach(FolderCompareModel.Filter.allCases) { Text($0.title).tag($0) }
                     }
-                    .pickerStyle(.segmented)
+                    .aomSegmented()
                     .fixedSize()
                     Text(counts(comparison)).font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary).lineLimit(1)
                     Spacer()
@@ -272,7 +272,7 @@ struct FolderCompareView: View {
                 Picker("Copy", selection: $model.direction) {
                     ForEach(FolderCompare.Direction.allCases) { Text($0.title).tag($0) }
                 }
-                .pickerStyle(.segmented)
+                .aomSegmented()
                 .fixedSize()
                 .disabled(model.copying)
                 Text(comparison.ignoresCase ? "Names matched without case" : "Names matched with case")

@@ -760,7 +760,7 @@ private struct AnnotationEditorView: View {
                     Label("Rectangle", systemImage: "rectangle").tag(SpotlightShape.rectangle)
                     Label("Ellipse", systemImage: "circle").tag(SpotlightShape.ellipse)
                 }
-                .pickerStyle(.segmented).labelsHidden().frame(width: AOMFeatureSize.barPickerWide)
+                .aomSegmented().labelsHidden().frame(width: AOMFeatureSize.barPickerWide)
                 .help("Spotlight shape")
 
                 propertySlider("Dim Opacity", value: Binding(
@@ -807,7 +807,7 @@ private struct AnnotationEditorView: View {
                 set: { eraserMode = $0; AnnotationSettings.setEraserMode($0) })) {
                 ForEach(AnnotationEraserMode.allCases) { Text($0.title).tag($0).help($0.help) }
             }
-            .pickerStyle(.segmented).labelsHidden().fixedSize()
+            .aomSegmented().labelsHidden().fixedSize()
             .help(eraserMode.help).accessibilityLabel("Eraser mode")
             propertySlider("Size", value: Binding(get: { eraserSize },
                                                   set: { eraserSize = $0; AnnotationSettings.setEraserSize($0) }),
@@ -857,7 +857,7 @@ private struct AnnotationEditorView: View {
                         .help(redaction.help).tag(redaction)
                 }
             }
-            .pickerStyle(.segmented).labelsHidden().fixedSize()
+            .aomSegmented().labelsHidden().fixedSize()
             .help((AnnotationRedactionStyle(kind: kind) ?? .pixelate).help)
             .accessibilityLabel("Redaction style")
             if kind.isSecureRedaction {
@@ -927,7 +927,7 @@ private struct AnnotationEditorView: View {
                             Image(systemName: alignment.symbol).tag(alignment).help("Align \(alignment.displayName)")
                         }
                     }
-                    .pickerStyle(.segmented)
+                    .aomSegmented()
                     .help("Text alignment").accessibilityLabel("Text alignment")
                 }
             }
@@ -1663,7 +1663,7 @@ private struct AnnotationEditorView: View {
                         Picker("", selection: $style.arrowStyle) {
                             ForEach(ArrowStyle.allCases) { Text($0.displayName).tag($0) }
                         }
-                        .pickerStyle(.segmented)
+                        .aomSegmented()
                         .labelsHidden()
                         .onChange(of: style.arrowStyle) { _, _ in applyStyleToSelection() }
                     }
@@ -1723,7 +1723,7 @@ private struct AnnotationEditorView: View {
                     section("Pixel Size") {
                         Picker("Pixel block size", selection: $style.pixelBlockSize) {
                             ForEach([8, 16, 32], id: \.self) { Text("\($0) px").tag(CGFloat($0)) }
-                        }.pickerStyle(.segmented)
+                        }.aomSegmented()
                             .onChange(of: style.pixelBlockSize) { _, _ in applyStyleToSelection() }
                     }
                 }

@@ -114,7 +114,7 @@ struct AOMHomeView: View {
                         Text("Now").tag(true)
                         Text("All Tools").tag(false)
                     }
-                    .pickerStyle(.segmented).labelsHidden().frame(width: AOMSize.workspaceModeWidth)
+                    .aomSegmented().labelsHidden().frame(width: AOMSize.workspaceModeWidth)
                     .controlSize(.regular)
                 }
                 // The banner and the sidebar switch already say "running";
@@ -456,7 +456,7 @@ struct AOMHomeView: View {
                 Picker("Overview", selection: Binding(get: { shown ?? parts[0] }, set: { railPart = $0.rawValue })) {
                     ForEach(parts) { Text(WorkspaceRailChoice.shortTitle($0)).tag($0) }
                 }
-                .pickerStyle(.segmented)
+                .aomSegmented()
                 .labelsHidden()
                 .help("Today, This Mac or Recent activity")
             }

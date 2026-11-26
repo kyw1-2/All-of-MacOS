@@ -162,7 +162,7 @@ struct AOMMenuEditorView: View {
                 Picker("Edit", selection: $target) {
                     ForEach(Target.allCases) { Text($0.title).tag($0) }
                 }
-                .pickerStyle(.segmented)
+                .aomSegmented()
                 .labelsHidden()
                 .fixedSize()
                 Spacer()
@@ -315,7 +315,7 @@ struct AOMMenuEditorView: View {
                                                       set: { draft.panelPerRow = $0 })) {
                     ForEach(1...4, id: \.self) { Text("\($0)").tag($0) }
                 }
-                .pickerStyle(.segmented).labelsHidden().fixedSize()
+                .aomSegmented().labelsHidden().fixedSize()
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {

@@ -117,7 +117,7 @@ struct AOMAISettingsView: View {
                         ForEach(AOMAIConfig.Effort.allCases) { Text($0.title).tag($0) }
                     }
                     .labelsHidden()
-                    .pickerStyle(.segmented)
+                    .aomSegmented()
                     .fixedSize()
                     .onChange(of: effort) { _, value in AOMAIConfig.effort = value }
                 }

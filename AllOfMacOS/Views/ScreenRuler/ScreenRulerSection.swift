@@ -92,7 +92,7 @@ struct ScreenRulerSection: View {
                         Text(unit.title).tag(unit.rawValue)
                     }
                 }
-                .pickerStyle(.segmented)
+                .aomSegmented()
             }
             AOMToggleRow("Show pixels with points", detail: "On Retina displays, as 120 pt · 240 px", isOn: $showsBothUnits)
             AOMSettingRow("Copy format", detail: copyFormat == .css ? "⌘C copies CSS sizes, in points"

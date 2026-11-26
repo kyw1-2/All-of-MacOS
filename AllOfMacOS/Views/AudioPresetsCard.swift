@@ -55,7 +55,7 @@ struct AudioBoostPresetPicker: View {
             case .segmented:
                 HStack(spacing: AOMSpace.x2) {
                     picker
-                        .pickerStyle(.segmented)
+                        .aomSegmented()
                         .fixedSize()
                     AOMInfoButton("\(preset.name): \(preset.summary)", topic: "Magic Boost presets")
                 }

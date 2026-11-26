@@ -190,7 +190,7 @@ private struct ScrollSessionView: View {
                 Picker("Direction", selection: $session.direction) {
                     Text("Vertical").tag(ScrollingCaptureService.Direction.vertical)
                     Text("Horizontal").tag(ScrollingCaptureService.Direction.horizontal)
-                }.pickerStyle(.segmented).disabled(!session.canChangeDirection)
+                }.aomSegmented().disabled(!session.canChangeDirection)
             }
             ZStack {
                 RoundedRectangle(cornerRadius: 8).fill(.black.opacity(0.12))

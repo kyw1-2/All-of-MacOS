@@ -473,7 +473,7 @@ private struct SnapZoneDetailEditor: View {
             Picker("Fine tune", selection: $mode) {
                 Text("Drop area coordinates").tag(0)
                 Text("Window target coordinates").tag(1)
-            }.pickerStyle(.segmented)
+            }.aomSegmented()
             DisclosureGroup("Precise coordinates", isExpanded: $showPrecision) {
                 VStack(spacing: AOMSpace.x1) {
                     ForEach(["X", "Y", "Width", "Height"], id: \.self) { title in

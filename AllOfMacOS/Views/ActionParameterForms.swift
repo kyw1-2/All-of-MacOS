@@ -122,7 +122,7 @@ struct ActionParameterForm: View {
         case .arrow:
             Picker("Direction", selection: stringBinding(\.arrowDirection, default: "down")) {
                 Text("Up").tag("up"); Text("Down").tag("down"); Text("Left").tag("left"); Text("Right").tag("right")
-            }.pickerStyle(.segmented)
+            }.aomSegmented()
             Stepper(value: intBinding(\.keyRepeatCount, default: 1), in: 1...100) {
                 Text("Press \(p.keyRepeatCount ?? 1) time(s)")
             }.accessibilityLabel("Key press count")
@@ -240,7 +240,7 @@ struct ActionParameterForm: View {
         return VStack(alignment: .leading, spacing: AOMSpace.x2) {
             Picker("Unit", selection: stringBinding(\.moveResizeUnit, default: "percent")) {
                 Text("Percent of display").tag("percent"); Text("Pixels").tag("pixels")
-            }.pickerStyle(.segmented)
+            }.aomSegmented()
             Picker("Anchor", selection: stringBinding(\.moveResizeAnchor, default: "topLeft")) {
                 ForEach(ActionParameterValidation.anchors, id: \.self) { Text(Self.anchorTitle($0)).tag($0) }
             }
@@ -260,7 +260,7 @@ struct ActionParameterForm: View {
     private var windowPicker: some View {
         Picker("Window", selection: stringBinding(\.windowTarget, default: "focused")) {
             Text("Focused window").tag("focused"); Text("Window under pointer").tag("underCursor")
-        }.pickerStyle(.segmented)
+        }.aomSegmented()
     }
 
     private var windowTimeout: some View {
@@ -321,10 +321,10 @@ struct ActionParameterForm: View {
         return VStack(alignment: .leading, spacing: AOMSpace.x2) {
             Picker("Direction", selection: stringBinding(\.scrollDirection, default: "down")) {
                 Text("Up").tag("up"); Text("Down").tag("down"); Text("Left").tag("left"); Text("Right").tag("right")
-            }.pickerStyle(.segmented)
+            }.aomSegmented()
             Picker("Unit", selection: stringBinding(\.scrollUnit, default: "lines")) {
                 Text("Lines").tag("lines"); Text("Pixels").tag("pixels")
-            }.pickerStyle(.segmented)
+            }.aomSegmented()
             Stepper(value: Binding(get: { abs(p.scrollAmount ?? 3) }, set: { value in save { $0.parameters.scrollAmount = value } }),
                     in: 1...10_000, step: (p.scrollUnit ?? "lines") == "pixels" ? 10 : 1) {
                 Text("Amount \(abs(p.scrollAmount ?? 3)) \((p.scrollUnit ?? "lines") == "pixels" ? "px" : "lines")")

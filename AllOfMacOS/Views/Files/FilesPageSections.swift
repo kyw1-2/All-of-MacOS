@@ -110,7 +110,7 @@ struct FilesShelfSection: View {
                 Picker("Shake sensitivity", selection: $settings.sensitivity) {
                     ForEach(FilesShakeSensitivity.allCases) { Text($0.title).tag($0) }
                 }
-                .pickerStyle(.segmented)
+                .aomSegmented()
                 .frame(width: 210)
             }
             .disabled(!settings.shakeOpensShelf)

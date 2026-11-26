@@ -119,7 +119,7 @@ struct MenuBarGeneralPane: View {
                             Text(choice.title.components(separatedBy: " — ").first ?? choice.title).tag(choice)
                         }
                     }
-                    .pickerStyle(.segmented).labelsHidden().fixedSize()
+                    .aomSegmented().labelsHidden().fixedSize()
                     .disabled(spacingBusy)
                 }
             }
@@ -487,7 +487,7 @@ struct MenuBarWeatherPane: View {
                         Text("°C").tag(MenuBarWeather.Unit.celsius)
                         Text("°F").tag(MenuBarWeather.Unit.fahrenheit)
                     }
-                    .pickerStyle(.segmented)
+                    .aomSegmented()
                     HStack {
                         Button("Refresh") { weather.refresh(force: true) }
                             .controlSize(.small)

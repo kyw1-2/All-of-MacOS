@@ -608,3 +608,17 @@ struct AOMGlassGroup<Content: View>: View {
         }
     }
 }
+
+// MARK: - 7.21 segmented controls
+
+extension View {
+    /// 7.21 (design refs: WWDC25 "Get to know the new design system" and
+    /// "Build an AppKit app with the new design", HIG Segmented controls):
+    /// a segmented picker shows its selection with the system's neutral
+    /// raised thumb. The window-wide `.tint` turned every selected segment
+    /// into a solid accent slab, which competed with the one prominent action
+    /// on each page and read as a second, louder primary button.
+    func aomSegmented() -> some View {
+        pickerStyle(.segmented).tint(nil)
+    }
+}

@@ -424,7 +424,7 @@ struct HomebrewSheet: View {
                     })) {
                         ForEach(HomebrewModel.Tab.allCases) { tab in Text(tabTitle(tab)).tag(tab) }
                     }
-                    .pickerStyle(.segmented)
+                    .aomSegmented()
                     .labelsHidden()
                     .onChange(of: model.tab) { _, tab in
                         if tab == .search { searchFocused = true }

@@ -92,35 +92,28 @@ struct ActionCardView: View {
             }
 
             // The step's own switch (it was a row inside the options).
+            // 7.21 (Shortcuts, iStat Menus 7, Linear 2026): a step's switch
+            // and options button come forward while the pointer is over the
+            // step or it is open; at rest a six-step recipe no longer shows
+            // six switches and six buttons. A step that is off keeps its
+            // switch visible, so "off" is never hidden.
             Toggle("Enabled", isOn: Binding(get: { action.isEnabled }, set: { _ in onToggleEnable() }))
                 .toggleStyle(.switch)
                 .controlSize(.mini)
                 .labelsHidden()
                 .help(action.isEnabled ? "Turn this step off" : "Turn this step on")
                 .accessibilityLabel("Step \(index) enabled")
+                .opacity(revealsControls || !action.isEnabled ? 1 : 0)
 
             Menu {
-                Button("Change Action…", action: onChangeAction)
-                if action.actionType.canContainChildren {
-                    Button(action.actionType == .toggleOnOff ? "Add to On…" : "Add Inside…", action: onAddInside)
-                }
-                if action.actionType.canContainElseChildren {
-                    Button(action.actionType == .toggleOnOff ? "Add to Off…" : "Add to Else…", action: onAddElse)
-                }
-                Divider()
-                Button("Move Up", action: onMoveUp)
-                Button("Move Down", action: onMoveDown)
-                Button("Copy", action: onCopy)
-                Button("Duplicate", action: onDuplicate)
-                Button(action.isEnabled ? "Disable" : "Enable", action: onToggleEnable)
-                Divider()
-                Button("Delete", role: .destructive, action: onDelete)
+                stepMenuItems
             } label: {
                 Image(systemName: "ellipsis.circle")
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .tint(AOMColor.textSecondary)
+            .opacity(revealsControls ? 1 : 0)
             .fixedSize()
             .help("Action options")
             .accessibilityLabel("Options for \(action.displayName)")
@@ -142,6 +135,30 @@ struct ActionCardView: View {
         .frame(minHeight: AOMSize.rowDetail)
         .contentShape(Rectangle())
         .onTapGesture { onToggleExpand() }
+        .onHover { hovering = $0 }
+        .contextMenu { stepMenuItems }
+    }
+
+    @State private var hovering = false
+    private var revealsControls: Bool { hovering || isExpanded || isInspected }
+
+    /// The step's commands: the options button and the card's right-click menu.
+    @ViewBuilder private var stepMenuItems: some View {
+        Button("Change Action…", action: onChangeAction)
+        if action.actionType.canContainChildren {
+            Button(action.actionType == .toggleOnOff ? "Add to On…" : "Add Inside…", action: onAddInside)
+        }
+        if action.actionType.canContainElseChildren {
+            Button(action.actionType == .toggleOnOff ? "Add to Off…" : "Add to Else…", action: onAddElse)
+        }
+        Divider()
+        Button("Move Up", action: onMoveUp)
+        Button("Move Down", action: onMoveDown)
+        Button("Copy", action: onCopy)
+        Button("Duplicate", action: onDuplicate)
+        Button(action.isEnabled ? "Disable" : "Enable", action: onToggleEnable)
+        Divider()
+        Button("Delete", role: .destructive, action: onDelete)
     }
 
     private var actionDetail: String? {

@@ -475,7 +475,7 @@ struct ProcessReviewSheet: View {
                         Text("CPU").tag(ProcessTools.Order.cpu)
                         Text("Memory").tag(ProcessTools.Order.memory)
                     }
-                    .pickerStyle(.segmented)
+                    .aomSegmented()
                     .labelsHidden()
                     .frame(width: 160)
                 }

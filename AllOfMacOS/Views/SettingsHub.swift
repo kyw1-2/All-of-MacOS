@@ -266,7 +266,7 @@ struct HubChoiceRow: View {
             .labelsHidden()
             .accessibilityLabel(title)
             if HubChoiceStyle.segmented(options.map(\.label)) {
-                picker.pickerStyle(.segmented).fixedSize()
+                picker.aomSegmented().fixedSize()
             } else {
                 // Menus size to their content: a fixed width truncates long or
                 // localized labels ("Microphone + System Audio").
@@ -296,7 +296,7 @@ struct HubIntChoiceRow: View {
             .labelsHidden()
             .accessibilityLabel(title)
             if HubChoiceStyle.segmented(options.map(\.label)) {
-                picker.pickerStyle(.segmented).fixedSize()
+                picker.aomSegmented().fixedSize()
             } else {
                 picker.pickerStyle(.menu).frame(minWidth: width, alignment: .trailing).fixedSize()
             }

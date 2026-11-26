@@ -472,7 +472,7 @@ struct RecordingExportEditor: View {
                 AOMSettingRow("Badge style") {
                     Picker("Badge style", selection: $keyStyle) {
                         ForEach(AOMKeystrokeStyle.allCases) { Text($0.displayName).tag($0) }
-                    }.pickerStyle(.segmented)
+                    }.aomSegmented()
                 }
             }
             .disabled(!showKeys)

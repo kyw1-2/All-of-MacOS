@@ -675,6 +675,7 @@ struct AOMModuleTile<Control: View, MenuItems: View>: View {
     @ViewBuilder var control: Control
     @ViewBuilder var menuItems: MenuItems
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var hovering = false
 
     init(_ module: AOMModule, metric: String, unit: String? = nil, status: String, statusTone: AOMTone? = nil,
          active: Bool = true, running: Bool = false, menuButton: Bool = false, open: @escaping () -> Void,
@@ -742,13 +743,19 @@ struct AOMModuleTile<Control: View, MenuItems: View>: View {
                     .accessibilityHidden(true)
                 }
                 if menuButton {
+                    // 7.21 (iStat Menus 7, Linear 2026 refresh): the commands
+                    // button stays visible but quiet — a secondary-colour
+                    // ellipsis that comes forward on hover — instead of an
+                    // accent-blue chevron competing with the row's switch.
                     Menu { menuItems } label: {
-                        Image(systemName: "chevron.down.circle")
+                        Image(systemName: "ellipsis.circle")
                             .font(AOMFont.callout)
                             .foregroundStyle(AOMColor.textSecondary)
                     }
                     .menuStyle(.borderlessButton)
                     .menuIndicator(.hidden)
+                    .tint(AOMColor.textSecondary)
+                    .opacity(hovering ? 1 : 0.5)
                     .fixedSize()
                     .help("\(module.title) commands")
                     .accessibilityLabel("\(module.title) commands")
@@ -763,6 +770,7 @@ struct AOMModuleTile<Control: View, MenuItems: View>: View {
             .padding(.horizontal, AOMSpace.rowInset)
         }
         .frame(height: AOMSize.moduleRowHeight)
+        .onHover { hovering = $0 }
         .contextMenu {
             Button("Open \(module.title)", action: open)
             menuItems

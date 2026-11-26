@@ -112,7 +112,7 @@ struct AddTriggerSheet: View {
                             Text("Key Sequence").tag("sequence")
                             Text("Typed String").tag("typed")
                         }
-                        .pickerStyle(.segmented)
+                        .aomSegmented()
                         .labelsHidden()
                         if keyboardMode == "sequence" { sequenceRecorder }
                         else if keyboardMode == "typed" { typedStringFields }
@@ -452,7 +452,7 @@ struct AddTriggerSheet: View {
                 Text("Named Trigger").tag("named")
                 Text("Scheduled").tag("scheduled")
                 Text("System Event").tag("event")
-            }.pickerStyle(.segmented)
+            }.aomSegmented()
 
             switch otherTriggerMode {
             case "scheduled": scheduledField
@@ -471,7 +471,7 @@ struct AddTriggerSheet: View {
                     Text("Daily").tag("daily")
                     Text("Weekly").tag("weekly")
                     Text("Interval").tag("interval")
-                }.pickerStyle(.segmented)
+                }.aomSegmented()
                 AOMInfoButton("Runs while AOM is open. Missed times are not replayed on launch.", topic: "schedules")
             }
 
@@ -602,7 +602,7 @@ struct AddTriggerSheet: View {
             }
             if systemEventKind == "power" {
                 AOMSettingRow("When") {
-                    Picker("When", selection: $powerOnAC) { Text("Power connected").tag(true); Text("Battery").tag(false) }.pickerStyle(.segmented)
+                    Picker("When", selection: $powerOnAC) { Text("Power connected").tag(true); Text("Battery").tag(false) }.aomSegmented()
                 }
             }
             if ["appLaunch", "appQuit", "appActive", "appInactive"].contains(systemEventKind) {

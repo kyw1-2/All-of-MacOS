@@ -753,13 +753,17 @@ private struct AOMSidebarStatusBadge: View {
         let colour: Color = onSelection ? .white
             : (tone == .warning || tone == .recording || tone == .danger ? tone.textColor : AOMColor.textSecondary)
         // 7.14: a capsule, as Mail's counts and Bartender 7's badges.
-        let fill: Color = onSelection ? Color.white.opacity(0.22)
-            : (tone == .neutral ? AOMColor.sunken : colour.opacity(0.14))
+        // 7.21 (Linear 2026 "don't compete for attention you haven't earned",
+        // Finder/Mail sidebars): a neutral or success state ("Off", "Paused",
+        // "AirPlay") is plain trailing text; only warnings and recording keep
+        // the tinted capsule, so the capsule itself means "look here".
+        let quiet = tone == .neutral || tone == .success
+        let fill: Color = quiet ? .clear : (onSelection ? Color.white.opacity(0.22) : colour.opacity(0.14))
         HStack(spacing: AOMSpace.x0_5) {
             if let symbol { Image(systemName: symbol).imageScale(.small) }
             Text(text).monospacedDigit()
         }
-        .font(AOMFont.caption.weight(.semibold))
+        .font(quiet ? AOMFont.caption : AOMFont.caption.weight(.semibold))
         .foregroundStyle(colour)
         .lineLimit(1)
         .padding(.horizontal, AOMSpace.x1 + AOMSpace.x0_5)
