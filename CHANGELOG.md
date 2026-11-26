@@ -1,3 +1,7 @@
+## [7.21.1] - 2026-11-26 — Sidebar selection without SwiftUI faults
+
+- Choosing a page in the sidebar changed app state while SwiftUI was still drawing the list, so every launch and page switch logged dozens of "Publishing changes from within view updates" faults (77 at one 7.21.0 launch; traced with the fault backtraces to the sidebar selection → navigation → page activity). The selection now applies on the next run-loop turn.
+
 ## [7.21.0] - 2026-11-26 — Defect sweep and a calmer, reference-driven design pass
 
 Ledger with evidence and the 26 references: `docs/design-7.21.md`.

@@ -208,8 +208,19 @@ struct AOMSidebar: View, Equatable {
     }
 
     private var selection: Binding<AOMMainTab?> {
+        // 7.21.1: the List writes its selection during a view update. Setting
+        // `selectedMainTab` there published AppState, AOMNavigation,
+        // AOMPageActivity and the history inside that update — the 49–77
+        // "Publishing changes from within view updates" faults per launch or
+        // page switch (backtrace: this setter → AOMNavigation.selected.didSet
+        // → AOMPageActivity.setActive). The write now lands on the next turn.
         Binding(get: { selected },
-                set: { if let tab = $0, tab != appState.selectedMainTab { appState.selectedMainTab = tab } })
+                set: { value in
+                    guard let tab = value, tab != appState.selectedMainTab else { return }
+                    DispatchQueue.main.async { [appState] in
+                        if appState.selectedMainTab != tab { appState.selectedMainTab = tab }
+                    }
+                })
     }
 
     @ObservedObject private var layout = AOMWorkspaceLayout.shared
