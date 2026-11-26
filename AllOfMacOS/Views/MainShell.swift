@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Combine
 
 /// The main window in the macOS arrangement (d.6–d.8): the system sidebar for
 /// the eight places, the selected page in the detail column with its own
@@ -466,6 +467,58 @@ final class AOMNavigationHistory: ObservableObject {
 
 /// View ▸ Back and Forward. Its own view, so the App's scene body does not
 /// observe the history.
+/// 7.21: the window root that applies the chosen highlight colour; the one
+/// place that observes AppState for it (the App body no longer does).
+struct AOMAccentRoot<Content: View>: View {
+    @ObservedObject var appState: AppState
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        content()
+            .accentColor(appState.accentColorChoice.color)
+            .tint(appState.accentColorChoice.color)
+    }
+}
+
+/// View › Search…, whose key follows the launcher shortcut. It observes only
+/// the resolved shortcut, so the menu is rebuilt when that changes and not on
+/// every AppState change.
+struct AOMSearchMenuItem: View {
+    let appState: AppState
+    let showMainWindow: () -> Void
+    @ObservedObject private var palette = AOMPaletteShortcutModel.shared
+
+    var body: some View {
+        let keys = AOMPaletteShortcut.keyEquivalent(palette.shortcut)
+        Button("Search…") {
+            showMainWindow()
+            appState.showingCommandPalette = true
+        }
+        .keyboardShortcut(keys.0, modifiers: keys.1)
+    }
+}
+
+/// The resolved launcher shortcut, republished only when it changes.
+@MainActor
+final class AOMPaletteShortcutModel: ObservableObject {
+    static let shared = AOMPaletteShortcutModel()
+    @Published private(set) var shortcut: KeyboardShortcut = AOMPaletteShortcut.candidates[0]
+    private var subscription: AnyCancellable?
+
+    func follow(_ appState: AppState) {
+        guard subscription == nil else { return }
+        update(appState.currentPreset)
+        subscription = appState.$currentPreset
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] preset in self?.update(preset) }
+    }
+
+    func update(_ preset: Preset) {
+        let resolved = AOMPaletteShortcut.current(preset)
+        if resolved != shortcut { shortcut = resolved }
+    }
+}
+
 struct AOMHistoryMenuItems: View {
     let appState: AppState
     let showMainWindow: () -> Void

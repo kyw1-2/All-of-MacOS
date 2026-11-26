@@ -427,7 +427,11 @@ final class AppAudioEngine {
             // Sweeping the whole process table every second kept an idle MacBook Air
             // at 3-4% CPU, so idle sweeps run one tick in three.
             let now = ProcessInfo.processInfo.systemUptime
-            guard now - self.lastSyncAt >= Self.sweepInterval(hasSessions: !self.sessions.isEmpty) else { return }
+            // 7.21: a session whose app is silent (a tap waiting for its
+            // app to play) has nothing for the watchdog to check; its
+            // IsRunningOutput listener syncs at once when playback starts.
+            let playing = self.sessions.keys.contains { self.controlSnapshot.playingOwners.contains($0) }
+            guard now - self.lastSyncAt >= Self.sweepInterval(hasSessions: !self.sessions.isEmpty, playing: playing) else { return }
             self.scheduleSync()
         }
         // A backstop behind the CoreAudio listeners: 10 % slack lets it
@@ -441,7 +445,15 @@ final class AppAudioEngine {
     /// watchdog acts only after 5 s, so live sessions need no 1 s sweep:
     /// each one is a few hundred property reads that queue in coreaudiod
     /// beside the AirPlay IO it is running for us (57 ms on average here).
-    static func sweepInterval(hasSessions: Bool) -> TimeInterval { hasSessions ? 2 : 3 }
+    ///
+    /// 7.21: only a session that is playing needs the 2 s sweep (the
+    /// watchdog judges playing sessions only). Measured on 7.20 with one
+    /// silent Terminal tap held to AirPlay: a 57 ms gather every 2 s kept AOM
+    /// at 4–6 % CPU and coreaudiod at ~2 % while nothing played. Everything
+    /// else is a backstop behind the CoreAudio listeners: 6 s.
+    static func sweepInterval(hasSessions: Bool, playing: Bool = true) -> TimeInterval {
+        hasSessions && playing ? 2 : 6
+    }
 
     func requestSync() { scheduleSync() }
 

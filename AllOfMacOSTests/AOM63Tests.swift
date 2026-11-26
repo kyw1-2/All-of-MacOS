@@ -135,9 +135,10 @@ final class MissionControlDeferralTests: XCTestCase {
 
 @available(macOS 14.2, *)
 final class AudioLoadTests: XCTestCase {
-    func testLiveSessionsSweepEveryTwoSecondsAndIdleEveryThree() {
+    func testLiveSessionsSweepEveryTwoSecondsAndIdleEverySix() {
         XCTAssertEqual(AppAudioEngine.sweepInterval(hasSessions: true), 2)
-        XCTAssertEqual(AppAudioEngine.sweepInterval(hasSessions: false), 3)
+        XCTAssertEqual(AppAudioEngine.sweepInterval(hasSessions: true, playing: false), 6)
+        XCTAssertEqual(AppAudioEngine.sweepInterval(hasSessions: false), 6)
         // The watchdog needs more than 5 s of silence: two sweeps still fall inside it.
         XCTAssertLessThan(AppAudioEngine.sweepInterval(hasSessions: true) * 2, 5)
     }

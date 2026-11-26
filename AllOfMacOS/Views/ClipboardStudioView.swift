@@ -170,11 +170,13 @@ struct ClipboardStudioView: View {
             }
             Group {
                 if pending {
-                    HStack(spacing: AOMSpace.x2) {
-                        ProgressView().controlSize(.small)
-                        Text("Searching clipboard…").font(AOMFont.callout)
+                    AOMDelayedProgress {
+                        HStack(spacing: AOMSpace.x2) {
+                            ProgressView().controlSize(.small)
+                            Text("Searching clipboard…").font(AOMFont.callout)
+                        }
+                        .padding(AOMSpace.pageMargin)
                     }
-                    .padding(AOMSpace.pageMargin)
                 } else if entries.isEmpty {
                     emptyLibrary(state)
                 } else {
@@ -482,7 +484,9 @@ struct ClipboardStudioView: View {
                 Text(entry.title)
                     .font(AOMFont.body)
                     .lineLimit(1)
-                    .truncationMode(.tail)
+                    // 7.21 (HIG Lists and tables): a link or file keeps its
+                    // beginning and its end ("developer.apple.com/…/sidebars").
+                    .truncationMode(entry.kind == .link || entry.kind == .file ? .middle : .tail)
                 Text(detail)
                     .font(AOMFont.callout)
                     .foregroundStyle(.secondary)

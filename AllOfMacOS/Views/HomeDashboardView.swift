@@ -110,12 +110,6 @@ struct AOMHomeView: View {
                 // knows paused and missing permissions — said once.
                 WorkspaceBanner(state: snapshot.hero) {
                     heroAction(snapshot.hero)
-                    Picker("Workspace view", selection: $showsOverview) {
-                        Text("Now").tag(true)
-                        Text("All Tools").tag(false)
-                    }
-                    .aomSegmented().labelsHidden().frame(width: AOMSize.workspaceModeWidth)
-                    .controlSize(.regular)
                 }
                 // The banner and the sidebar switch already say "running";
                 // the status card returns when something needs you (paused,
@@ -176,6 +170,17 @@ struct AOMHomeView: View {
         .aomScrollEdge()
         .background(AOMPageTint())
         .aomPageToolbar {
+            // 7.21 (HIG Segmented controls: "use a segmented control to switch
+            // views in a toolbar", not in the main window area): Now / All
+            // Tools is the page's view switch, where Finder keeps its own.
+            ToolbarItem(placement: .primaryAction) {
+                Picker("Workspace view", selection: $showsOverview) {
+                    Text("Now").tag(true)
+                    Text("All Tools").tag(false)
+                }
+                .aomSegmented().labelsHidden().frame(width: AOMSize.workspaceModeWidth)
+                .help("Now: what needs you and what is running. All Tools: every module.")
+            }
             // View options, then the page's one primary action (b.3).
             ToolbarItem(placement: .primaryAction) {
                 Button { showsCustomize = true } label: {

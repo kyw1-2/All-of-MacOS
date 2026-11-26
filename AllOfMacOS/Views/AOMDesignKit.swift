@@ -617,8 +617,28 @@ extension View {
     /// a segmented picker shows its selection with the system's neutral
     /// raised thumb. The window-wide `.tint` turned every selected segment
     /// into a solid accent slab, which competed with the one prominent action
-    /// on each page and read as a second, louder primary button.
+    /// on each page and read as a second, louder primary button. The app
+    /// root sets both `.accentColor` and `.tint`, so both are cleared here.
     func aomSegmented() -> some View {
-        pickerStyle(.segmented).tint(nil)
+        pickerStyle(.segmented).tint(nil).accentColor(nil)
+    }
+}
+
+/// 7.21 (Vercel Web Interface Guidelines "minimum loading-state duration",
+/// Raycast's "no flickering when views appear"): a progress indicator that
+/// appears only when the wait passes `delay`. A search that answers in 50 ms
+/// no longer flashes a spinner for one frame; a slow one still says it works.
+struct AOMDelayedProgress<Content: View>: View {
+    var delay: Duration = .milliseconds(200)
+    @ViewBuilder var content: () -> Content
+    @State private var visible = false
+
+    var body: some View {
+        content()
+            .opacity(visible ? 1 : 0)
+            .task {
+                try? await Task.sleep(for: delay)
+                if !Task.isCancelled { visible = true }
+            }
     }
 }

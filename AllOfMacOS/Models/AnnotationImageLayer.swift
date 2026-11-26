@@ -119,7 +119,7 @@ enum AnnotationImageCache {
     /// PNG only (a smaller decoder surface for files from elsewhere), and only
     /// at the size the payload claims.
     static func decode(_ data: Data, width: Int, height: Int) -> CGImage? {
-        guard let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
+        guard !data.isEmpty, let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
               CGImageSourceGetCount(source) > 0,
               (CGImageSourceGetType(source) as String?) == UTType.png.identifier,
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],

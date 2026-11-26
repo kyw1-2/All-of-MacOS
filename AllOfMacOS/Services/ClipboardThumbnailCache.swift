@@ -37,7 +37,7 @@ final class ClipboardThumbnailCache: @unchecked Sendable {
                     if let cached = cache.object(forKey: key as NSString) { continuation.resume(returning: cached); return }
                     var image: CGImage?
                     var dimensions = "Image"
-                    if let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary) {
+                    if !data.isEmpty, let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary) {
                         if let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
                            let width = properties[kCGImagePropertyPixelWidth] as? Int,
                            let height = properties[kCGImagePropertyPixelHeight] as? Int {

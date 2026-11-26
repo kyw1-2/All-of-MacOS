@@ -14,6 +14,7 @@ shot() { # name, extra args...
   local name="$1"; shift
   local pdir; pdir="$(mktemp -d "${TMPDIR:-/tmp}/AOMPreview-XXXX")"
   local sdir; sdir="$(mktemp -d "${TMPDIR:-/tmp}/AOMSnap-XXXX")"
+  local started; started="$(date '+%Y-%m-%d %H:%M:%S')"
   "$BIN" --aom-ui-preview "$pdir" --aom-preview-snapshot "$sdir" --aom-preview-snapshot-delay 7 "$@" >/dev/null 2>&1 &
   local pid=$!
   for _ in $(seq 1 40); do
@@ -27,6 +28,14 @@ shot() { # name, extra args...
     cp "$f" "$OUT/${name}-w${n}.png"; n=$((n+1))
   done
   echo "$name: $n window(s)"
+  # 7.21: SwiftUI runtime issues (e.g. "Publishing changes from within view
+  # updates") per rendered page, so a fault in the field can be traced to a page.
+  local issues
+  issues="$(/usr/bin/log show --start "$started" --predicate "process == \"AllOfMacOS\" AND (subsystem == \"com.apple.runtime-issues\" OR eventMessage CONTAINS \"Publishing changes\")" --style compact 2>/dev/null | grep -v '^Timestamp' | sed -E 's/^[0-9-]+ [0-9:.]+ //' | sort | uniq -c)"
+  if [ -n "$issues" ]; then
+    { echo "== $name"; echo "$issues"; } >> "$OUT/runtime-issues.txt"
+    echo "$name: runtime issues"; echo "$issues"
+  fi
   rm -rf "$pdir" "$sdir"
 }
 

@@ -27,7 +27,7 @@ enum ClipboardImageText {
     /// The full-resolution image, upright: EXIF orientation is applied, as in
     /// every preview, so boxes and crops line up with what the user sees.
     static func decodedImage(_ data: Data) -> CGImage? {
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        guard !data.isEmpty, let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
         let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
         let width = properties?[kCGImagePropertyPixelWidth] as? Int ?? 0
         let height = properties?[kCGImagePropertyPixelHeight] as? Int ?? 0

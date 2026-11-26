@@ -107,18 +107,25 @@ enum AOMLauncher {
 
 struct AllOfMacOSApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    @StateObject private var appState = AppState()
+    /// 7.21: held, not observed. As a @StateObject every AppState change
+    /// (a page switch, a keystroke in a search field, a selection) re-ran this
+    /// body, so SwiftUI rebuilt the main menu each time and macOS 27 donated
+    /// the new menu to Spotlight (CoreSpotlight "Submitting donation", twice
+    /// per change, 700+ a day, all failing). The accent root and the menu
+    /// commands observe only what they draw.
+    @State private var appState = AppState()
 
     var body: some Scene {
         WindowGroup {
-            MainWindow()
-                .environmentObject(appState)
-                .accentColor(appState.accentColorChoice.color)
-                .tint(appState.accentColorChoice.color)
-                .frame(minWidth: AOMSize.windowMinWidth, minHeight: AOMSize.windowMinHeight)
-                .task {
-                    appDelegate.appState = appState
-                }
+            AOMAccentRoot(appState: appState) {
+                MainWindow()
+                    .environmentObject(appState)
+                    .frame(minWidth: AOMSize.windowMinWidth, minHeight: AOMSize.windowMinHeight)
+                    .task {
+                        appDelegate.appState = appState
+                        AOMPaletteShortcutModel.shared.follow(appState)
+                    }
+            }
         }
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified)
@@ -142,12 +149,7 @@ struct AllOfMacOSApp: App {
                     .keyboardShortcut(tab.shortcutKey.map { SwiftUI.KeyboardShortcut($0, modifiers: .command) })
                 }
                 Divider()
-                let palette = AOMPaletteShortcut.keyEquivalent(AOMPaletteShortcut.current(appState.currentPreset))
-                Button("Search…") {
-                    appDelegate.showMainWindow()
-                    appState.showingCommandPalette = true
-                }
-                .keyboardShortcut(palette.0, modifiers: palette.1)
+                AOMSearchMenuItem(appState: appState, showMainWindow: { appDelegate.showMainWindow() })
                 Button("Customize Workspace…") {
                     appDelegate.showMainWindow()
                     appState.selectedMainTab = .home
@@ -184,11 +186,11 @@ struct AllOfMacOSApp: App {
         .handlesExternalEvents(matching: [])
 
         Settings {
-            SettingsView()
-                .scrollIndicators(.hidden)
-                .environmentObject(appState)
-                .accentColor(appState.accentColorChoice.color)
-                .tint(appState.accentColorChoice.color)
+            AOMAccentRoot(appState: appState) {
+                SettingsView()
+                    .scrollIndicators(.hidden)
+                    .environmentObject(appState)
+            }
         }
         // One toolbar row: the pane title sits at the leading edge as in
         // System Settings, instead of a centred title over an empty bar.

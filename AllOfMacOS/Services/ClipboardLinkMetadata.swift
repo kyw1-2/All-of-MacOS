@@ -230,7 +230,7 @@ final class ClipboardLinkMetadataStore {
     nonisolated static func loadImage(_ url: URL, loader: Loader) async -> CGImage? {
         guard let (data, response) = try? await loader(request(url, accept: "image/*"), imageByteLimit),
               let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
-              data.count < imageByteLimit,
+              !data.isEmpty, data.count < imageByteLimit, // 7.21: an empty 200 body logged ImageIO "0 bytes" errors
               (http.value(forHTTPHeaderField: "Content-Type") ?? "image/").lowercased().hasPrefix("image/"),
               let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
         let options: [CFString: Any] = [kCGImageSourceCreateThumbnailFromImageAlways: true,

@@ -51,7 +51,7 @@ final class ClipboardPreviewCache: @unchecked Sendable {
     private static func makeContent(for entry: ClipboardEntry) -> Content {
         var image: CGImage?
         var dimensions: String?
-        if let data = entry.imageData,
+        if let data = entry.imageData, !data.isEmpty,
            let source = CGImageSourceCreateWithData(data as CFData,
                 [kCGImageSourceShouldCache: false] as CFDictionary) {
             if let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],

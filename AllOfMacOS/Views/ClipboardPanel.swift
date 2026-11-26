@@ -547,7 +547,7 @@ final class ClipboardPanelController {
     }
 
     func editEntry(_ item: ClipboardEntry) {
-        if item.kind == .image, let data = item.imageData,
+        if item.kind == .image, let data = item.imageData, !data.isEmpty,
            let source = CGImageSourceCreateWithData(data as CFData, nil),
            let image = CGImageSourceCreateImageAtIndex(source, 0, nil) {
             let capture = CaptureHistoryEntry(image: image, kind: .area, capturedAt: item.createdAt,
@@ -1516,7 +1516,8 @@ struct ClipboardPanelView: View {
             let cardSide = min(240, max(100, geometry.size.height - (compact ? AOMSpace.x6 : AOMSpace.x10 + AOMSpace.x1)))
             Group {
                 if state.isSearchPending {
-                    ProgressView().controlSize(.small).frame(maxWidth: .infinity, maxHeight: .infinity)
+                    AOMDelayedProgress { ProgressView().controlSize(.small) }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if entries.isEmpty {
                     // The shelf's empty state: ContentUnavailableView's anatomy
                     // (symbol, title, one sentence, at most one action) sized
