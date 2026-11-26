@@ -1,3 +1,14 @@
+## [7.21.0] - 2026-11-26 — Defect sweep and a calmer, reference-driven design pass
+
+Ledger with evidence and the 26 references: `docs/design-7.21.md`.
+
+- **Launcher AI answers no longer go missing**: the last line Claude Code wrote just before exiting (often the final answer) was dropped, and the error text was read while another thread wrote it. A reply sent after the agent had quit could terminate AOM (SIGPIPE); it now fails gracefully.
+- **Lower idle CPU**: App Audio swept CoreAudio every 2 s whenever an app had a session, even a silent one (4–6 % CPU on this Mac with a waiting HomePod tap). Only playing sessions sweep every 2 s now; everything else every 6 s behind CoreAudio's own notifications.
+- **No more menu rebuilds on every click**: any change in the app (switching pages, typing in a search) rebuilt the whole main menu, which macOS 27 then re-sent to Spotlight twice (about 700 failed donations a day). The menu now updates only when the launcher shortcut changes.
+- **Empty images are skipped** instead of being decoded (link favicons with an empty reply logged ImageIO errors).
+- **Design** (Apple's Liquid Glass guidance, HIG, Linear, Raycast, Figma, Vercel, iStat Menus, Things, CleanShot): segmented controls show their selection with the system's neutral thumb instead of a solid accent bar (42 controls); Workspace's Now / All Tools moved to the toolbar; automation steps show their switch, options and drag grip on hover (a step that's off keeps its switch; right-click has the same menu); sidebar states like "Off" are plain text, capsules are kept for things that need you; Workspace tool rows use a quiet ⋯ instead of a blue chevron; links and files in Clipboard keep both ends ("developer.…/sidebars"); a fast Clipboard search no longer flashes a spinner.
+- UI snapshots on CI now record SwiftUI runtime issues per page.
+
 ## [7.20.0] - 2026-11-25 — Mouse navigation, device groups, faster lookups
 
 From the performance audit and the device/storage branch (`aom/device-groups-storage-shortcuts`, 4a770ad, a9991de).
