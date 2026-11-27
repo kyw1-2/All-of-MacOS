@@ -1,3 +1,17 @@
+## [7.22.0] - 2026-11-27 — Safer clipboard, meeting notes, and commercial-app polish
+
+From DeepSeek's 2026-11-26 report on Oracle (DaisyDisk, Screen Studio, TextExpander, Proxyman, Granola/MacWhisper and others), each claim checked against the code first. Ledger: `docs/design-7.22.md`.
+
+- **Clipboard secrets are hidden** (the report's security finding): an item that looks like an API key, token, private key or password showed its text on the shelf, in the stack, in launcher rows and on the Clipboard page. It now shows a lock and its length; Show or ⌥-click reveals it until the panel closes. Pasting still uses the full item.
+- **Items can expire**: Expire › In 1 Hour, Tomorrow, In a Week, After Pasting Once, or Never. Paste Once deletes the item right after the paste and clears the clipboard a minute later. Unpinned secrets leave history after a day (Clipboard › Privacy; Undo Delete brings them back).
+- **Search by meaning**: type `~` before your words on the shelf (Korean or English, on this Mac). Code clips are coloured.
+- **Meeting notes without a bot**: Record Meeting (Capture menu, the meeting alert's Join and Record, an action, or the offer when your microphone turns on during a calendar meeting) records your microphone and the call, writes a transcript on this Mac with Me / Others, and a summary with decisions and action items when Apple Intelligence is on. A red dot with the time shows in the menu bar while it records. Files: Documents › AOM Meetings.
+- **Recording Studio**: Cut Silences (Screen Studio's pause detection, non-destructive, Undo Cuts, 10 ms fades at cuts); the pointer is recorded at 60 Hz and smoothed with a One Euro filter; zoom can follow the pointer.
+- **Automation**: Run Scene action; Microphone turns on / off and Text appears on screen triggers (on-device text recognition, only while the screen changes).
+- **Typing**: Fix Korean/English Typing (dkssud ↔ 안녕) as an action and a text transform; snippet fields are asked in a small panel at the text cursor instead of the launcher.
+- **System Tools**: live download/upload with a 60-second graph in Network Info; Folder Sizes can show rings (DaisyDisk-style) as well as the map.
+- **Design**: cards have a hairline edge, pages use up to 1,180 pt of a wide window, page header marks are smaller, the menu bar panel uses the type scale.
+
 ## [7.21.1] - 2026-11-26 — Sidebar selection without SwiftUI faults
 
 - Choosing a page in the sidebar changed app state while SwiftUI was still drawing the list, so every launch and page switch logged dozens of "Publishing changes from within view updates" faults (77 at one 7.21.0 launch; traced with the fault backtraces to the sidebar selection → navigation → page activity). The selection now applies on the next run-loop turn.

@@ -316,7 +316,7 @@ struct RecordingExportEditor: View {
 
     private func cutSilences() {
         let base = exportClips
-        let options: AOMSilenceCutter.Options = [.gentle, .standard, .tight][min(2, max(0, silenceStrength))]
+        let options = [AOMSilenceCutter.Options.gentle, .standard, .tight][min(2, max(0, silenceStrength))]
         cuttingSilences = true
         Task { @MainActor in
             defer { cuttingSilences = false }

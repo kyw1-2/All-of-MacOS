@@ -20,10 +20,10 @@ final class MicrophoneActivityWatcher {
 
     init(onChange: @escaping (Bool) -> Void) { self.onChange = onChange }
 
-    private static var runningAddress = AudioObjectPropertyAddress(
+    private static let runningAddress = AudioObjectPropertyAddress(
         mSelector: kAudioDevicePropertyDeviceIsRunningSomewhere,
         mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
-    private static var defaultInputAddress = AudioObjectPropertyAddress(
+    private static let defaultInputAddress = AudioObjectPropertyAddress(
         mSelector: kAudioHardwarePropertyDefaultInputDevice,
         mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
 

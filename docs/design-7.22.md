@@ -45,7 +45,7 @@ for DaisyDisk, Electron sources for Screen Studio 4.1.0 and TextExpander 8.6, Ma
 - Studio: camera bubble hidden during silence (Screen Studio `hideDuringSilenceMs` 1388), hatched silence marks on a timeline, a zoom-range (slice) model, a smooth/precise slider.
 - System Tools: per-app traffic (nettop), file-type/age/duplicate overlays on the map.
 - Clipboard: a menu bar badge for items about to expire; a panel text search still matches inside a hidden secret (the card stays hidden).
-- Scenes: a "When" section in the scene editor; screen-text region selection.
+- Scenes: screen-text region selection. (The scene editor's 6 · Run by itself adds microphone / display / Wi-Fi / power / wake triggers.)
 - Typing fix: automatic suggestion (double space) — the action is explicit only.
 - UI: per-page layout archetypes (Studio / Instrument / Board / Flow / Form), removing the hero on non-Home pages, row density 34/44 → 30/38.
 

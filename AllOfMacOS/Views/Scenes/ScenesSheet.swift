@@ -140,6 +140,7 @@ struct SceneEditor: View {
     @ObservedObject private var windows = WindowManager.shared
     /// Read once when the editor opens, not on every keystroke (7.3 review).
     @State private var outputs: [AudioOutputDevice] = []
+    @State private var automationRevision = 0
 
     private static let keepAwakeChoices: [(String, Int?)] = [("Leave as it is", nil), ("1 hour", 60), ("2 hours", 120), ("4 hours", 240), ("Until turned off", 0)]
 
@@ -191,6 +192,21 @@ struct SceneEditor: View {
                 Section("5 · Quit apps (last)") {
                     appList($scene.quitApps, waits: false)
                     AOMEditorNote("Apps are asked to quit like ⌘Q: one with unsaved work asks you first.")
+                }
+                // 7.22 (DeepSeek 7.21 report §4.6): the scene runs by itself.
+                Section("6 · Run by itself") {
+                    let triggers = automationRevision >= 0 ? SceneAutomation.triggers(for: scene, in: AppState.current?.currentPreset.triggers ?? []) : []
+                    ForEach(triggers) { trigger in
+                        Label(trigger.input.displayName, systemImage: "bolt").foregroundStyle(trigger.isEnabled ? AOMColor.text : AOMColor.textSecondary)
+                    }
+                    Menu("Add a Trigger") {
+                        ForEach(SceneAutomation.choices, id: \.title) { choice in
+                            Button(choice.title) { SceneAutomation.add(choice.kind, for: scene); automationRevision += 1 }
+                        }
+                    }
+                    .fixedSize()
+                    .disabled(scene.name.trimmingCharacters(in: .whitespaces).isEmpty)
+                    AOMEditorNote("Adds an automation that runs this scene; change or remove it in Automation › Other Triggers. Save the scene first if it is new.")
                 }
                 if !scene.problems.isEmpty {
                     Section {
@@ -259,5 +275,39 @@ struct SceneEditor: View {
             }
             .fixedSize()
         }
+    }
+}
+
+
+/// 7.22: automations that run a scene (Run Scene action), made from the
+/// scene editor.
+@MainActor
+enum SceneAutomation {
+    struct Choice { let title: String; let kind: SystemTriggerKind }
+    static let choices: [Choice] = [
+        Choice(title: "When the microphone turns on", kind: .microphoneInUse(active: true)),
+        Choice(title: "When the microphone turns off", kind: .microphoneInUse(active: false)),
+        Choice(title: "When a display connects or disconnects", kind: .displayChanged),
+        Choice(title: "When Wi-Fi connects", kind: .wifiConnected(ssid: "")),
+        Choice(title: "When power is connected", kind: .powerSourceChanged(ac: true)),
+        Choice(title: "When the Mac wakes", kind: .systemDidWake),
+    ]
+
+    static func triggers(for scene: SceneProfile, in triggers: [Trigger]) -> [Trigger] {
+        triggers.filter { trigger in
+            guard case .systemEvent = trigger.input else { return false }
+            return trigger.actions.contains { $0.actionType == .runScene && $0.parameters.sceneID == scene.id.uuidString }
+        }
+    }
+
+    static func add(_ kind: SystemTriggerKind, for scene: SceneProfile) {
+        guard let state = AppState.current else { return }
+        var parameters = ActionParameters()
+        parameters.sceneID = scene.id.uuidString
+        parameters.sceneName = scene.name
+        var trigger = Trigger(name: "Scene: \(scene.name)", input: .systemEvent(kind))
+        trigger.actions = [TriggerAction(actionType: .runScene, parameters: parameters)]
+        state.addTrigger(trigger)
+        GestureHUD.shared.show(title: "Automation Added", detail: "\(scene.name) runs \(kind.displayName.lowercased()).")
     }
 }

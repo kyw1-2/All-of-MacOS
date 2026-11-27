@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// 7.22 (DeepSeek 7.21 report §4.1): what a clipboard surface draws in place

@@ -120,8 +120,8 @@ enum HangulLayoutConverter {
                 } else if let f = final, medial != nil {
                     // The final moves to start the next syllable (a compound
                     // final gives up only its second part).
-                    if let (keep, move) = splitFinals[f] {
-                        final = keep; emit(); initial = move
+                    if let pair = splitFinals[f] {
+                        final = pair.0; emit(); initial = pair.1
                     } else {
                         final = nil; emit(); initial = f
                     }
@@ -179,7 +179,7 @@ enum HangulLayoutConverter {
 
     private static func keys(for jamo: Character) -> String {
         if let key = jamoToKey[jamo] { return String(key) }
-        if let (a, b) = splitMedials[jamo] ?? splitFinals[jamo] { return keys(for: a) + keys(for: b) }
+        if let pair = splitMedials[jamo] ?? splitFinals[jamo] { return keys(for: pair.0) + keys(for: pair.1) }
         return String(jamo)
     }
 }
@@ -192,6 +192,7 @@ enum KeyboardLayoutFixer {
     static func run(isCancelled: @escaping () -> Bool, completion: @escaping (Bool, String?) -> Void) {
         guard AXIsProcessTrusted() else { completion(false, "Fixing typing needs Accessibility permission"); return }
         SelectedTextReader.read { selected in
+          MainActor.assumeIsolated {
             if let selected, !selected.isEmpty {
                 apply(selected, isCancelled: isCancelled, completion: completion)
                 return
@@ -200,10 +201,13 @@ enum KeyboardLayoutFixer {
             guard SyntheticInput.key(123, flags: [.maskAlternate, .maskShift]) else { completion(false, "Could not select the last word"); return }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
                 SelectedTextReader.read { word in
-                    guard let word, !word.isEmpty else { completion(false, "No text to fix"); return }
-                    apply(word, isCancelled: isCancelled, completion: completion)
+                    MainActor.assumeIsolated {
+                        guard let word, !word.isEmpty else { completion(false, "No text to fix"); return }
+                        apply(word, isCancelled: isCancelled, completion: completion)
+                    }
                 }
             }
+          }
         }
     }
 
@@ -213,8 +217,10 @@ enum KeyboardLayoutFixer {
         let converted = HangulLayoutConverter.convert(text)
         guard converted != text else { completion(true, "Nothing to convert"); return }
         ExtendedActions.pasteString(converted) { ok in
-            if ok { switchInputSource(korean: direction == .toHangul) }
-            completion(ok, nil)
+            MainActor.assumeIsolated {
+                if ok { switchInputSource(korean: direction == .toHangul) }
+                completion(ok, nil)
+            }
         }
     }
 

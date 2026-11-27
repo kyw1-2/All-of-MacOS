@@ -12,8 +12,8 @@ struct NetworkThroughputGauge: View {
                 Spacer()
                 Text("Last 60 s").font(AOMFont.caption).foregroundStyle(AOMColor.textTertiary)
             }
+            let samples = throughput.samples
             Canvas { context, size in
-                let samples = throughput.samples
                 guard samples.count > 1 else { return }
                 let peak = max(1, samples.map { max($0.received, $0.sent) }.max() ?? 1)
                 func path(_ value: (NetworkThroughput.Sample) -> Double) -> Path {

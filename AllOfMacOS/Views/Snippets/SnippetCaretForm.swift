@@ -86,7 +86,7 @@ final class SnippetCaretForm: ObservableObject {
         close()
         self.request = request
         values = Self.initialValues(request.fields)
-        let panel = SnippetCaretPanel(contentRect: CGRect(x: 0, y: 0, width: 340, height: 120))
+        let panel = SnippetCaretPanel.make(contentRect: CGRect(x: 0, y: 0, width: 340, height: 120))
         let host = NSHostingView(rootView: SnippetCaretFormView(form: self))
         panel.contentView = host
         self.panel = panel
@@ -198,9 +198,15 @@ final class SnippetCaretForm: ObservableObject {
 
 /// Floats over the document, takes keys, and never activates AOM.
 final class SnippetCaretPanel: NSPanel {
-    init(contentRect: CGRect) {
-        super.init(contentRect: contentRect, styleMask: [.nonactivatingPanel, .titled, .fullSizeContentView, .utilityWindow],
-                   backing: .buffered, defer: false)
+    static func make(contentRect: CGRect) -> SnippetCaretPanel {
+        let panel = SnippetCaretPanel(contentRect: contentRect,
+                                      styleMask: [.nonactivatingPanel, .titled, .fullSizeContentView, .utilityWindow],
+                                      backing: .buffered, defer: false)
+        panel.configure()
+        return panel
+    }
+
+    private func configure() {
         titleVisibility = .hidden
         titlebarAppearsTransparent = true
         standardWindowButton(.closeButton)?.isHidden = true
