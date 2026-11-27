@@ -126,6 +126,31 @@ enum CaptureMenu {
             }
         }
 
+        // 7.22: meeting recording (microphone + other apps, transcript on this Mac).
+        menu.addItem(.separator())
+        let meetings = MeetingRecorder.shared
+        let meetingTitle: String
+        switch meetings.phase {
+        case .idle: meetingTitle = "Record Meeting"
+        case .recording: meetingTitle = "Stop Meeting Recording"
+        case .transcribing: meetingTitle = "Writing Transcript…"
+        case .summarizing: meetingTitle = "Writing Summary…"
+        }
+        let meetingItem = action(meetingTitle, meetings.isRecording ? "stop.circle" : "waveform.badge.mic", shortcut: nil) {
+            MeetingRecorder.shared.toggle()
+        }
+        meetingItem.isEnabled = meetings.phase == .idle || meetings.isRecording
+        menu.addItem(meetingItem)
+        if let latest = meetings.recordings.first {
+            menu.addItem(action("Open Last Meeting Notes", "doc.text", shortcut: nil) {
+                let folder = MeetingRecorder.shared.folder(of: latest)
+                let summary = folder.appendingPathComponent("summary.md"), transcript = folder.appendingPathComponent("transcript.md")
+                let file = FileManager.default.fileExists(atPath: summary.path) ? summary : transcript
+                if FileManager.default.fileExists(atPath: file.path) { NSWorkspace.shared.open(file) }
+                else { NSWorkspace.shared.activateFileViewerSelecting([folder]) }
+            })
+        }
+
         menu.addItem(.separator())
         menu.addItem(action(CaptureMenuCommand.measureScreen.title(), CaptureMenuCommand.measureScreen.symbol,
                             shortcut: shortcuts.shortcut(for: .measureScreen)) {

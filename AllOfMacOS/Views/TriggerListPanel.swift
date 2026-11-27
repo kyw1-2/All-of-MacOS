@@ -801,7 +801,7 @@ struct AddTriggerSheet: View {
                 return TriggerValidation.systemProblem(for: kind) == nil
             }
             if ["batteryBelow", "batteryAbove"].contains(systemEventKind) { return (1...99).contains(eventNumber) }
-"            if systemEventKind == "file" { return TriggerSystemPaths.normalized(eventFilter) != nil }
+            if systemEventKind == "file" { return TriggerSystemPaths.normalized(eventFilter) != nil }
             if systemEventKind == "screenText" {
                 guard case .systemEvent(let kind) = otherTriggerInput() else { return false }
                 return TriggerValidation.systemProblem(for: kind) == nil

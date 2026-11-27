@@ -212,6 +212,11 @@ final class MeetingAlerts: NSObject {
             let view = MeetingAlertView(event: event, join: event.meetingLink == nil ? nil : { [weak self] in
                 if let link = event.meetingLink { NSWorkspace.shared.open(link) }
                 self?.closeAndContinue()
+            }, record: MeetingRecorder.shared.phase != .idle ? nil : { [weak self] in
+                // 7.22: Granola's flow — join (when there is a link) and record.
+                if let link = event.meetingLink { NSWorkspace.shared.open(link) }
+                MeetingRecorder.shared.start(title: event.title)
+                self?.closeAndContinue()
             }, snooze: { [weak self] in
                 self?.snoozed[Self.key(event)] = Date().addingTimeInterval(60)
                 self?.closeAndContinue()
@@ -243,6 +248,7 @@ final class MeetingAlertPanel: NSPanel {
 struct MeetingAlertView: View {
     let event: PaletteSchedule.Event
     let join: (() -> Void)?
+    var record: (() -> Void)? = nil
     let snooze: () -> Void
     let dismiss: () -> Void
 
@@ -264,6 +270,10 @@ struct MeetingAlertView: View {
                 HStack(spacing: 12) {
                     if let join {
                         Button("Join", action: join).keyboardShortcut(.defaultAction).controlSize(.large)
+                    }
+                    if let record {
+                        Button(join == nil ? "Record" : "Join and Record", action: record).controlSize(.large)
+                            .help("Records your microphone and the call's sound, then writes a transcript on this Mac")
                     }
                     Button("Remind in 1 Minute", action: snooze).controlSize(.large)
                     Button("Dismiss", action: dismiss).keyboardShortcut(.cancelAction).controlSize(.large)

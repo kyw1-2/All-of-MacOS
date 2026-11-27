@@ -116,7 +116,9 @@
 	<key>NSMainStoryboardFile</key>
 	<string></string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>AOM records microphone audio only when microphone recording is selected and you start a screen recording.</string>
+	<string>AOM records microphone audio only when you start a screen recording with the microphone selected, or start a meeting recording.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>AOM writes a transcript of a meeting you record, using speech recognition on this Mac only. The audio is not sent anywhere.</string>
 	<key>NSNetworkVolumesUsageDescription</key>
 	<string>All of MacOS works with files on network drives only in folders you choose, such as a folder you add to Folder Rules.</string>
 	<key>NSPrincipalClass</key>
