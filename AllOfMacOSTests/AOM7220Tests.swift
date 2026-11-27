@@ -100,7 +100,8 @@ final class AOM7220AutomationTests: XCTestCase {
     func testLatinFromHangul() {
         XCTAssertEqual(HangulLayoutConverter.toLatin("안녕"), "dkssud")
         XCTAssertEqual(HangulLayoutConverter.toLatin("값"), "rkqt")
-        XCTAssertEqual(HangulLayoutConverter.toLatin("꽃"), "Rhkc")
+        XCTAssertEqual(HangulLayoutConverter.toLatin("꽃"), "Rhc")
+        XCTAssertEqual(HangulLayoutConverter.toLatin("과"), "rhk")
         XCTAssertEqual(HangulLayoutConverter.toLatin("의자"), "dmlwk")
     }
 
