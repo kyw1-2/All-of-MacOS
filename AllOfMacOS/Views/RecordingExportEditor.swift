@@ -46,6 +46,10 @@ struct RecordingExportEditor: View {
     static var exporting: Set<URL> = []
     @State private var resultURL: URL?
     @State private var clips: [AOMStudioClip] = []
+    @State private var clipsBeforeSilenceCut: [AOMStudioClip]?
+    @State private var cuttingSilences = false
+    @State private var silenceStrength = 1
+    @State private var followCursor = false
     @State private var outputAspect: AOMStudioAspect = .source
     @State private var outputResolution: AOMStudioResolution = .source
     @State private var cursorStyle: AOMStudioCursorStyle = .arrow
@@ -264,6 +268,21 @@ struct RecordingExportEditor: View {
                     Button("Use Only Selected Range") { clips = [AOMStudioClip(start: start, end: end)]; saveProject() }.disabled(!validRange)
                 }
             }
+            // 7.22 (DeepSeek 7.21 report §4.3): Screen Studio's remove silences.
+            AOMSettingRow("Pauses", help: "Finds the quiet stretches in the sound and cuts them out of the sequence, keeping a little around speech. The movie itself is not changed; Undo Cuts brings the sequence back.") {
+                HStack(spacing: AOMSpace.x2) {
+                    Picker("Cut", selection: $silenceStrength) {
+                        Text("Long Pauses").tag(0); Text("Pauses").tag(1); Text("Every Gap").tag(2)
+                    }
+                    .labelsHidden().pickerStyle(.menu).fixedSize()
+                    Button(cuttingSilences ? "Listening…" : "Cut Silences") { cutSilences() }
+                        .disabled(cuttingSilences || isExporting || muteAudio || !validRange)
+                    Button("Undo Cuts") {
+                        if let previous = clipsBeforeSilenceCut { clips = previous; clipsBeforeSilenceCut = nil; saveProject() }
+                    }
+                    .disabled(clipsBeforeSilenceCut == nil)
+                }
+            }
             AOMSettingRow("Preview") {
                 HStack(spacing: AOMSpace.x2) {
                     Button("Preview Sequence") { previewSequence() }
@@ -291,6 +310,32 @@ struct RecordingExportEditor: View {
                         .help("Split this range where the preview's playhead is")
                     AOMIconButton("trash", label: "Remove Range", role: .destructive) { clips.remove(at: index); saveProject() }
                 }
+            }
+        }
+    }
+
+    private func cutSilences() {
+        let base = exportClips
+        let options: AOMSilenceCutter.Options = [.gentle, .standard, .tight][min(2, max(0, silenceStrength))]
+        cuttingSilences = true
+        Task { @MainActor in
+            defer { cuttingSilences = false }
+            do {
+                let levels = try await AOMSilenceCutter.levels(of: AOMStudioSourceLink.resolve(source))
+                let silences = AOMSilenceCutter.silentRanges(levels: levels, options: options)
+                let next = AOMSilenceCutter.removing(silences, from: base)
+                let removed = AOMSilenceCutter.removedSeconds(silences, from: base)
+                guard removed >= 0.05, !next.isEmpty else {
+                    report("No pauses long enough to cut were found.", tone: .neutral)
+                    return
+                }
+                clipsBeforeSilenceCut = clips
+                clips = next
+                saveProject()
+                let count = max(0, next.count - base.count)
+                report("Cut \(count) pause\(count == 1 ? "" : "s"), \(Self.clock(removed)) shorter. Preview Sequence to check it.", tone: .success)
+            } catch {
+                report(error.localizedDescription, tone: .warning)
             }
         }
     }
@@ -323,6 +368,10 @@ struct RecordingExportEditor: View {
             sliderRow("Focus Y", value: $focusY, in: 0...1, label: Self.percent(focusY))
             sliderRow("Zoom-transition blur", value: $motionBlurRadius, in: 0...8, label: String(format: "%.1f", motionBlurRadius))
                 .disabled(isExporting)
+            if editableCursorTrack != nil {
+                AOMToggleRow("Follow the pointer while zoomed", detail: "The zoomed view pans with the cursor", isOn: $followCursor)
+                    .disabled(isExporting)
+            }
             AOMSettingRow("Keyframes") {
                 HStack(spacing: AOMSpace.x2) {
                     Button("Add Keyframe") {
@@ -416,7 +465,7 @@ struct RecordingExportEditor: View {
     private var studioSettings: AOMStudioSettings {
         AOMStudioSettings(keyframes: zoomKeyframes, backdrop: .none,
                           paddingFraction: 0, motionBlurRadius: motionBlurRadius,
-                          cursorPoints: includeSmoothedCursor ? (editableCursorTrack?.points ?? []) : [],
+                          cursorPoints: includeSmoothedCursor ? AOMOneEuroFilter.filter(editableCursorTrack?.points ?? []) : [],
                           cursorOverlaySize: cursorSize, clicks: editableCursorTrack?.clicks ?? [],
                           showClickRipples: showRipples, cursorStyle: cursorStyle,
                           keystrokes: keyEvents.filter { $0.isValid }.sorted { $0.time < $1.time }, showKeystrokes: showKeys,
@@ -424,7 +473,8 @@ struct RecordingExportEditor: View {
                           cameraSize: cameraSize, cameraX: cameraX, cameraY: cameraY, cameraRoundness: cameraRoundness,
                           aspect: outputAspect, resolution: outputResolution, keystrokeStyle: keyStyle,
                           background: background, clickStyle: clickStyle,
-                          cursorHighlight: highlightOn ? highlight : nil)
+                          cursorHighlight: highlightOn ? highlight : nil,
+                          followsCursor: followCursor ? true : nil)
     }
 
     // MARK: - Click marks and cursor highlight (3.3.3, C06)
@@ -817,6 +867,7 @@ struct RecordingExportEditor: View {
 
     private func restore(_ settings: AOMStudioSettings) {
         zoomKeyframes = settings.keyframes
+        followCursor = settings.followsCursor == true
         // Projects saved before 3.3.3 carry a single-colour backdrop instead.
         background = settings.background ?? AOMVideoBackground(legacy: settings.backdrop, padding: settings.paddingFraction)
         if background.kind == .wallpaper, background.imagePath.map({ !FileManager.default.isReadableFile(atPath: $0) }) ?? true {

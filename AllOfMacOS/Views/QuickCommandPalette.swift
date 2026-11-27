@@ -838,7 +838,7 @@ struct QuickCommandPalette: View {
     private func clipboardItems() -> [PaletteItem] {
         clipboardStore.entries.prefix(20).map { entry in
             var item = PaletteItem(
-                id: "clipboard.\(entry.id.uuidString)", title: entry.title,
+                id: "clipboard.\(entry.id.uuidString)", title: ClipboardSecretDisplay.title(entry),
                 subtitle: [entry.sourceName, AOMRelativeTime.string(entry.lastCopiedAt)].compactMap { $0 }.joined(separator: " · "),
                 icon: entry.kind.symbol, section: .clipboard,
                 primary: PaletteAction(title: "Copy", symbol: "doc.on.doc") {
@@ -2064,7 +2064,7 @@ struct QuickCommandPalette: View {
                 secondaries.append(PaletteAction(title: "Compare With…", symbol: "arrow.left.arrow.right.square",
                                                  effect: .push(.clipboardCompare(entry.id))) {})
             }
-            var item = screenRow("cliphistory.\(entry.id.uuidString)", entry.title,
+            var item = screenRow("cliphistory.\(entry.id.uuidString)", ClipboardSecretDisplay.title(entry),
                            [entry.sourceName, AOMRelativeTime.string(entry.lastCopiedAt)].compactMap { $0 }.joined(separator: " · "),
                            icon: entry.kind.symbol, group: nil, section: .clipboard,
                            primary: PaletteAction(title: pasteTitle, symbol: "doc.on.clipboard") {

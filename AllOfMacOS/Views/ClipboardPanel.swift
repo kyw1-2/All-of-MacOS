@@ -406,6 +406,7 @@ final class ClipboardPanelController {
         state.setCommandHeld(false)
         state.visibleCardIDs = []
         if !state.suggestedIDs.isEmpty { state.suggestedIDs = [] }
+        if !state.revealedSecrets.isEmpty { state.revealedSecrets = [] }
         // Releases deferred work: copy-time reordering and image OCR results.
         store.defersBackgroundUpdates = false
     }
@@ -1555,6 +1556,8 @@ struct ClipboardPanelView: View {
                     let suggested = Set(state.suggestedIDs)
                     let boards = store.boards
                     let linkCards = preferences.networkPreviews && preferences.linkCards
+                    let conceals = preferences.concealSecrets
+                    let revealed = state.revealedSecrets
                     ScrollViewReader { proxy in
                         ScrollView(.horizontal, showsIndicators: false) {
                             LazyHStack(spacing: spacing) {
@@ -1570,6 +1573,8 @@ struct ClipboardPanelView: View {
                                                       isSuggested: suggested.contains(entry.id),
                                                       boards: boards,
                                                       linkCards: linkCards,
+                                                      concealed: conceals && !revealed.contains(entry.id)
+                                                        && ClipboardIntelligence.shared.itemClass(entry) == .secret,
                                                       store: store, state: state, controller: controller)
                                         .equatable()
                                         .id(entry.id)
@@ -1651,6 +1656,9 @@ private struct ClipboardCardView: View, Equatable {
     let boards: [ClipboardPinboard]
     /// Both link-card switches are on: link cards may look pages up.
     let linkCards: Bool
+    /// 7.22: the item looks like a credential and is not revealed: its text
+    /// is replaced by a lock until Show (or ⌥-click) reveals it.
+    let concealed: Bool
     // Action targets only; deliberately not observed.
     let store: ClipboardStore
     let state: ClipboardPanelState
@@ -1674,6 +1682,7 @@ private struct ClipboardCardView: View, Equatable {
             && lhs.quickNumber == rhs.quickNumber && lhs.showsQuickNumber == rhs.showsQuickNumber
             && lhs.searchActive == rhs.searchActive && lhs.searchQuery == rhs.searchQuery && lhs.isPreviewing == rhs.isPreviewing
             && lhs.isSuggested == rhs.isSuggested && lhs.boards == rhs.boards && lhs.linkCards == rhs.linkCards
+            && lhs.concealed == rhs.concealed
     }
 
     private var accent: Color { AppMetadataCache.shared.bannerColor(for: entry.sourceBundleID, name: entry.sourceName) }
@@ -1694,6 +1703,16 @@ private struct ClipboardCardView: View, Equatable {
     }
     private var appIcon: NSImage? {
         AppMetadataCache.shared.icon(for: entry.sourceBundleID)
+    }
+
+    /// 7.22: " · paste once" or " · 42 min left" after the time.
+    nonisolated static func lifetimeSuffix(_ entry: ClipboardEntry, now: Date) -> String {
+        if entry.pastesOnce { return " · paste once" }
+        guard let expiry = entry.expiresAt else { return "" }
+        let left = max(0, expiry.timeIntervalSince(now))
+        if left < 3_600 { return " · \(max(1, Int(left / 60))) min left" }
+        if left < 86_400 { return " · \(Int(left / 3_600)) h left" }
+        return " · \(Int(left / 86_400)) d left"
     }
 
     /// The title `ClipboardEntry.captured` derives (first non-empty line,
@@ -1729,7 +1748,8 @@ private struct ClipboardCardView: View, Equatable {
                     }
                     // "16 minutes ago", refreshed while the shelf is open.
                     TimelineView(.everyMinute) { context in
-                        Text(ClipboardRelativeDate.string(entry.lastCopiedAt, now: context.date))
+                        Text(ClipboardRelativeDate.string(entry.lastCopiedAt, now: context.date)
+                             + Self.lifetimeSuffix(entry, now: context.date))
                             .font(compact ? Font.caption : AOMFont.callout).opacity(0.85).lineLimit(1)
                     }
                 }
@@ -1759,7 +1779,7 @@ private struct ClipboardCardView: View, Equatable {
                 else { AOMColor.raised }
                 previewContent
                     .overlay(alignment: .bottomLeading) {
-                        if let ocr = entry.recognizedText, !searchQuery.isEmpty,
+                        if !concealed, let ocr = entry.recognizedText, !searchQuery.isEmpty,
                            ClipboardSearchQuery(searchQuery).highlightValues.contains(where: { ocr.localizedStandardContains($0) }) {
                             Text(ClipboardSearchQuery(searchQuery).highlighted(ocr, limit: 220))
                                 .font(AOMFont.caption).lineLimit(3).padding(AOMSpace.x1 + AOMSpace.x0_5)
@@ -1887,7 +1907,8 @@ private struct ClipboardCardView: View, Equatable {
             beginTitleEdit()
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(entry.kind.displayName): \(entry.title), \(entry.sourceName ?? "Unknown app")")
+        .accessibilityLabel(concealed ? "Hidden secret item, \(entry.sourceName ?? "Unknown app")"
+                            : "\(entry.kind.displayName): \(entry.title), \(entry.sourceName ?? "Unknown app")")
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])
         .accessibilityIdentifier("PasteStyleClipCard_\(entry.id.uuidString)")
     }
@@ -1905,7 +1926,11 @@ private struct ClipboardCardView: View, Equatable {
 
     @ViewBuilder
     private var previewContent: some View {
-        if compact && side < 150 {
+        if concealed {
+            ClipboardConcealedContent(compact: compact || side < 150, length: entry.text?.count) {
+                state.revealedSecrets.insert(entry.id)
+            }
+        } else if compact && side < 150 {
             if entry.kind == .color, let hex = entry.text {
                 RoundedRectangle(cornerRadius: AOMRadius.keycap, style: .continuous)
                     .fill(Color(hex: hex) ?? .clear)
@@ -2075,6 +2100,27 @@ private struct ClipboardCardView: View, Equatable {
         Button("Delete\(suffix)", role: .destructive) {
             if many { state.pendingDeletion = targets } else { controller.delete(targets) }
         }.keyboardShortcut(.delete, modifiers: [])
+        // 7.22: per-item lifetime (Paste Once, an hour, tomorrow…).
+        Menu("Expire") {
+            ForEach(ClipboardStore.Lifetime.allCases) { lifetime in
+                Button {
+                    let ids = targets
+                    store.setLifetime(lifetime, entryIDs: ids)
+                    state.status = ClipboardPanelState.lifetimeStatus(lifetime, count: ids.count)
+                } label: {
+                    let current = !many && ClipboardPanelState.lifetime(of: entry) == lifetime
+                    Label(lifetime.title, systemImage: current ? "checkmark" : "")
+                        .labelStyle(.titleAndIcon)
+                }
+            }
+        }
+        if ClipboardIntelligence.shared.itemClass(entry) == .secret {
+            if concealed {
+                Button("Show Secret") { state.revealedSecrets.insert(entry.id) }
+            } else if ClipboardPreferences.shared.concealSecrets {
+                Button("Hide Secret") { state.revealedSecrets.remove(entry.id) }
+            }
+        }
         Divider()
         Menu(many ? "Pin \(selectionCount) Items" : (entry.pinboardIDs.isEmpty ? "Pin" : "Pinboards")) {
             ForEach(boards) { board in

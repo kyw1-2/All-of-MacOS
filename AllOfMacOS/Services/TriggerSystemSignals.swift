@@ -39,6 +39,11 @@ enum SystemSignal: Equatable {
     case variable(name: String, value: String)
     /// Pointer position in AppKit screen coordinates (origin bottom-left).
     case pointer(CGPoint)
+    /// 7.22: the default input device started or stopped running (a change,
+    /// never the first reading).
+    case microphone(active: Bool)
+    /// 7.22: a watched text was not on screen at the last check and now is.
+    case screenTextAppeared(text: String)
 }
 
 /// The independent OS observers a set of triggers needs. A preset only pays for
@@ -49,12 +54,17 @@ enum SignalSource: Hashable {
     case sleepWake, appFocus, screensaver, space, battery, wifi, usb, bluetooth
     case inputSource, audioOutput, clipboard, variables, pointer
     case files(Set<String>)
+    case microphone
+    /// The texts to watch for, checked every `interval` seconds.
+    case screenText(Set<String>, interval: Int)
 
     /// The sources required by a collection of trigger kinds.
     static func needs(for kinds: [SystemTriggerKind]) -> Set<SignalSource> {
         var out = Set<SignalSource>()
         var paths = Set<String>()
         var hidFilters = Set<GenericHIDFilter>()
+        var screenTexts = Set<String>()
+        var screenInterval = SystemTriggerKind.screenTextIntervalRange.upperBound
         for kind in kinds {
             switch kind {
             case .hidInput(let vendor, let product, _, _, _, _):
@@ -77,10 +87,17 @@ enum SignalSource: Hashable {
             case .screenCornerHover, .screenEdgeHover: out.insert(.pointer)
             case .fileDidChange(let path):
                 if let normalized = TriggerSystemPaths.normalized(path) { paths.insert(normalized) }
+            case .microphoneInUse: out.insert(.microphone)
+            case .screenTextAppears(let text, let interval):
+                let wanted = ScreenTextWatchSet.normalized(text)
+                guard !wanted.isEmpty else { break }
+                screenTexts.insert(wanted)
+                screenInterval = min(screenInterval, max(SystemTriggerKind.screenTextIntervalRange.lowerBound, interval))
             default: break
             }
         }
         if !paths.isEmpty { out.insert(.files(paths)) }
+        if !screenTexts.isEmpty { out.insert(.screenText(screenTexts, interval: screenInterval)) }
         if !hidFilters.isEmpty { out.insert(.hid(hidFilters)) }
         return out
     }
@@ -161,6 +178,9 @@ enum SystemSignalMatcher {
              (.bluetoothDisconnected(let f), .bluetooth(let n, false)): return nameMatches(f, n)
         case (.fileDidChange(let path), .fileChanged(let changed)):
             return TriggerSystemPaths.normalized(path) == changed
+        case (.microphoneInUse(let wanted), .microphone(let active)): return wanted == active
+        case (.screenTextAppears(let text, _), .screenTextAppeared(let seen)):
+            return ScreenTextWatchSet.normalized(text) == seen
         default: return false
         }
     }
@@ -329,6 +349,8 @@ final class LiveSystemSignalProvider: SystemSignalProvider {
     private var clipboardSink: AnyCancellable?
     private var pointerMonitors: [Any] = []
     private var lastVariableSnapshot: [String: String] = [:]
+    private var microphoneWatcher: MicrophoneActivityWatcher?
+    private var screenTextWatcher: ScreenTextWatcher?
 
     func start(_ needs: Set<SignalSource>, emit: @escaping (SystemSignal) -> Void) {
         stop()
@@ -357,6 +379,14 @@ final class LiveSystemSignalProvider: SystemSignalProvider {
             case .variables: observeVariables()
             case .pointer: observePointer()
             case .files(let paths): paths.forEach(watch)
+            case .microphone:
+                let watcher = MicrophoneActivityWatcher { [weak self] in self?.send(.microphone(active: $0)) }
+                microphoneWatcher = watcher; watcher.start()
+            case .screenText(let texts, let interval):
+                let watcher = ScreenTextWatcher(texts: texts, interval: TimeInterval(interval)) { [weak self] in
+                    self?.send(.screenTextAppeared(text: $0))
+                }
+                screenTextWatcher = watcher; watcher.start()
             }
         }
     }
@@ -388,6 +418,8 @@ final class LiveSystemSignalProvider: SystemSignalProvider {
         fileWatchers.values.forEach { $0.stop() }; fileWatchers.removeAll()
         clipboardSink = nil
         pointerMonitors.forEach(NSEvent.removeMonitor); pointerMonitors.removeAll()
+        microphoneWatcher?.stop(); microphoneWatcher = nil
+        screenTextWatcher?.stop(); screenTextWatcher = nil
         emit = nil
     }
 

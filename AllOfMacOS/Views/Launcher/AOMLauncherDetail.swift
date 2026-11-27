@@ -57,6 +57,10 @@ struct AOMLauncherClipDetail: View {
     }
 
     private var content: AOMPasteCardModel.ContentKind {
+        // 7.22: a credential shows as a lock in the launcher too.
+        if ClipboardSecretDisplay.conceals(entry) {
+            return .text(body: ClipboardSecretDisplay.rowText(entry), charCount: entry.text?.count ?? 0)
+        }
         switch entry.kind {
         case .text:
             let text = entry.previewText

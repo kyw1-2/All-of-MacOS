@@ -237,6 +237,19 @@ struct ClipboardSettingsView: View {
     private var privacySection: some View {
         AOMSection("Privacy & storage",
                    help: "History is encrypted on this Mac with a key stored in your login Keychain. AOM does not upload clipboard contents or sync them to an account.") {
+            AOMToggleRow("Hide items that look like passwords or keys",
+                         help: "Cards, the stack, the launcher and the Clipboard page show a lock instead of the text of an item that looks like an API key, token, private key or password. Show (or ⌥-click) reveals it until the panel closes. Pasting still uses the full item. This guards the screen, not the stored data.",
+                         isOn: $preferences.concealSecrets)
+            AOMSettingRow("Delete unpinned secrets after",
+                          help: "Items that look like a credential leave history sooner than other items. Pinned items are kept. Deleted items can be restored with Undo Delete until you quit. Any item can also be set to expire, or to be deleted after one paste, from its Expire menu.") {
+                Picker("Delete unpinned secrets after", selection: Binding(
+                    get: { store.settings.secretLifetimeHours },
+                    set: { store.settings.secretLifetimeHours = $0 })) {
+                    Text("1 Hour").tag(1); Text("8 Hours").tag(8); Text("1 Day").tag(24)
+                    Text("1 Week").tag(24 * 7); Text("With other history").tag(0)
+                }
+                .pickerStyle(.menu)
+            }
             AOMToggleRow("Show clipboard windows in screen sharing and recording",
                          help: "When disabled, AOM requests macOS window capture exclusion. Some capture apps may ignore this policy; test with your sharing app before displaying sensitive clips.",
                          isOn: $preferences.showInScreenCapture)

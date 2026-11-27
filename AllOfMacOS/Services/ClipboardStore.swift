@@ -21,6 +21,14 @@ final class ClipboardStore: ObservableObject {
         /// decode (a missing key must never reset the whole struct).
         var searchAllLists: Bool?
         var singlePinboard: Bool?
+        /// 7.22: unpinned items that look like a credential leave history
+        /// after this many hours (0 keeps them as long as other history).
+        /// Optional so older settings decode; nil means 24 hours.
+        var secretLifetime: Int?
+        var secretLifetimeHours: Int {
+            get { min(24 * 30, max(0, secretLifetime ?? 24)) }
+            set { secretLifetime = min(24 * 30, max(0, newValue)) }
+        }
 
         /// Paste: a search from a pinboard looks through every list, not only
         /// the pinboard on screen. Typed `board:` filters still narrow it.
@@ -911,12 +919,23 @@ final class ClipboardStore: ObservableObject {
     /// The unpinned items that `limits` removes, oldest-copied last: first
     /// everything past the age limit, then the oldest of the rest until both
     /// the item and storage limits hold. Pinned items are never included.
-    nonisolated static func removalPlan(_ entries: [ClipboardEntry], limits: Settings, now: Date) -> [UUID] {
+    nonisolated static func removalPlan(_ entries: [ClipboardEntry], limits: Settings, now: Date,
+                                        isSecret: ((ClipboardEntry) -> Bool)? = nil) -> [UUID] {
         var removed: [UUID] = []
         var kept: [ClipboardEntry] = []
         let cutoff = limits.retentionDays > 0 ? now.addingTimeInterval(-Double(limits.retentionDays) * 86_400) : nil
+        let secretCutoff = limits.secretLifetimeHours > 0 ? now.addingTimeInterval(-Double(limits.secretLifetimeHours) * 3_600) : nil
+        // 7.22: an item's own expiry applies even on a pinboard — the user set it.
+        for entry in entries where !entry.pinboardIDs.isEmpty && entry.hasExpired(at: now) { removed.append(entry.id) }
         for entry in entries where entry.pinboardIDs.isEmpty {
-            if let cutoff, entry.lastCopiedAt < cutoff { removed.append(entry.id) } else { kept.append(entry) }
+            if entry.hasExpired(at: now) { removed.append(entry.id); continue }
+            if let cutoff, entry.lastCopiedAt < cutoff { removed.append(entry.id); continue }
+            // Only items old enough are classified, so the minute timer does
+            // not scan the whole history.
+            if let secretCutoff, let isSecret, entry.lastCopiedAt < secretCutoff, isSecret(entry) {
+                removed.append(entry.id); continue
+            }
+            kept.append(entry)
         }
         var bytes = kept.reduce(0) { $0 + $1.byteCount }
         while kept.count > limits.maxEntries || bytes > limits.maxBytes, let oldest = kept.popLast() {
@@ -1018,7 +1037,81 @@ final class ClipboardStore: ObservableObject {
             scheduleSave()
         }
         if playSound { ClipboardAudioFeedback.copy() }
+        let once = entries.filter { seen.contains($0.id) && $0.pastesOnce }.map(\.id)
+        if !once.isEmpty { scheduleBurn(once, changeCount: lastChangeCount) }
         return lastChangeCount
+    }
+
+    // MARK: 7.22 item lifetimes
+
+    /// How long a pasted "Paste Once" item stays before it is deleted, so the
+    /// paste keystroke that follows a write still finds it.
+    nonisolated static let burnDelay: TimeInterval = 1
+    /// How long the system clipboard keeps a "Paste Once" copy.
+    nonisolated static let burnClipboardDelay: TimeInterval = 60
+    @Published private(set) var lastBurnReceipt: DeletionReceipt?
+
+    private func scheduleBurn(_ ids: [UUID], changeCount: Int) {
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(Self.burnDelay))
+            guard let self else { return }
+            let still = ids.filter { id in self.entries.contains { $0.id == id && $0.pastesOnce } }
+            if !still.isEmpty { self.lastBurnReceipt = self.deleteRecordingReceipt(entryIDs: still) }
+            try? await Task.sleep(for: .seconds(Self.burnClipboardDelay - Self.burnDelay))
+            // Only the copy AOM wrote: a newer copy by the user is never cleared.
+            if self.pasteboard.changeCount == changeCount {
+                self.pasteboard.clearContents()
+                self.lastChangeCount = self.pasteboard.changeCount
+            }
+        }
+    }
+
+    enum Lifetime: String, CaseIterable, Identifiable {
+        case hour, tomorrow, week, pasteOnce, never
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .hour: return "In 1 Hour"
+            case .tomorrow: return "Tomorrow"
+            case .week: return "In a Week"
+            case .pasteOnce: return "After Pasting Once"
+            case .never: return "Never"
+            }
+        }
+        func expiry(from now: Date, calendar: Calendar = .current) -> Date? {
+            switch self {
+            case .hour: return now.addingTimeInterval(3_600)
+            case .tomorrow:
+                let start = calendar.startOfDay(for: now)
+                return calendar.date(byAdding: .day, value: 1, to: start).flatMap { calendar.date(byAdding: .hour, value: 9, to: $0) }
+            case .week: return now.addingTimeInterval(7 * 86_400)
+            case .pasteOnce, .never: return nil
+            }
+        }
+    }
+
+    /// Sets when items leave: a time, after one paste, or never (the
+    /// history limits only). Expiry runs with the minute trim.
+    func setLifetime(_ lifetime: Lifetime, entryIDs: [UUID]) {
+        let ids = Set(entryIDs)
+        guard !ids.isEmpty else { return }
+        let date = now()
+        var updated = entries
+        for index in updated.indices where ids.contains(updated[index].id) {
+            updated[index].expiresAt = lifetime.expiry(from: date)
+            updated[index].burnAfterPaste = lifetime == .pasteOnce ? true : nil
+        }
+        entries = updated
+        scheduleSave()
+    }
+
+    /// Items that will expire within the next day, for the panel badge.
+    func expiringSoonCount(within interval: TimeInterval = 86_400) -> Int {
+        let date = now()
+        return entries.reduce(0) { count, entry in
+            guard let expiry = entry.expiresAt else { return count + (entry.pastesOnce ? 1 : 0) }
+            return count + (expiry.timeIntervalSince(date) <= interval ? 1 : 0)
+        }
     }
 
     /// Tests and application termination can await durable storage without
@@ -1040,12 +1133,20 @@ final class ClipboardStore: ObservableObject {
     private func trim(collectingRemoved: Bool = false) -> [ClipboardEntry] {
         // Retention limits cover history only. Pinboards are explicit durable
         // collections and are never silently evicted to make room for history.
-        let plan = Self.removalPlan(entries, limits: settings.bounded, now: now())
+        let plan = Self.removalPlan(entries, limits: settings.bounded, now: now(),
+                                    isSecret: { ClipboardIntelligence.shared.itemClass($0) == .secret })
         // Mutating the published array re-renders an open panel, so only
         // touch it when something actually leaves.
         guard !plan.isEmpty else { return [] }
         let removed = Set(plan)
         let leaving = collectingRemoved ? entries.filter { removed.contains($0.id) } : []
+        // 7.22: expiry and the secret lifetime remove items the history
+        // limits would have kept, so those go to Undo Delete.
+        if !collectingRemoved {
+            let early = entries.filter { removed.contains($0.id)
+                && ($0.expiresAt != nil || ClipboardIntelligence.shared.itemClass($0) == .secret) }
+            if !early.isEmpty { rememberDeletion(early) }
+        }
         entries.removeAll { removed.contains($0.id) }
         pruneDigests()
         scheduleSave()

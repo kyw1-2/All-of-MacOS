@@ -133,6 +133,9 @@ struct AOMCursorTrack: Codable {
 /// hidden intervals keep their edges.
 struct AOMCursorSampler {
     static let capacity = 60_000
+    /// 7.22 (DeepSeek 7.21 report §4.4): the recorder samples at 60 Hz. The
+    /// buffer thins to 30 Hz after about 16 minutes, 15 Hz after 33, …
+    static let recordingSpacing: Double = 1.0 / 60
     let capacity: Int
     /// The recorder's sampling interval (50 ms).
     let baseSpacing: Double
@@ -218,4 +221,45 @@ struct AOMKeystrokeEvent: Codable, Equatable, Identifiable {
     var label: String
     var duration: Double = 1.4
     var isValid: Bool { time.isFinite && time >= 0 && duration.isFinite && (0.1...10).contains(duration) && !label.isEmpty && label.count <= 80 }
+}
+
+
+/// 7.22 (DeepSeek 7.21 report §4.4): the One Euro filter (Casiez, Roussel and
+/// Vogel, CHI 2012) over a recorded track — strong smoothing while the
+/// pointer is nearly still (no hand jitter in a zoomed shot), little lag
+/// while it moves fast. Coordinates are normalised to the frame, so `beta`
+/// is the pixel-space 0.007 scaled by a typical 1,200 px frame.
+enum AOMOneEuroFilter {
+    static func filter(_ points: [AOMCursorPoint], minCutoff: Double = 1.0, beta: Double = 8.0,
+                       derivativeCutoff: Double = 1.0) -> [AOMCursorPoint] {
+        guard points.count > 2 else { return points }
+        func alpha(_ cutoff: Double, _ dt: Double) -> Double {
+            let tau = 1 / (2 * Double.pi * cutoff)
+            return 1 / (1 + tau / dt)
+        }
+        var out = points
+        var x = points[0].x, y = points[0].y
+        var dx = 0.0, dy = 0.0
+        var lastTime = points[0].time
+        for index in points.indices.dropFirst() {
+            let point = points[index]
+            let previous = points[index - 1]
+            // A hidden stretch (pointer outside the area) restarts the filter
+            // where the pointer comes back, instead of sliding in from the edge.
+            if point.visible == false || previous.visible == false {
+                x = point.x; y = point.y; dx = 0; dy = 0; lastTime = point.time
+                continue
+            }
+            let dt = max(1e-3, point.time - lastTime)
+            lastTime = point.time
+            let rawDX = (point.x - x) / dt, rawDY = (point.y - y) / dt
+            let ad = alpha(derivativeCutoff, dt)
+            dx += ad * (rawDX - dx); dy += ad * (rawDY - dy)
+            let speed = (dx * dx + dy * dy).squareRoot()
+            let a = alpha(minCutoff + beta * speed, dt)
+            x += a * (point.x - x); y += a * (point.y - y)
+            out[index].x = min(1, max(0, x)); out[index].y = min(1, max(0, y))
+        }
+        return out
+    }
 }

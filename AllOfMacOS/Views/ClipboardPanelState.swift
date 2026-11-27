@@ -10,6 +10,24 @@ final class ClipboardPanelState: ObservableObject {
         "\(count == 1 ? "Copied" : "Copied \(count) items") — the shelf stays open for more. Return pastes, Esc closes."
     }
     @Published var query = ""
+    /// 7.22: secret items the user revealed in this panel session. Cleared
+    /// when the panel closes, so nothing stays revealed by accident.
+    @Published var revealedSecrets = Set<UUID>()
+
+    /// The menu's checkmark: Paste Once or Never; a timed expiry has none.
+    nonisolated static func lifetime(of entry: ClipboardEntry) -> ClipboardStore.Lifetime? {
+        if entry.pastesOnce { return .pasteOnce }
+        return entry.expiresAt == nil ? .never : nil
+    }
+
+    nonisolated static func lifetimeStatus(_ lifetime: ClipboardStore.Lifetime, count: Int) -> String {
+        let subject = count == 1 ? "This item" : "\(count) items"
+        switch lifetime {
+        case .never: return "\(subject) now follow\(count == 1 ? "s" : "") the history limits."
+        case .pasteOnce: return "\(subject) will be deleted after the next paste; ⌘Z brings \(count == 1 ? "it" : "them") back."
+        default: return "\(subject) will be deleted \(lifetime.title.lowercased())."
+        }
+    }
     @Published var recentSearches: [String] = []
     func rememberSearch() {
         let value = query.trimmingCharacters(in: .whitespacesAndNewlines)

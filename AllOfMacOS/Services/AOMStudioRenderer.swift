@@ -264,6 +264,10 @@ struct AOMStudioSettings: Codable, Equatable {
     var clickStyle: AOMClickStyle?
     /// A halo under the pointer; nil is off.
     var cursorHighlight: AOMCursorHighlight?
+    /// 7.22 (DeepSeek 7.21 report §4.4, Screen Studio's auto zoom): while
+    /// zoomed in, the camera follows the pointer (low-passed, ~120 ms)
+    /// instead of staying on the keyframe's focus. nil in older projects = off.
+    var followsCursor: Bool? = nil
 
     var isActive: Bool {
         !keyframes.isEmpty || (backdrop != .none && paddingFraction > 0) || background?.isActive == true
@@ -286,7 +290,10 @@ enum AOMStudioRenderer {
         let extent = image.extent.integral
         guard extent.width > 0, extent.height > 0, !extent.isInfinite,
               extent.width <= 16384, extent.height <= 16384 else { return image }
-        let f = sampledFocus(at: time, keyframes: settings.keyframes)
+        var f = sampledFocus(at: time, keyframes: settings.keyframes)
+        if settings.followsCursor == true, f.magnification > 1.001, !settings.cursorPoints.isEmpty {
+            f = AOMStudioTimeline.following(f, time: time, track: AOMCursorTrack(points: settings.cursorPoints))
+        }
         let zoom = CGFloat(f.magnification)
         let center = AOMStudioTimeline.viewportCenter(for: f)
         let focusX = extent.minX + center.x * extent.width

@@ -251,6 +251,9 @@ extension ActionType {
         case .hapticFeedback: return "Plays a Force Touch trackpad haptic while a finger rests on the trackpad."
         case .postDistributedNotification: return "Posts a distributed notification that other apps and scripts can observe."
         case .restartRecording: return "Discards the current screen recording and starts again on the same area."
+        case .runScene: return "Runs a saved scene: apps, window layout, audio, appearance and Focus."
+        case .convertKeyboardLayout: return "Retypes the selection or last word as if the other Korean/English source was on."
+        case .toggleMeetingRecording: return "Records the microphone and app audio to a file, then writes a transcript."
         }
     }
 
@@ -305,6 +308,7 @@ extension ActionType {
         case .hapticFeedback: return "Pattern"
         case .postDistributedNotification: return "Name, object"
         case .toggleDoNotDisturb: return "Shortcut name (optional)"
+        case .runScene: return "Scene"
         default: return ""
         }
     }

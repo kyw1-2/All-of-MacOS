@@ -659,7 +659,13 @@ class KeyboardMonitor: ObservableObject {
                 let typed = MainActor.assumeIsolated { engine.typedTail(spec.abbreviation.count) }
                 DispatchQueue.main.async {
                     engine.reset()
-                    PaletteSnippetForm.askFromTyping(snippetID: trigger.id, fields: fields, erase: spec.abbreviation.count, target: front, typed: typed)
+                    // 7.22: at the text cursor (TextExpander), unless turned off.
+                    if SnippetCaretForm.isEnabled {
+                        SnippetCaretForm.shared.present(.init(text: spec.replacement, syntax: spec.syntax, abbreviation: spec.abbreviation,
+                                                              fields: fields, erase: spec.abbreviation.count, target: front, typed: typed))
+                    } else {
+                        PaletteSnippetForm.askFromTyping(snippetID: trigger.id, fields: fields, erase: spec.abbreviation.count, target: front, typed: typed)
+                    }
                 }
                 return false
             }

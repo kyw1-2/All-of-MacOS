@@ -177,6 +177,26 @@ struct ParityActionForm: View {
             note("Other apps observe it with DistributedNotificationCenter; nothing else is sent.")
         case .restartRecording:
             note("Discards the take and records the same area with the same options. The recording bar has the same button.")
+        // 7.22
+        case .runScene:
+            let scenes = SceneStore.shared.scenes
+            Picker("Scene", selection: Binding(
+                get: { action.parameters.sceneID ?? "" },
+                set: { id in
+                    save {
+                        $0.parameters.sceneID = id.isEmpty ? nil : id
+                        $0.parameters.sceneName = scenes.first { $0.id.uuidString == id }?.name
+                    }
+                })) {
+                Text("Choose a Scene").tag("")
+                ForEach(scenes) { Text($0.name).tag($0.id.uuidString) }
+            }
+            note(scenes.isEmpty ? "Make a scene on the Focus page first."
+                 : "Pair it with Microphone turns on, App becomes active or Wi-Fi connects to set up by itself. One scene runs at a time.")
+        case .convertKeyboardLayout:
+            note("With nothing selected, the word before the caret is used. “dkssud” becomes “안녕” and back, then the input source switches to the one you meant. Needs Accessibility permission.")
+        case .toggleMeetingRecording:
+            note("Records your microphone and other apps' sound to Documents/AOM Meetings, then writes a transcript on this Mac. Tell the people in the meeting that you are recording.")
         case .toggleDoNotDisturb:
             TextField("Shortcut name (empty = “Toggle Focus”)", text: string(\.shortcutName, default: "")).textFieldStyle(.roundedBorder)
             note("macOS has no public Focus switch, so create a Shortcut with one “Set Focus” action and enter its name.")

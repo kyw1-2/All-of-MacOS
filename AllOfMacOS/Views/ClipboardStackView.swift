@@ -125,7 +125,7 @@ struct ClipboardStackView: View {
                 }
             }
             VStack(alignment: .leading, spacing: 1) {
-                Text(entry.previewText.isEmpty ? entry.title : entry.previewText)
+                Text(ClipboardSecretDisplay.rowText(entry))
                     .font(ordinal == 0 ? AOMFont.callout.weight(.semibold) : AOMFont.callout)
                     .foregroundStyle(AOMColor.text).lineLimit(1)
                 Text(entry.sourceName ?? entry.kind.displayName).font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary).lineLimit(1)

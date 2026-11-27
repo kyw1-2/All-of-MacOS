@@ -379,6 +379,11 @@ enum TriggerValidation {
             return nil
         case .forceTouchStage(let stage):
             return (1...2).contains(stage) ? nil : "Force Touch stage must be 1 or 2."
+        case .screenTextAppears(let text, let interval):
+            let wanted = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if wanted.isEmpty { return "Enter the text to look for." }
+            if wanted.count > 200 { return "Look for at most 200 characters." }
+            return SystemTriggerKind.screenTextIntervalRange.contains(interval) ? nil : "Check every 2 to 60 seconds."
         default: return nil
         }
     }

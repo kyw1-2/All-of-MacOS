@@ -45,6 +45,17 @@ struct ClipboardEntry: Identifiable, Codable, Equatable {
     /// Optional so older archives retain their original schema compatibility.
     var contentRevision: UUID? = nil
     var contentVersion: UUID { contentRevision ?? id }
+    /// 7.22: the item leaves history (pinned or not) once this passes. Set
+    /// from the card's Expire menu; nil keeps the history limits in charge.
+    var expiresAt: Date? = nil
+    /// 7.22: "Paste Once" — the item is deleted (undoably) right after it is
+    /// pasted or copied out, and the system clipboard is cleared a minute
+    /// later if it still holds that copy.
+    var burnAfterPaste: Bool? = nil
+    var pastesOnce: Bool { burnAfterPaste ?? false }
+
+    /// True once `expiresAt` has passed.
+    func hasExpired(at now: Date) -> Bool { expiresAt.map { $0 <= now } ?? false }
 
     init(id: UUID = UUID(), title: String, text: String? = nil, kind: Kind = .text,
          sourceName: String? = nil, sourceBundleID: String? = nil, createdAt: Date = Date(),

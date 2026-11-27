@@ -60,6 +60,26 @@ enum AOMStudioTimeline {
                      y: previous.y + (next.y - previous.y) * smooth)
     }
 
+    /// 7.22: the zoomed camera follows the pointer. The pointer is averaged
+    /// over the last 240 ms (≈ a 120 ms low-pass), and blended in as the zoom
+    /// rises, so entering and leaving a zoom still lands on the keyframes.
+    static func following(_ focus: Focus, time: Double, track: AOMCursorTrack, window: Double = 0.24) -> Focus {
+        guard focus.magnification > 1.001, time.isFinite else { return focus }
+        var sum = CGPoint.zero
+        var count = 0
+        for step in 0..<5 {
+            if let point = track.smoothedPosition(at: max(0, time - window * Double(step) / 4)) {
+                sum.x += point.x; sum.y += point.y; count += 1
+            }
+        }
+        guard count > 0 else { return focus }
+        let weight = min(1, (focus.magnification - 1) / 0.3)
+        let x = Double(sum.x) / Double(count), y = Double(sum.y) / Double(count)
+        return Focus(magnification: focus.magnification,
+                     x: focus.x + (x - focus.x) * weight,
+                     y: focus.y + (y - focus.y) * weight)
+    }
+
     /// Validated event tracks are sorted and key badges last at most ten
     /// seconds. A newer short badge can expire before an older long one.
     static func activeKeystroke(at time: Double, events: [AOMKeystrokeEvent]) -> AOMKeystrokeEvent? {

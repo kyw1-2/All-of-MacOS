@@ -335,6 +335,10 @@ enum ActionType: String, Codable, Identifiable, CaseIterable {
     case postDistributedNotification = "Post Distributed Notification"
     // Screen capture
     case restartRecording = "Restart Screen Recording"
+    // 7.22 (DeepSeek 7.21 report)
+    case runScene = "Run Scene"
+    case convertKeyboardLayout = "Fix Korean/English Typing"
+    case toggleMeetingRecording = "Start / Stop Meeting Recording"
 
     var id: String { rawValue }
 
@@ -419,6 +423,9 @@ enum ActionType: String, Codable, Identifiable, CaseIterable {
         case .recognizeScreenText, .sendMIDI, .sendOSC, .pickScreenColor, .hapticFeedback, .postDistributedNotification:
             return .utilityActions
         case .restartRecording: return .screenCapture
+        case .runScene: return .workflow
+        case .convertKeyboardLayout: return .utilityActions
+        case .toggleMeetingRecording: return .screenCapture
         }
     }
 
@@ -639,6 +646,9 @@ enum ActionType: String, Codable, Identifiable, CaseIterable {
         case .hapticFeedback: return "hand.tap"
         case .postDistributedNotification: return "dot.radiowaves.left.and.right"
         case .restartRecording: return "arrow.counterclockwise.circle"
+        case .runScene: return "theatermasks"
+        case .convertKeyboardLayout: return "character.textbox"
+        case .toggleMeetingRecording: return "waveform.badge.mic"
         }
     }
 
@@ -715,6 +725,10 @@ struct ActionParameters: Codable, Hashable {
     var displayInputCode: Int?
     var windowLayoutName: String?
     var namedTriggerName: String?
+    /// 7.22 Run Scene: the scene's id, with its name as a fallback when the
+    /// id no longer exists (a scene re-created under the same name).
+    var sceneID: String?
+    var sceneName: String?
     var hudText: String?
     var minimumBatteryPercent: Int?
     var maximumBatteryPercent: Int?

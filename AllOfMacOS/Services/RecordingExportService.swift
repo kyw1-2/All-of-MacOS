@@ -93,12 +93,25 @@ enum RecordingExportService {
         }
         video.preferredTransform = try await sourceVideo.load(.preferredTransform)
 
+        // 7.22: a 10 ms fade out and in at every cut (silence cuts), so a cut never clicks.
+        var fades: [AVMutableAudioMixInputParameters] = []
         if !muteAudio {
             let audioTracks = try await asset.loadTracks(withMediaType: .audio)
             for sourceAudio in audioTracks {
                 guard let audio = composition.addMutableTrack(withMediaType: .audio,
                                   preferredTrackID: kCMPersistentTrackID_Invalid) else {
                     throw ExportError.failed("Could not create the audio timeline.")
+                }
+                if selected.count > 1 {
+                    let parameter = AVMutableAudioMixInputParameters(track: audio)
+                    let fade = CMTime(seconds: AOMSilenceCutter.fadeSeconds, preferredTimescale: 48_000)
+                    for boundary in AOMSilenceCutter.boundaries(selected) {
+                        let at = CMTime(seconds: boundary, preferredTimescale: 48_000)
+                        parameter.setVolumeRamp(fromStartVolume: 1, toEndVolume: 0,
+                                                timeRange: CMTimeRange(start: CMTimeSubtract(at, fade), duration: fade))
+                        parameter.setVolumeRamp(fromStartVolume: 0, toEndVolume: 1, timeRange: CMTimeRange(start: at, duration: fade))
+                    }
+                    fades.append(parameter)
                 }
                 var outputTime = CMTime.zero
                 let available = try await sourceAudio.load(.timeRange)
@@ -124,6 +137,11 @@ enum RecordingExportService {
         exporter.outputURL = url
         exporter.outputFileType = .mp4
         exporter.shouldOptimizeForNetworkUse = true
+        if !fades.isEmpty {
+            let mix = AVMutableAudioMix()
+            mix.inputParameters = fades
+            exporter.audioMix = mix
+        }
         let camera = studio.showCamera ? AOMStudioCameraFrames(source: source) : nil
         let effect = studio
         let naturalSize = try await sourceVideo.load(.naturalSize)

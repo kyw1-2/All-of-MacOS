@@ -22,6 +22,8 @@ enum TextTransform: String, CaseIterable, Identifiable {
     case urlEncode, urlDecode
     case sortLines, reverseLines, removeDuplicateLines
     case plainText
+    /// 7.22: dkssud ↔ 안녕 (the 2-set Korean layout).
+    case koreanEnglishLayout
 
     var id: String { rawValue }
 
@@ -43,6 +45,7 @@ enum TextTransform: String, CaseIterable, Identifiable {
         case .reverseLines: return "Reverse Lines"
         case .removeDuplicateLines: return "Remove Duplicate Lines"
         case .plainText: return "Plain Text (remove formatting)"
+        case .koreanEnglishLayout: return "Fix Korean/English Typing (dkssud ↔ 안녕)"
         }
     }
 
@@ -78,6 +81,7 @@ enum TextTransform: String, CaseIterable, Identifiable {
                 return lines.filter { seen.insert($0).inserted }
             }
         case .plainText: return text
+        case .koreanEnglishLayout: return HangulLayoutConverter.convert(text)
         }
     }
 
@@ -774,7 +778,7 @@ enum ParityActions {
         .bluetoothDevice, .setWiFiPower, .setBluetoothPower, .setAirplaneMode, .dismissNotifications, .showEmojiPicker,
         .showMenuBarStrip, .markAudioGlitch,
         .recognizeScreenText, .sendMIDI, .sendOSC, .pickScreenColor, .hapticFeedback, .postDistributedNotification,
-        .restartRecording]
+        .restartRecording, .runScene, .convertKeyboardLayout, .toggleMeetingRecording]
 
     static func handles(_ type: ActionType) -> Bool { handled.contains(type) }
 
@@ -1076,6 +1080,25 @@ enum ParityActions {
         case .restartRecording:
             guard ScreenRecordingService.shared.isRecording else { log("No screen recording in progress"); completion(false); return }
             ScreenRecordingService.shared.restartRecording()
+            completion(true)
+        // 7.22
+        case .runScene:
+            let scenes = SceneStore.shared.scenes
+            guard let scene = scenes.first(where: { $0.id.uuidString == p.sceneID })
+                    ?? scenes.first(where: { $0.name.caseInsensitiveCompare(nonEmpty(p.sceneName) ?? "\u{0}") == .orderedSame }) else {
+                log("Choose a scene to run"); completion(false); return
+            }
+            guard !SceneRunner.shared.isRunning else { log("A scene is already running"); completion(false); return }
+            SceneRunner.shared.run(scene) { results in
+                completion(!results.contains { $0.isFailure })
+            }
+        case .convertKeyboardLayout:
+            KeyboardLayoutFixer.run(isCancelled: isCancelled) { ok, message in
+                if let message { log(message, error: !ok) }
+                completion(ok)
+            }
+        case .toggleMeetingRecording:
+            MeetingRecorder.shared.toggle()
             completion(true)
         default:
             completion(false)

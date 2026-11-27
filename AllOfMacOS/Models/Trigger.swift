@@ -132,8 +132,16 @@ enum SystemTriggerKind: Codable, Hashable {
     /// Force Touch trackpad pressure reached stage 1 (the click) or stage 2
     /// (the deep press). Fires once per press; see `PressureStageTracker`.
     case forceTouchStage(stage: Int)
+    /// 7.22: the default microphone starts (`active`) or stops being used by
+    /// any app — a call or a meeting starting or ending.
+    case microphoneInUse(active: Bool)
+    /// 7.22: `text` appears on the display under the pointer, checked by
+    /// on-device text recognition every `intervalSeconds` (2–60) while the
+    /// screen changes. Needs Screen Recording permission.
+    case screenTextAppears(text: String, intervalSeconds: Int)
 
     static let defaultHoverDwellMs = 300
+    static let screenTextIntervalRange = 2...60
     static let defaultEdgeDistancePx = 4
 
     var displayName: String {
@@ -181,6 +189,8 @@ enum SystemTriggerKind: Codable, Hashable {
         case .screenCornerHover(let c, _): return "Pointer hovers \(c.rawValue.lowercased()) screen corner"
         case .screenEdgeHover(let e, _, _): return "Pointer hovers \(e.rawValue.lowercased()) screen edge"
         case .variableChanged(let n): return n.isEmpty ? "Any variable changes" : "Variable changes: \(n)"
+        case .microphoneInUse(let active): return active ? "Microphone turns on" : "Microphone turns off"
+        case .screenTextAppears(let text, _): return text.isEmpty ? "Text appears on screen" : "Text appears on screen: \(text)"
         }
     }
 

@@ -126,7 +126,7 @@ extension QuickCommandPalette {
             // 7.13 (GPT F04): the older copy goes on the left once, here;
             // the route keeps that order so Swap Sides really swaps.
             let pair = first.lastCopiedAt <= entry.lastCopiedAt ? (id, entry.id) : (entry.id, id)
-            return screenRow("clipcompare.\(entry.id.uuidString)", entry.title,
+            return screenRow("clipcompare.\(entry.id.uuidString)", ClipboardSecretDisplay.title(entry),
                       [entry.sourceName, AOMRelativeTime.string(entry.lastCopiedAt)].compactMap { $0 }.joined(separator: " · "),
                       icon: entry.kind.symbol, group: "Compare “\(first.title.prefix(40))” with", section: .clipboard,
                       primary: PaletteAction(title: "Compare", symbol: "arrow.left.arrow.right.square", effect: .push(.clipboardDiff(pair.0, pair.1))) {})

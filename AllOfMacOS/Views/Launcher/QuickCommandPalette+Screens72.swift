@@ -811,7 +811,7 @@ extension QuickCommandPalette {
         let byID = Dictionary(clipboardStore.entries.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let queue = (state.stackReversed ? Array(state.stack.reversed()) : state.stack).compactMap { byID[$0] }
         var items = queue.enumerated().map { index, entry -> PaletteItem in
-            var row = screenRow("stack.\(entry.id.uuidString)", entry.title, index == 0 ? "Pasted next" : "Then \(index + 1)",
+            var row = screenRow("stack.\(entry.id.uuidString)", ClipboardSecretDisplay.title(entry), index == 0 ? "Pasted next" : "Then \(index + 1)",
                                 icon: entry.kind.symbol, group: "Queued · \(queue.count)", section: .clipboard,
                                 primary: PaletteAction(title: "Paste Next", symbol: "doc.on.clipboard") { ClipboardPanelController.shared.pasteNext() },
                                 secondaries: [PaletteAction(title: "Remove from Stack", symbol: "minus.circle", effect: .stay) {

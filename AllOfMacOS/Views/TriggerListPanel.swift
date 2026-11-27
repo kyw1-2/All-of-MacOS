@@ -62,6 +62,8 @@ struct AddTriggerSheet: View {
     @State private var midiMaximum = 127
     @State private var gamepadControl = "a"
     @State private var eventPressed = true
+    @State private var screenTextInterval = 5
+    @State private var snippetFormAtCaret = SnippetCaretForm.isEnabled
     @State private var powerOnAC = true
     @State private var systemEventAppID = ""
     @State private var gestureSearch = ""
@@ -262,6 +264,8 @@ struct AddTriggerSheet: View {
                 if systemEventKind == "appLaunch" || systemEventKind == "appQuit" { return "Choose an application." }
                 if ["batteryBelow", "batteryAbove"].contains(systemEventKind) { return "Choose a charge of 1 to 99%." }
                 if systemEventKind == "hid" { return "Check the IDs: vendor and product 1–65535, minimum no higher than maximum." }
+                if systemEventKind == "screenText", case .systemEvent(let kind) = otherTriggerInput(),
+                   let problem = TriggerValidation.systemProblem(for: kind) { return problem }
                 return "Check the event's values."
             default:
                 return "Name the trigger."
@@ -562,6 +566,22 @@ struct AddTriggerSheet: View {
                 }
                 .aomRowInset()
             }
+            if systemEventKind == "screenText" {
+                AOMSettingRow("Text", help: "Read on this Mac with on-device text recognition on the display under the pointer, only while the screen changes. Fires once when the text appears, again after it has gone. Needs Screen Recording permission.") {
+                    TextField("Text to look for", text: $eventFilter)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: AOMEditorSize.rowField)
+                }
+                AOMSettingRow("Check every") {
+                    AOMRowStepper("Check every", value: $screenTextInterval, in: SystemTriggerKind.screenTextIntervalRange,
+                                  display: "\(screenTextInterval) s")
+                }
+            }
+            if systemEventKind == "micOn" || systemEventKind == "micOff" {
+                AOMSettingRow("Microphone", help: "Watches the default input device. Any app counts, including a call, a dictation or a recording. Pair it with Run Scene to set up for meetings.") {
+                    Text("Default input").foregroundStyle(AOMColor.textSecondary)
+                }
+            }
             if systemEventKind == "variable" {
                 AOMSettingRow("Variable") {
                     TextField("Variable name (empty = any)", text: $eventFilter)
@@ -643,7 +663,8 @@ struct AddTriggerSheet: View {
         ("batteryBelow", "Battery drops below"), ("batteryAbove", "Battery rises above"),
         ("screensaverOn", "Screensaver starts"), ("screensaverOff", "Screensaver stops"),
         ("space", "Active Space changes"), ("audio", "Audio output changes"), ("input", "Input source changes"),
-        ("clipboard", "Clipboard changes"), ("midi", "MIDI message"), ("gamepad", "Gamepad / Siri Remote control"), ("hid", "Generic HID device input")]
+        ("clipboard", "Clipboard changes"), ("micOn", "Microphone turns on"), ("micOff", "Microphone turns off"),
+        ("screenText", "Text appears on screen"), ("midi", "MIDI message"), ("gamepad", "Gamepad / Siri Remote control"), ("hid", "Generic HID device input")]
         + BTTInputTriggerKinds.options.map { ($0.key, $0.title) }
 
     /// Builds the Other Triggers input. Kept separate from `addTrigger` so the
@@ -691,6 +712,9 @@ struct AddTriggerSheet: View {
             case "audio": return .systemEvent(.audioOutputChanged)
             case "input": return .systemEvent(.inputSourceChanged)
             case "clipboard": return .systemEvent(.clipboardChanged)
+            case "micOn": return .systemEvent(.microphoneInUse(active: true))
+            case "micOff": return .systemEvent(.microphoneInUse(active: false))
+            case "screenText": return .systemEvent(.screenTextAppears(text: eventFilter, intervalSeconds: screenTextInterval))
             case "power": return .systemEvent(.powerSourceChanged(ac: powerOnAC))
             case "lock": return .systemEvent(.screenLocked)
             case "unlock": return .systemEvent(.screenUnlocked)
@@ -743,6 +767,12 @@ struct AddTriggerSheet: View {
                 }
                 .fixedSize()
             }
+            if typedPlaceholders {
+                // 7.22: fields are asked in a small panel at the text cursor.
+                Toggle("Ask fields at the text cursor", isOn: $snippetFormAtCaret)
+                    .help("On: a panel opens where you typed, without leaving the app. Off: the launcher asks, one field at a time. Applies to every snippet.")
+                    .onChange(of: snippetFormAtCaret) { _, on in SnippetCaretForm.isEnabled = on }
+            }
             // 7.3: the snippet test — the same renderer as the expansion, nothing typed anywhere.
             if typedPlaceholders, !typedReplacement.isEmpty {
                 let preview = PaletteSnippets.preview(text: typedReplacement, syntax: SnippetTemplate.currentSyntax)
@@ -771,7 +801,11 @@ struct AddTriggerSheet: View {
                 return TriggerValidation.systemProblem(for: kind) == nil
             }
             if ["batteryBelow", "batteryAbove"].contains(systemEventKind) { return (1...99).contains(eventNumber) }
-            if systemEventKind == "file" { return TriggerSystemPaths.normalized(eventFilter) != nil }
+"            if systemEventKind == "file" { return TriggerSystemPaths.normalized(eventFilter) != nil }
+            if systemEventKind == "screenText" {
+                guard case .systemEvent(let kind) = otherTriggerInput() else { return false }
+                return TriggerValidation.systemProblem(for: kind) == nil
+            }
             if systemEventKind == "appLaunch" || systemEventKind == "appQuit" { return !systemEventAppID.isEmpty }
             return true
         default:

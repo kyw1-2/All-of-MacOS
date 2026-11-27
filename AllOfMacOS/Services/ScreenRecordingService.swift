@@ -45,7 +45,8 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
     nonisolated static let minimumFreeBytes: Int64 = 2_000_000_000
     private var cursorSampler: Timer?
     /// Bounded but full-length: thins itself instead of stopping at 50 min.
-    private var cursorSamples = AOMCursorSampler()
+    /// 7.22: 60 Hz (was 20 Hz), so a fast pointer is a curve, not a polyline.
+    private var cursorSamples = AOMCursorSampler(spacing: AOMCursorSampler.recordingSpacing)
     /// Clicks or keystrokes beyond the 60,000-event track limit were seen.
     private var inputEventsOverflowed = false
     /// Recording time of the last crash-recovery sidecar write.
@@ -735,7 +736,7 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
 
     private func startCursorSampling() {
         stopCursorSampling()
-        cursorSampler = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+        cursorSampler = Timer.scheduledTimer(withTimeInterval: AOMCursorSampler.recordingSpacing, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.sampleCursor() }
         }
     }

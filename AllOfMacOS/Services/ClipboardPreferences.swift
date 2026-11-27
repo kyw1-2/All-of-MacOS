@@ -35,6 +35,11 @@ final class ClipboardPreferences: ObservableObject {
     static let linkCardsKey = "AOMClipboardLinkCards"
     @Published var showInScreenCapture: Bool { didSet { defaults.set(showInScreenCapture, forKey: "AOMClipboardShowInScreenCapture"); NotificationCenter.default.post(name: Self.changed, object: nil) } }
     @Published var compact: Bool { didSet { defaults.set(compact, forKey: "AOMClipboardCompact"); NotificationCenter.default.post(name: Self.changed, object: nil) } }
+    /// 7.22: cards, the stack and the launcher blur items that look like a
+    /// credential until they are revealed. On by default. Covers shoulder-
+    /// surfing and screen sharing, not other software on the Mac.
+    @Published var concealSecrets: Bool { didSet { defaults.set(concealSecrets, forKey: Self.concealSecretsKey); NotificationCenter.default.post(name: Self.changed, object: nil) } }
+    static let concealSecretsKey = "AOMClipboardConcealSecrets"
     static let changed = Notification.Name("AOMClipboardPresentationChanged")
     private var settingsObserver: NSObjectProtocol?
     init(defaults: UserDefaults = .standard) {
@@ -45,6 +50,7 @@ final class ClipboardPreferences: ObservableObject {
         linkCards = defaults.bool(forKey: Self.linkCardsKey)
         showInScreenCapture = defaults.object(forKey: "AOMClipboardShowInScreenCapture") as? Bool ?? true
         compact = defaults.bool(forKey: "AOMClipboardCompact")
+        concealSecrets = defaults.object(forKey: Self.concealSecretsKey) as? Bool ?? true
         if quickModifier == .shift { quickModifier = .command }
         if plainModifier == .command || plainModifier == quickModifier { plainModifier = .shift }
         // 3.4.0 audit: Reset Preferences and Restore Backup change these keys
@@ -71,6 +77,8 @@ final class ClipboardPreferences: ObservableObject {
         if showInScreenCapture != shows { showInScreenCapture = shows }
         let isCompact = defaults.bool(forKey: "AOMClipboardCompact")
         if compact != isCompact { compact = isCompact }
+        let conceals = defaults.object(forKey: Self.concealSecretsKey) as? Bool ?? true
+        if concealSecrets != conceals { concealSecrets = conceals }
     }
     func isPlain(_ flags: NSEvent.ModifierFlags) -> Bool { flags.contains(plainModifier.flags) }
     func isQuick(_ flags: NSEvent.ModifierFlags) -> Bool {

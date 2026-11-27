@@ -318,7 +318,7 @@ struct ClipboardStudioView: View {
         }
         actions.append(AOMBarAction(id: "clip.delete", title: "Delete", identity: AOMIdentity(symbol: "trash", color: AOMColor.danger),
                                     run: { if let now = liveEntry(expecting: id) { delete(now) } }))
-        let title = entry.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = ClipboardSecretDisplay.title(entry).trimmingCharacters(in: .whitespacesAndNewlines)
         return AOMBarContext(title: title.isEmpty ? "Selected item" : String(title.prefix(60)), actions: actions)
     }
 
@@ -481,7 +481,7 @@ struct ClipboardStudioView: View {
             .frame(width: AOMIcon.row)
             .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
-                Text(entry.title)
+                Text(ClipboardSecretDisplay.title(entry))
                     .font(AOMFont.body)
                     .lineLimit(1)
                     // 7.21 (HIG Lists and tables): a link or file keeps its
@@ -503,7 +503,7 @@ struct ClipboardStudioView: View {
         .frame(minHeight: AOMSize.rowDetail - AOMSpace.x2)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
-        .help(entry.title)
+        .help(ClipboardSecretDisplay.title(entry))
         .tag(entry.id)
         .simultaneousGesture(TapGesture(count: 2).onEnded { copy(addressedTo: entry.id) })
         .onDrag { liveEntry(addressedTo: entry.id).map(ClipboardStudioDrag.provider(for:)) ?? NSItemProvider() }
@@ -685,14 +685,14 @@ struct ClipboardStudioView: View {
                         .onChange(of: renameFocused) { _, focused in if !focused { commitRename(entry.id) } }
                         .accessibilityLabel("Title")
                 } else {
-                    Text(entry.title)
+                    Text(ClipboardSecretDisplay.title(entry))
                         .font(AOMFont.title)
                         .foregroundStyle(AOMColor.text)
                         .lineLimit(2)
                         .contentShape(Rectangle())
                         .onTapGesture { beginRename(entry) }
                         .help("Click to rename")
-                        .accessibilityLabel("Title, \(entry.title)")
+                        .accessibilityLabel("Title, \(ClipboardSecretDisplay.title(entry))")
                         .accessibilityAddTraits(.isButton)
                         .accessibilityAction { beginRename(entry) }
                 }
@@ -1185,7 +1185,7 @@ private struct ClipboardStudioCard: View {
         }
         .aomAnimation(.quick, value: isHovered)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(entry.kind.displayName): \(entry.title)")
+        .accessibilityLabel("\(entry.kind.displayName): \(ClipboardSecretDisplay.title(entry))")
     }
 
     fileprivate static func isLikelyCode(_ text: String) -> Bool {
@@ -1218,7 +1218,20 @@ extension ClipboardStudioCard {
                 }
         }
 
+        /// 7.22: the item revealed in this preview; a different item is
+        /// concealed again.
+        @State private var revealedID: UUID?
+
         @ViewBuilder private var content: some View {
+            if revealedID != entry.id, ClipboardSecretDisplay.conceals(entry) {
+                ClipboardConcealedContent(compact: !large, length: entry.text?.count) { revealedID = entry.id }
+                    .padding(large ? 0 : AOMSpace.x3)
+            } else {
+                kindContent
+            }
+        }
+
+        @ViewBuilder private var kindContent: some View {
             switch entry.kind {
             case .color:
                 let hex = entry.text ?? "#000000"
