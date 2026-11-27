@@ -1300,7 +1300,7 @@ extension ClipboardStudioCard {
                 let text = String(full.prefix(large ? 16000 : 600))
                 let code = ClipboardStudioCard.isLikelyCode(text)
                 VStack(alignment: .leading, spacing: AOMSpace.x2) {
-                    Text(text)
+                    Text(code ? ClipboardCodeHighlighter.attributed(text) : AttributedString(text))
                         .font(code ? (large ? AOMFont.body : AOMFont.callout).monospaced() : (large ? AOMFont.body : AOMFont.callout))
                         .foregroundStyle(AOMColor.text)
                         .lineLimit(large ? nil : 5)

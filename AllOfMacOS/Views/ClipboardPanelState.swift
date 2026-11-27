@@ -141,6 +141,17 @@ final class ClipboardPanelState: ObservableObject {
                    day: Calendar.current.startOfDay(for: Date()), suggested: suggestedIDs)
     }
 
+    /// 7.22: the words after a leading "~" (or "의미:"/"meaning:"), when the query
+    /// asks to search by meaning.
+    nonisolated static func meaningQuery(_ query: String) -> String? {
+        let trimmed = query.trimmingCharacters(in: .whitespaces)
+        for prefix in ["~", "meaning:", "의미:"] where trimmed.lowercased().hasPrefix(prefix) {
+            let rest = trimmed.dropFirst(prefix.count).trimmingCharacters(in: .whitespaces)
+            return rest.isEmpty ? nil : rest
+        }
+        return nil
+    }
+
     /// Memoised per store revision and filter state: the panel, every card and
     /// the key handler ask for this many times per update.
     func results(in store: ClipboardStore) -> [ClipboardEntry] {
@@ -174,6 +185,17 @@ final class ClipboardPanelState: ObservableObject {
         if let resultsCache, resultsCache.key == key {
             searchTask?.cancel(); searchTask = nil; pendingSearchKey = nil
             return resultsCache.value
+        }
+        // 7.22: "~ words" searches by meaning (on-device sentence embeddings),
+        // within the same kind, app, pinboard and date filters.
+        if let meaning = Self.meaningQuery(query) {
+            searchTask?.cancel(); searchTask = nil; pendingSearchKey = nil
+            let range = Self.dateRange(for: recentDays)
+            let scope = store.filtered(kind: kind, source: source, board: key.board, since: range.since)
+                .filter { range.before == nil || $0.lastCopiedAt < range.before! }
+            let ranked = ClipboardMeaningIndex.shared.rank(meaning, in: scope)
+            resultsCache = (key, ranked)
+            return ranked
         }
         if pendingSearchKey != key {
             searchTask?.cancel()

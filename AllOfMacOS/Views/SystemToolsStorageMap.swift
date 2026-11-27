@@ -14,6 +14,10 @@ final class StorageMapModel: ObservableObject, Identifiable {
     @Published private(set) var progress = StorageMap.Progress()
     @Published private(set) var scanning = false
     @Published private(set) var stopped = false
+    /// 7.22: rings (DaisyDisk) instead of the rectangle map; remembered.
+    @Published var showsRings = UserDefaults.standard.bool(forKey: "AOMStorageMapRings") {
+        didSet { UserDefaults.standard.set(showsRings, forKey: "AOMStorageMapRings") }
+    }
     private var stop: AOMCancelFlag?
 
     init(root: URL) { self.root = root }
@@ -85,8 +89,16 @@ struct StorageMapView: View {
                 pathBar(current)
                 HStack(alignment: .top, spacing: AOMSpace.x3) {
                     list(current).frame(width: 280)
-                    StorageTreemap(node: current, selection: model.selection) { node in
-                        if node.canOpen { model.open(node) } else { model.selection = node.id }
+                    Group {
+                        if model.showsRings {
+                            StorageSunburst(node: current, selection: model.selection) { node in
+                                if node.canOpen { model.open(node) } else { model.selection = node.id }
+                            }
+                        } else {
+                            StorageTreemap(node: current, selection: model.selection) { node in
+                                if node.canOpen { model.open(node) } else { model.selection = node.id }
+                            }
+                        }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
@@ -119,6 +131,12 @@ struct StorageMapView: View {
                     .lineLimit(1)
             }
             Spacer()
+            Picker("View", selection: $model.showsRings) {
+                Image(systemName: "square.grid.2x2").help("Map").tag(false)
+                Image(systemName: "circle.circle").help("Rings").tag(true)
+            }
+            .labelsHidden().aomSegmented().fixedSize()
+            .accessibilityLabel("Map or rings")
             Text(SystemStatus.size(current.size)).font(AOMFont.bodyEmphasis).monospacedDigit()
             Button("Show in Finder") {
                 NSWorkspace.shared.activateFileViewerSelecting([model.selected?.url ?? current.url])
@@ -279,5 +297,117 @@ struct StorageTreemap: View {
         case .file: return Color(hue: 0.47, saturation: 0.35, brightness: 0.62)
         case .smallerItems, .link, .otherVolume: return Color(white: 0.55)
         }
+    }
+}
+
+// MARK: - 7.22 rings (DaisyDisk's sunburst)
+
+/// 7.22 (DeepSeek 7.21 report §3.2, DaisyDisk's `TASunburst`): the same
+/// folder as rings — the folder in the middle, its items in the first ring,
+/// their items in the next, three rings deep. A segment's angle is its share
+/// of the folder; click a folder to make it the middle.
+enum StorageSunburstLayout {
+    struct Segment: Identifiable {
+        let node: StorageNode
+        let depth: Int
+        /// Fractions of a turn, 0 at 12 o'clock, clockwise.
+        let start: Double
+        let end: Double
+        let index: Int
+        var id: StorageNode.ID { node.id }
+        var span: Double { end - start }
+    }
+
+    /// Segments under `root` to `depth` rings, skipping slivers under a
+    /// quarter of a degree (they'd be invisible and unclickable).
+    static func segments(_ root: StorageNode, depth: Int = 3, minimumSpan: Double = 0.25 / 360) -> [Segment] {
+        var out: [Segment] = []
+        func walk(_ node: StorageNode, level: Int, start: Double, span: Double) {
+            guard level <= depth, node.size > 0 else { return }
+            var cursor = start
+            for (index, child) in node.children.enumerated() where child.size > 0 {
+                let share = span * Double(child.size) / Double(node.size)
+                guard share >= minimumSpan else { cursor += share; continue }
+                out.append(Segment(node: child, depth: level, start: cursor, end: cursor + share, index: index))
+                if child.canOpen { walk(child, level: level + 1, start: cursor, span: share) }
+                cursor += share
+            }
+        }
+        walk(root, level: 1, start: 0, span: 1)
+        return out
+    }
+
+    /// The segment under `point` (view coordinates, centre `center`), given
+    /// the hole radius and ring width.
+    static func hit(_ point: CGPoint, center: CGPoint, hole: CGFloat, ring: CGFloat, in segments: [Segment]) -> Segment? {
+        let dx = point.x - center.x, dy = point.y - center.y
+        let radius = (dx * dx + dy * dy).squareRoot()
+        guard radius >= hole, ring > 0 else { return nil }
+        let depth = Int((radius - hole) / ring) + 1
+        var angle = atan2(Double(dx), Double(-dy)) / (2 * .pi)
+        if angle < 0 { angle += 1 }
+        return segments.first { $0.depth == depth && angle >= $0.start && angle < $0.end }
+    }
+}
+
+struct StorageSunburst: View {
+    let node: StorageNode
+    let selection: StorageNode.ID?
+    let tapped: (StorageNode) -> Void
+    @State private var hovered: StorageNode.ID?
+
+    var body: some View {
+        GeometryReader { proxy in
+            let segments = StorageSunburstLayout.segments(node)
+            let side = min(proxy.size.width, proxy.size.height)
+            let center = CGPoint(x: proxy.size.width / 2, y: proxy.size.height / 2)
+            let hole = side * 0.16
+            let ring = (side / 2 - hole - 4) / 3
+            ZStack {
+                Canvas { context, _ in
+                    for segment in segments {
+                        let inner = hole + ring * CGFloat(segment.depth - 1) + 1
+                        let outer = inner + ring - 2
+                        let a0 = Angle.degrees(segment.start * 360 - 90), a1 = Angle.degrees(segment.end * 360 - 90)
+                        var path = Path()
+                        path.addArc(center: center, radius: outer, startAngle: a0, endAngle: a1, clockwise: false)
+                        path.addArc(center: center, radius: inner, startAngle: a1, endAngle: a0, clockwise: true)
+                        path.closeSubpath()
+                        // Deeper rings fade, so the first ring reads first.
+                        let base = StorageTreemap.color(segment.node, index: segment.index)
+                        let dimmed = segment.depth == 1 ? 1.0 : (segment.depth == 2 ? 0.78 : 0.58)
+                        context.fill(path, with: .color(base.opacity(hovered == segment.id ? 1 : dimmed)))
+                        if segment.id == selection || segment.id == hovered {
+                            context.stroke(path, with: .color(AOMColor.focusRing), lineWidth: 2)
+                        }
+                    }
+                }
+                VStack(spacing: 2) {
+                    let shown = segments.first { $0.id == hovered }?.node ?? node
+                    Text(shown.name).font(AOMFont.headline).lineLimit(1).truncationMode(.middle)
+                    Text(StorageTreemap.sizeText(shown)).font(AOMFont.callout).monospacedDigit().foregroundStyle(AOMColor.textSecondary)
+                }
+                .frame(width: hole * 1.7)
+                .allowsHitTesting(false)
+            }
+            .contentShape(Rectangle())
+            .onContinuousHover { phase in
+                if case .active(let point) = phase {
+                    hovered = StorageSunburstLayout.hit(point, center: center, hole: hole, ring: ring, in: segments)?.id
+                } else { hovered = nil }
+            }
+            .gesture(SpatialTapGesture().onEnded { value in
+                if let segment = StorageSunburstLayout.hit(value.location, center: center, hole: hole, ring: ring, in: segments) {
+                    tapped(segment.node)
+                }
+            })
+            .animation(AOMMotion.quick, value: node.id)
+            .overlay {
+                if segments.isEmpty {
+                    Text(node.unreadable ? "Couldn't be read" : "Nothing here takes space").foregroundStyle(AOMColor.textSecondary)
+                }
+            }
+        }
+        .accessibilityHidden(true)
     }
 }

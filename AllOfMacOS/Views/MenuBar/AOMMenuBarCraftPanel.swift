@@ -86,11 +86,11 @@ struct AOMMenuBarCraftPanel: View {
                     ForEach(liveSessions) { session in
                         HStack(spacing: 8) {
                             Image(systemName: session.symbol)
-                                .font(.system(size: 12, weight: .semibold))
+                                .font(AOMFont.callout.weight(.semibold))
                                 .foregroundStyle(session.tint)
                             VStack(alignment: .leading, spacing: 1) {
-                                Text(session.title).font(.system(size: 12, weight: .semibold))
-                                Text(session.detail).font(.system(size: 10.5)).foregroundStyle(AOMCraftColor.inkSecondary)
+                                Text(session.title).font(AOMFont.callout.weight(.semibold))
+                                Text(session.detail).font(Font.caption).foregroundStyle(AOMCraftColor.inkSecondary)
                             }
                             Spacer()
                             Button(session.stopLabel, action: session.onStop)
@@ -120,9 +120,9 @@ struct AOMMenuBarCraftPanel: View {
                     Button(action: item.onRun) {
                         VStack(spacing: 5) {
                             Image(systemName: item.symbol)
-                                .font(.system(size: 15, weight: .medium))
+                                .font(AOMFont.title)
                             Text(item.title)
-                                .font(.system(size: 10.5, weight: .medium))
+                                .font(AOMFont.badge)
                                 .lineLimit(1)
                         }
                         .frame(maxWidth: .infinity)
@@ -138,13 +138,13 @@ struct AOMMenuBarCraftPanel: View {
             Button(action: onOpenLauncher) {
                 HStack {
                     Image(systemName: "magnifyingglass")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(AOMFont.callout.weight(.semibold))
                         .foregroundStyle(AOMCraftColor.inkSecondary)
                     Text("Open Launcher…")
-                        .font(.system(size: 12.5, weight: .medium))
+                        .font(AOMFont.callout.weight(.medium))
                         .foregroundStyle(AOMCraftColor.ink)
                     Text("Ask AI · Kill Process")
-                        .font(.system(size: 11))
+                        .font(AOMFont.caption)
                         .foregroundStyle(AOMCraftColor.inkTertiary)
                         .lineLimit(1)
                     Spacer()
@@ -163,7 +163,7 @@ struct AOMMenuBarCraftPanel: View {
             HStack(spacing: 6) {
                 Button("Open Window", action: onOpenMainWindow)
                     .buttonStyle(.plain)
-                    .font(.system(size: 11.5, weight: .medium))
+                    .font(AOMFont.caption.weight(.medium))
                     .foregroundStyle(AOMCraftColor.inkSecondary)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 4)
@@ -183,7 +183,7 @@ struct AOMMenuBarCraftPanel: View {
 
                 Button(action: onEditMenu) {
                     Image(systemName: "pencil")
-                        .font(.system(size: 12.5))
+                        .font(AOMFont.callout)
                         .foregroundStyle(AOMCraftColor.inkSecondary)
                         .frame(width: 26, height: 24)
                 }
@@ -194,7 +194,7 @@ struct AOMMenuBarCraftPanel: View {
 
                 Button(action: onOpenSettings) {
                     Image(systemName: "gearshape")
-                        .font(.system(size: 12.5))
+                        .font(AOMFont.callout)
                         .foregroundStyle(AOMCraftColor.inkSecondary)
                         .frame(width: 26, height: 24)
                 }
@@ -205,7 +205,7 @@ struct AOMMenuBarCraftPanel: View {
 
                 Button(action: onShowClassicMenu) {
                     Image(systemName: "ellipsis.circle")
-                        .font(.system(size: 12.5))
+                        .font(AOMFont.callout)
                         .foregroundStyle(AOMCraftColor.inkSecondary)
                         .frame(width: 26, height: 24)
                 }
@@ -232,7 +232,7 @@ struct AOMMenuBarCraftPanel: View {
                 .fill(tile.isOn ? tile.tint : Color.primary.opacity(0.10))
                 .frame(width: 28, height: 28)
             Image(systemName: tile.symbol)
-                .font(.system(size: 12, weight: .semibold))
+                .font(AOMFont.callout.weight(.semibold))
                 .foregroundStyle(tile.isOn ? .white : .secondary)
         }
     }
@@ -240,10 +240,10 @@ struct AOMMenuBarCraftPanel: View {
     private func tileText(_ tile: ToggleTile) -> some View {
         VStack(alignment: .leading, spacing: 1) {
             Text(tile.title)
-                .font(.system(size: 12, weight: .semibold))
+                .font(AOMFont.callout.weight(.semibold))
                 .lineLimit(1)
             Text(tile.subtitle)
-                .font(.system(size: 10.5))
+                .font(Font.caption)
                 .foregroundStyle(AOMCraftColor.inkSecondary)
                 .lineLimit(1)
         }
@@ -285,7 +285,7 @@ struct AOMMenuBarCraftPanel: View {
                         tileText(tile)
                         Spacer(minLength: 0)
                         Image(systemName: "chevron.down")
-                            .font(.system(size: 9.5, weight: .bold))
+                            .font(Font.caption2.weight(.bold))
                             .foregroundStyle(AOMCraftColor.inkSecondary)
                             .rotationEffect(.degrees(isOpen ? 180 : 0))
                     }
@@ -314,14 +314,14 @@ struct AOMMenuBarCraftPanel: View {
     private func tileMenu(_ tile: ToggleTile, _ commands: [AOMFeatureCommand]) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 6) {
-                Image(systemName: tile.symbol).font(.system(size: 11, weight: .semibold)).foregroundStyle(tile.tint)
-                Text(tile.title).font(.system(size: 12, weight: .semibold))
+                Image(systemName: tile.symbol).font(AOMFont.caption.weight(.semibold)).foregroundStyle(tile.tint)
+                Text(tile.title).font(AOMFont.callout.weight(.semibold))
                 if let note = tile.menuNote {
-                    Text(note).font(.system(size: 11)).foregroundStyle(AOMCraftColor.inkSecondary).lineLimit(1)
+                    Text(note).font(AOMFont.caption).foregroundStyle(AOMCraftColor.inkSecondary).lineLimit(1)
                 }
                 Spacer()
                 Button { toggleMenu(tile.id) } label: {
-                    Image(systemName: "xmark").font(.system(size: 9.5, weight: .bold)).foregroundStyle(AOMCraftColor.inkSecondary)
+                    Image(systemName: "xmark").font(Font.caption2.weight(.bold)).foregroundStyle(AOMCraftColor.inkSecondary)
                         .frame(width: 20, height: 18)
                 }
                 .buttonStyle(.plain)
@@ -335,8 +335,8 @@ struct AOMMenuBarCraftPanel: View {
                     onCommand(command)
                 } label: {
                     HStack(spacing: 8) {
-                        Image(systemName: command.symbol).font(.system(size: 12)).frame(width: 18)
-                        Text(command.title).font(.system(size: 12.5))
+                        Image(systemName: command.symbol).font(AOMFont.callout).frame(width: 18)
+                        Text(command.title).font(AOMFont.callout)
                         Spacer()
                     }
                     .padding(.horizontal, 8)

@@ -71,7 +71,7 @@ enum HangulLayoutConverter {
     }
 
     /// True when the letters compose into whole syllables on the 2-set
-    /// layout, with no jamo left over ("dkssud" yes, "xyz" no). Many English
+    /// layout, with no jamo left over ("dkssud" yes, "qqq" no). Many English
     /// words pass too, so this only ranks; conversion stays an explicit act.
     static func looksLikeMistypedKorean(_ word: String) -> Bool {
         let letters = word.filter(\.isLetter)

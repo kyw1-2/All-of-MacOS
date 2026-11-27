@@ -1153,7 +1153,7 @@ struct ClipboardPanelView: View {
                             }
                         }.frame(maxWidth: AOMFeatureSize.shelfTokenStrip)
                     }
-                    TextField("Search Clipboard", text: Binding(
+                    TextField("Search Clipboard · ~ by meaning", text: Binding(
                         get: { ClipboardSearchQuery.editableText(in: state.query) },
                         set: { state.query = ClipboardSearchQuery.updatingEditableText($0, in: state.query) }))
                         .textFieldStyle(.plain)
@@ -1986,8 +1986,12 @@ private struct ClipboardCardView: View, Equatable {
         } else {
             // Lay out only what fits: a 4,000-character preview per card made
             // every scroll frame re-measure large text blocks.
-            Text(ClipboardSearchQuery(searchQuery).highlighted(entry.previewText, limit: cardTextBudget))
+            // 7.22: code is coloured (keywords, strings, comments, numbers).
+            Text(searchQuery.isEmpty && AOMLauncherClipDetail.looksLikeCode(entry.previewText)
+                 ? ClipboardCodeHighlighter.attributed(String(entry.previewText.prefix(cardTextBudget)))
+                 : ClipboardSearchQuery(searchQuery).highlighted(entry.previewText, limit: cardTextBudget))
                 .font(compact ? AOMFont.caption : AOMFont.body)
+                .fontDesign(searchQuery.isEmpty && AOMLauncherClipDetail.looksLikeCode(entry.previewText) ? .monospaced : nil)
                 .lineSpacing(AOMSpace.x0_5)
                 .lineLimit(cardLineLimit)
                 .multilineTextAlignment(.leading)

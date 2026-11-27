@@ -185,7 +185,7 @@ struct AOMPasteCraftCard: View {
 
         case .code(let snippet, let language):
             VStack(alignment: .leading, spacing: 6) {
-                Text(snippet)
+                Text(ClipboardCodeHighlighter.attributed(snippet))
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(.primary.opacity(0.9))
                     .lineLimit(7)

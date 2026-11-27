@@ -29,6 +29,9 @@ struct NetworkInfoSheet: View {
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
+                    AOMSection("Traffic", help: "Bytes this Mac receives and sends each second on every active network interface, read from the system's counters once a second while this sheet is open.") {
+                        NetworkThroughputGauge().padding(AOMSpace.x3)
+                    }
                     AOMSection("This Mac") {
                         AOMSettingRow("Local address", detail: localAddress.map { "\($0.address) · \($0.interface)" } ?? "No IPv4 address") {
                             Button("Copy") { copy(localAddress?.address) }

@@ -113,7 +113,9 @@ enum AOMSize {
     static let readableText: CGFloat = 640
     /// The page column: content fills the detail column up to this and is
     /// centred beyond it. List + detail pages keep their full-width split.
-    static let contentMaxWidth: CGFloat = 960
+    /// 7.22 (DeepSeek 7.21 report §5.3.5): 1,180 (was 960) — data pages use
+    /// a wide window instead of leaving a third of it empty.
+    static let contentMaxWidth: CGFloat = 1_180
     /// Workspace module tiles: three columns from 3 × 240 + 2 × 8 pt.
     static let tileMin: CGFloat = 240
     static let tileMax: CGFloat = 420
@@ -595,7 +597,8 @@ enum AOMIcon {
     /// Empty states and the Workspace banner.
     static let identityHero: CGFloat = 44
     /// 7.14: a page's hero mark (System Settings 26, Stats, Bartender 7 panes).
-    static let heroMark: CGFloat = 36
+    /// 7.22 (report §5.3.4): 28 (was 36) — identity colour as a mark, not a slide title.
+    static let heroMark: CGFloat = 28
     /// 7.14: the sidebar's solid squircles (System Settings, Bartender 7, Ice).
     static let sidebarMark: CGFloat = 20
     /// 7.14: a Workspace module row's mark.

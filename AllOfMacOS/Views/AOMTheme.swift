@@ -160,11 +160,15 @@ struct AOMCardSurface: ViewModifier {
                         shape.fill(fill)
                     }
                 }
-                // The fill alone marks the group; Increase Contrast and Show
-                // Borders add a 1 pt edge.
+                // 7.22 (DeepSeek 7.21 report §5.3.3): a hairline edge, so a
+                // card reads as a surface and not a wireframe on the canvas;
+                // Increase Contrast and Show Borders make it 1 pt.
                 .overlay {
                     if contrast == .increased || showBorders {
                         shape.strokeBorder(contrast == .increased ? AOMColor.strongLine : AOMColor.hairline, lineWidth: 1)
+                            .allowsHitTesting(false)
+                    } else if !glass {
+                        shape.strokeBorder(AOMColor.hairline.opacity(colorScheme == .dark ? 0.9 : 0.7), lineWidth: 0.5)
                             .allowsHitTesting(false)
                     }
                 }
