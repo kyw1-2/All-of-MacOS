@@ -54,12 +54,33 @@ final class MeetingAlerts: NSObject {
         storeObserver = NotificationCenter.default.addObserver(forName: .EKEventStoreChanged, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.feedLoadedAt = nil; self?.feedStale = true; self?.tick() }
         }
+        // 7.22: a call app taking the microphone during a calendar meeting
+        // offers to record it (Granola). Nothing records without a click.
+        if MeetingRecordOffer.isEnabled {
+            let watcher = MicrophoneActivityWatcher { [weak self] active in
+                MainActor.assumeIsolated {
+                    guard active, let self, MeetingRecorder.shared.phase == .idle,
+                          let event = Self.happening(self.feed, now: Date()) else { return }
+                    MeetingRecordOffer.shared.offer(event)
+                }
+            }
+            microphoneWatcher = watcher
+            watcher.start()
+        }
         tick()
+    }
+
+    private var microphoneWatcher: MicrophoneActivityWatcher?
+
+    /// The timed event under way now (from 5 minutes before its start).
+    nonisolated static func happening(_ events: [PaletteSchedule.Event], now: Date) -> PaletteSchedule.Event? {
+        events.filter { !$0.isAllDay && $0.start.addingTimeInterval(-300) <= now && $0.end > now }.min { $0.start < $1.start }
     }
 
     func stop() {
         timer?.invalidate()
         timer = nil
+        microphoneWatcher?.stop(); microphoneWatcher = nil
         if let storeObserver { NotificationCenter.default.removeObserver(storeObserver) }
         storeObserver = nil
         feed = []
@@ -292,5 +313,81 @@ struct MeetingAlertView: View {
         let range = "\(PaletteSchedule.clock(event.start))–\(PaletteSchedule.clock(event.end))"
         if seconds > 0 { return "Starts in \(seconds / 60):\(String(format: "%02d", seconds % 60)) · \(range)" }
         return "Started · \(range)"
+    }
+}
+
+
+/// 7.22: a small panel at the top of the pointer's screen — "Record
+/// “Weekly sync”?" with Record and Not Now — shown once per meeting when
+/// the microphone turns on during it, gone after 20 seconds.
+@MainActor
+final class MeetingRecordOffer {
+    static let shared = MeetingRecordOffer()
+    static let defaultsKey = "AOMMeetingRecordOffer"
+    nonisolated static var isEnabled: Bool { UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? true }
+
+    private var panel: NSPanel?
+    private var offered: Set<String> = []
+
+    func offer(_ event: PaletteSchedule.Event) {
+        let key = MeetingAlerts.key(event)
+        guard !offered.contains(key), panel == nil else { return }
+        offered.insert(key)
+        let panel = MeetingAlertPanel(contentRect: CGRect(x: 0, y: 0, width: 360, height: 84),
+                                      styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        panel.level = .statusBar
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hidesOnDeactivate = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        let view = MeetingRecordOfferView(title: event.title, record: { [weak self] in
+            MeetingRecorder.shared.start(title: event.title)
+            self?.close()
+        }, dismiss: { [weak self] in self?.close() })
+        let host = NSHostingView(rootView: view)
+        panel.contentView = host
+        let size = host.fittingSize
+        let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main
+        let visible = screen?.visibleFrame ?? .zero
+        panel.setFrame(CGRect(x: visible.maxX - size.width - 16, y: visible.maxY - size.height - 12,
+                              width: size.width, height: size.height), display: true)
+        panel.orderFrontRegardless()
+        self.panel = panel
+        DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self, weak panel] in
+            if let panel, self?.panel === panel { self?.close() }
+        }
+    }
+
+    private func close() {
+        panel?.orderOut(nil)
+        panel = nil
+    }
+}
+
+struct MeetingRecordOfferView: View {
+    let title: String
+    let record: () -> Void
+    let dismiss: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "waveform.badge.mic").font(.title2).foregroundStyle(.red)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Record “\(title)”?").font(.headline).lineLimit(1)
+                Text("Your microphone turned on during this meeting. The transcript stays on this Mac.")
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+            }
+            VStack(spacing: 4) {
+                Button("Record", action: record).keyboardShortcut(.defaultAction)
+                Button("Not Now", action: dismiss)
+            }
+            .controlSize(.small)
+        }
+        .padding(12)
+        .frame(width: 380)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Record \(title)?")
     }
 }
