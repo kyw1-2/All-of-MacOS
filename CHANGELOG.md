@@ -1,3 +1,23 @@
+## [7.23.0] - 2026-11-28 — Quick Entry, a two-pane browser, and the rest of 7.22
+
+From DeepSeek's design reference of 2026-11-25 (ten apps not analysed before — Things, Fantastical, Hazel, AppCleaner, DaisyDisk, Transmit, Soulver, Moom, Mimestream, Monodraw; on Drive, AOM-Reports/2026-11-27) and the items 7.22 left open. Each claim was checked against the code first. Ledger: `docs/design-7.23.md`.
+
+- **A hidden secret can't be found by typing part of it**: the clipboard card stayed locked, but a search for some of its characters still listed it — telling anyone watching that the text was there. Free-text search now skips hidden secrets (they are still found by app, type, pinboard, date or `is:secret`), on the shelf, the Clipboard page and the launcher.
+- **Quick Entry** (⌃⌥N, Settings › Shortcuts; or ⌘K › Quick Entry): a small field over any app for a note, a reminder or an event, without taking focus from the app. ⌘↩ saves and keeps it open for the next one. A sentence with a time — “내일 3시 회의”, “lunch friday 12pm” — becomes an event or a reminder at that time. Calendar and Reminders are asked for only the first time you save one. A shortcut that can't be registered says what, why and what to do.
+- **The launcher reads sentences**: type a title with a time (“내일 3시 회의”) and the first row adds it to Calendar (↩) or Reminders (⌘↩). Anything else searches as before.
+- **Symbols** in the launcher: box drawing, arrows, maths, shapes and currency by name (“arrow”, “화살표”, “won”), with the last 18 kept.
+- **Two-Pane Browser** (Files › Tools, or ⌘K): two folders side by side, drag to copy (⌘ to move); a taken name asks Replace (the old one goes to the Trash), Keep Both or Skip; transfers queue below with the reason when one fails and Try Again.
+- **Folder Rules and iCloud**: files whose content is only in iCloud or a file provider are downloaded before rules apply (or left alone, your choice), and the page says how many and which.
+- **Drop Shelf at the screen edge**: push a dragged file against the left or right edge of the screen to open the shelf there (Files › Drop Shelf).
+- **Clearer failures**: permissions say what stops working without each one; the uninstaller warns when Full Disk Access is off (and Full Disk Access now shows its real state); AI and weather errors name the cause — clock off, address not found, server refusing, certificate — with the next step.
+- **Meeting notes**: one mixed `meeting.m4a` beside the recordings; macOS 26's newer on-device speech model where available; “Others 1 / Others 2” when two voices on the call are clearly different; optional recording without asking (Settings › Capture › Meeting notes).
+- **Recording Studio**: the camera fades out during pauses of 1.4 s or more; Show Pauses marks them on a strip; Add Zoom Range zooms over a stretch of time; a Precise ↔ Smooth slider for the cursor.
+- **System Tools**: Network Info lists the apps using the network now; Folder Sizes can colour by kind or by age.
+- **Automation**: Text appears on screen can watch the front window or a region you pick.
+- **Typing**: optionally fix Korean typed in English as you press Space (“dkssud ” → “안녕 ”), never in terminals or code editors (Settings › General › Input sources).
+- **Clipboard**: the menu bar panel says how many items expire within the hour.
+- **Design**: denser rows (30/38 pt), tool pages without the large mark beside their sentence (Workspace keeps it), page widths by kind of page.
+
 ## [7.22.0] - 2026-11-27 — Safer clipboard, meeting notes, and commercial-app polish
 
 From DeepSeek's 2026-11-26 report on Oracle (DaisyDisk, Screen Studio, TextExpander, Proxyman, Granola/MacWhisper and others), each claim checked against the code first. Ledger: `docs/design-7.22.md`.

@@ -541,11 +541,12 @@ struct QuickCommandPalette: View {
 
     /// 7.23 (DeepSeek design reference §2.2, Fantastical): a sentence with a
     /// day or time ("내일 3시 회의") offers itself as an event (↩) or a
-    /// reminder (⌘↩) above the results. Anything that doesn't parse — or is
-    /// a calculation — searches as before, with no error.
+    /// reminder (⌘↩) above the results. Anything that doesn't parse, names
+    /// no time ("오늘 할일" is a search), or is a calculation searches as
+    /// before, with no error.
     private func sentenceItems() -> [PaletteItem] {
         guard isSearching, trimmed.contains(" "), AOMCalculator.evaluate(trimmed) == nil,
-              let sentence = QuickEntryParser.parse(trimmed) else { return [] }
+              let sentence = QuickEntryParser.parse(trimmed), sentence.hasTime else { return [] }
         let text = trimmed
         func add(_ destination: QuickEntryStore.Destination) {
             close()
