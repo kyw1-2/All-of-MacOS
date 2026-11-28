@@ -759,24 +759,26 @@ struct AOMModuleTile<Control: View, MenuItems: View>: View {
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
                 }
-                if menuButton {
-                    // 7.21 (iStat Menus 7, Linear 2026 refresh): the commands
-                    // button stays visible but quiet — a secondary-colour
-                    // ellipsis that comes forward on hover — instead of an
-                    // accent-blue chevron competing with the row's switch.
-                    Menu { menuItems } label: {
-                        Image(systemName: "ellipsis.circle")
-                            .font(AOMFont.callout)
-                            .foregroundStyle(AOMColor.textSecondary)
+                // 7.24 (menu bar spec §4.3): every row keeps the same 22 pt
+                // slot here, and the ⋯ appears only on hover (its commands
+                // are also on right-click), so the controls form one column.
+                ZStack {
+                    if menuButton {
+                        Menu { menuItems } label: {
+                            Image(systemName: "ellipsis.circle")
+                                .font(AOMFont.callout)
+                                .foregroundStyle(AOMColor.textSecondary)
+                        }
+                        .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
+                        .tint(AOMColor.textSecondary)
+                        .opacity(hovering ? 1 : 0)
+                        .fixedSize()
+                        .help("\(module.title) commands")
+                        .accessibilityLabel("\(module.title) commands")
                     }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                    .tint(AOMColor.textSecondary)
-                    .opacity(hovering ? 1 : 0.5)
-                    .fixedSize()
-                    .help("\(module.title) commands")
-                    .accessibilityLabel("\(module.title) commands")
                 }
+                .frame(width: 22)
                 control
                     .labelsHidden()
                     .toggleStyle(AOMRowSwitchStyle())

@@ -254,15 +254,29 @@ final class MenuBarWeather: NSObject, ObservableObject, NSMenuDelegate {
 
     // MARK: Lifecycle
 
+    /// 7.24 (Stats' combined modules): the weather inside AOM's own icon
+    /// instead of an icon of its own — one fewer item beside the notch.
+    static let combinedKey = "AOMWeatherInAOMIcon"
+    static var showsInAOMIcon: Bool {
+        get { UserDefaults.standard.bool(forKey: combinedKey) }
+        set { UserDefaults.standard.set(newValue, forKey: combinedKey) }
+    }
+    /// The short line AOM's icon shows when combined ("12°"), nil otherwise.
+    @Published private(set) var combinedText: String?
+    private var running = false
+
     func start() {
-        guard item == nil else { return }
-        // One item, however often the module is turned off and on.
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.autosaveName = "AOMMenuBarWeather"
-        let menu = NSMenu()
-        menu.delegate = self
-        item.menu = menu
-        self.item = item
+        guard !running else { return }
+        running = true
+        if !Self.showsInAOMIcon, item == nil {
+            // One item, however often the module is turned off and on.
+            let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+            item.autosaveName = "AOMMenuBarWeather"
+            let menu = NSMenu()
+            menu.delegate = self
+            item.menu = menu
+            self.item = item
+        }
         updateItem()
         let timer = Timer(timeInterval: 300, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.refresh() } }
         timer.tolerance = 60
@@ -274,7 +288,18 @@ final class MenuBarWeather: NSObject, ObservableObject, NSMenuDelegate {
         if city == nil { DispatchQueue.main.async { Self.openCityPicker() } } else { refresh() }
     }
 
+    /// Moves the weather into AOM's icon or back to its own.
+    func setShowsInAOMIcon(_ on: Bool) {
+        Self.showsInAOMIcon = on
+        guard running else { return }
+        stop()
+        start()
+    }
+
     func stop() {
+        running = false
+        combinedText = nil
+        NotificationCenter.default.post(name: AOMCombinedStatus.didChange, object: nil)
         timer?.invalidate()
         timer = nil
         if let wakeObserver { NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver) }
@@ -548,6 +573,15 @@ final class MenuBarWeather: NSObject, ObservableObject, NSMenuDelegate {
     // MARK: Item and menu
 
     private func updateItem() {
+        if Self.showsInAOMIcon {
+            let text = city == nil ? nil : Self.line(current, fields: fields).text
+            let next = text.map { AOMStatusItemWidth.stable($0, key: "weather") }
+            if combinedText != next {
+                combinedText = next
+                NotificationCenter.default.post(name: AOMCombinedStatus.didChange, object: nil)
+            }
+            return
+        }
         guard let button = item?.button else { return }
         let current = self.current
         let image = NSImage(systemSymbolName: current.map { Self.symbol(code: $0.code, isDay: $0.isDay) } ?? "cloud.sun",
@@ -557,7 +591,7 @@ final class MenuBarWeather: NSObject, ObservableObject, NSMenuDelegate {
         button.font = .monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
         let line = Self.line(current, fields: fields)
         button.imagePosition = fields.isEmpty ? .imageOnly : .imageLeading
-        button.title = city == nil ? "" : line.text
+        button.title = city == nil ? "" : AOMStatusItemWidth.stable(line.text, key: "weather")
         // A disabled NSStatusBarButton renders all weather content washed out.
         // Keep contrast even offline; stale data is called out by its timestamp
         // and the accessibility description, never by making the item illegible.

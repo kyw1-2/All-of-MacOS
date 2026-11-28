@@ -31,10 +31,11 @@ final class AOM716Tests: XCTestCase {
 
     // V06: hysteresis around 860 pt.
     func testMenuBarPaneLayoutHysteresis() {
-        XCTAssertTrue(MenuBarPaneNavigation.sideBySide(width: 900, current: false))
-        XCTAssertFalse(MenuBarPaneNavigation.sideBySide(width: 800, current: true))
-        XCTAssertTrue(MenuBarPaneNavigation.sideBySide(width: 859, current: true), "inside the band it stays")
-        XCTAssertFalse(MenuBarPaneNavigation.sideBySide(width: 861, current: false), "inside the band it stays")
+        XCTAssertTrue(MenuBarPaneNavigation.sideBySide(width: 760, current: false))
+        XCTAssertFalse(MenuBarPaneNavigation.sideBySide(width: 640, current: true))
+        XCTAssertTrue(MenuBarPaneNavigation.sideBySide(width: 699, current: true), "inside the band it stays")
+        XCTAssertFalse(MenuBarPaneNavigation.sideBySide(width: 701, current: false), "inside the band it stays")
+        XCTAssertTrue(MenuBarPaneNavigation.sideBySide(width: 0, current: true), "the first, empty layout pass changes nothing")
     }
 
     // V04: an old writer's late clear doesn't remove the new writer's context.

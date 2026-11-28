@@ -116,6 +116,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.current = self
         if appState == nil, let state = AppState.current { appState = state }
+        // 7.24: Settings › Appearance styles every AOM window and panel.
+        MainActor.assumeIsolated { AOMAppAppearance.start() }
         AOMScrollChromePolicy.shared.start()
         // 3.4.32 audit: an ordered-out SwiftUI scene keeps ticking; the
         // animation gate needs a real visibility signal from the window server.
@@ -535,6 +537,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     // MARK: - Menu Bar
 
+    private var combinedObserver: NSObjectProtocol?
+
     private func setupMenuBarIcon() {
         guard statusItem == nil else { return }
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -549,6 +553,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
         updateStatusIcon()
+        combinedObserver = NotificationCenter.default.addObserver(forName: AOMCombinedStatus.didChange, object: nil, queue: .main) { [weak self] _ in
+            self?.updateStatusIcon()
+        }
         // Optional Ice-style notch reveal installs a mouse-move listener
         // only when enabled; normal startup keeps its old event budget.
         MainActor.assumeIsolated { AOMMenuShelfController.shared.installHoverIfEnabled() }
@@ -1043,6 +1050,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let enabled = MainActor.assumeIsolated { appState?.globalEnabled ?? true }
         let paused = TriggerSuppression.shared.isPaused
         button.image = AOMMenuBarIcon.image(!enabled ? .disabled : (paused ? .paused : .active))
+        // 7.24: the weather inside AOM's icon when combined (Settings › Menu Bar › Weather).
+        let combined = MainActor.assumeIsolated { MenuBarWeather.shared.combinedText }
+        button.font = .monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
+        button.imagePosition = combined == nil ? .imageOnly : .imageLeading
+        button.title = combined.map { " " + $0 } ?? ""
     }
 
     @objc private func showClipboard() { MainActor.assumeIsolated { ClipboardPanelController.shared.show() } }

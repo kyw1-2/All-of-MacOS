@@ -215,17 +215,12 @@ struct CaptureStudioView: View {
             if recordingService.isRecording {
                 activeRecordingBanner
             }
-            // A bare strip: the toolbar's Capture menu lists the same tools,
-            // so the strip needs no title of its own (VoiceOver keeps one).
-            AOMSection("Capture tools", padding: AOMSpace.x3) {
-                VStack(spacing: AOMSpace.x2) {
-                    captureLaunchpad
-                    AOMDivider()
-                    captureQuickUtilitiesBar
-                }
-            }
-            .accessibilityElement(children: .contain)
-            .accessibilityLabel("Capture tools")
+            // 7.24 (menu bar spec §4.4, CleanShot X / Shottr): one slim row —
+            // the five everyday modes and Record, the rest under More — so the
+            // captures themselves are the page, not ten tiles above them.
+            captureToolbar
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Capture tools")
             VStack(alignment: .leading, spacing: AOMSpace.titleGap) {
                 // Nothing to filter or size before the first capture.
                 if !history.entries.isEmpty {
@@ -398,72 +393,51 @@ struct CaptureStudioView: View {
             .disabled(tool.disabled)
     }
 
-    /// Ten tools: one row when each gets room for its name, otherwise two even
-    /// rows of five (b.2: column counts divide the item count).
-    private var captureLaunchpad: some View {
+    static let toolbarIDs: Set<String> = ["allInOne", "area", "window", "fullScreen", "scrolling", "record"]
+
+    private var captureToolbar: some View {
         let all = tools
-        return ViewThatFits(in: .horizontal) {
-            HStack(spacing: AOMSpace.x1) {
-                ForEach(all) { toolButton($0).frame(minWidth: CaptureGalleryMetrics.toolRowMinimum) }
-            }
-            Grid(horizontalSpacing: AOMSpace.x1, verticalSpacing: AOMSpace.x1) {
-                GridRow { ForEach(all.prefix(5)) { toolButton($0) } }
-                GridRow { ForEach(all.suffix(from: 5)) { toolButton($0) } }
-            }
-        }
-    }
-
-    private var captureQuickUtilitiesBar: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: AOMSize.directoryTileMin), alignment: .leading)],
-                  alignment: .leading, spacing: AOMSpace.x2) {
-                Button {
-                    AnnotationEditorController.shared.chooseImageOrProject()
-                } label: {
-                    Label("Open & Annotate…", systemImage: "pencil.and.outline")
+        return HStack(spacing: AOMSpace.x1) {
+            ForEach(all.filter { Self.toolbarIDs.contains($0.id) }) { tool in
+                Button(action: tool.action) {
+                    HStack(spacing: AOMSpace.x1) {
+                        Image(systemName: tool.symbol).foregroundStyle(tool.tint == AOMTheme.text ? AOMModule.capture.hue : tool.tint)
+                        Text(tool.title).font(AOMFont.callout.weight(.medium)).lineLimit(1)
+                        if let shortcut = tool.shortcut {
+                            Text(shortcut).font(AOMFont.caption).foregroundStyle(AOMColor.textTertiary).lineLimit(1)
+                        }
+                    }
+                    .padding(.horizontal, AOMSpace.x2)
+                    .frame(height: 32)
+                    .background(AOMColor.surface, in: RoundedRectangle(cornerRadius: AOMRadius.control + 3, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: AOMRadius.control + 3, style: .continuous).strokeBorder(AOMColor.hairline, lineWidth: 0.5))
                 }
-                .buttonStyle(AOMSoftButtonStyle())
-                .controlSize(.small)
-                .help("Open an image file or annotation project to mark up")
-
-                Button {
-                    CaptureHistoryWindowController.shared.present()
-                } label: {
-                    Label("History Overlay", systemImage: "clock.arrow.circlepath")
+                .buttonStyle(.plain)
+                .disabled(tool.disabled)
+                .help(tool.help ?? (tool.shortcut.map { "\(tool.title) (\($0))" } ?? tool.title))
+            }
+            Menu {
+                ForEach(all.filter { !Self.toolbarIDs.contains($0.id) }) { tool in
+                    Button { tool.action() } label: { Label(tool.title + (tool.shortcut.map { "  \($0)" } ?? ""), systemImage: tool.symbol) }
                 }
-                .buttonStyle(AOMSoftButtonStyle())
-                .controlSize(.small)
-                .help("Open the floating capture history window")
-
+                Divider()
+                Button { AnnotationEditorController.shared.chooseImageOrProject() } label: { Label("Open & Annotate…", systemImage: "pencil.and.outline") }
+                Button { CaptureHistoryWindowController.shared.present() } label: { Label("History Overlay", systemImage: "clock.arrow.circlepath") }
                 Button {
                     CaptureCoordinator.shared.toggleDesktopIcons()
                     toast.show("Desktop icons toggled")
-                } label: {
-                    Label("Toggle Desktop Icons", systemImage: "menubar.dock.rectangle")
-                }
-                .buttonStyle(AOMSoftButtonStyle())
-                .controlSize(.small)
-                .help("Hide or show Finder desktop icons for clean screenshots")
-
-                Toggle("Append OCR Text", isOn: Binding(
-                    get: { textCapture.additiveClipboard },
-                    set: { textCapture.additiveClipboard = $0 }
-                ))
-                .toggleStyle(.checkbox)
-                .font(AOMFont.callout)
-                .padding(.horizontal, AOMSpace.x1)
-                .help("When enabled, Copy Text (OCR) appends to the clipboard instead of replacing it")
-
-                Button {
-                    showingSettingsSheet = true
-                } label: {
-                    Label("Capture Settings…", systemImage: "slider.horizontal.3")
-                }
-                .buttonStyle(AOMSoftButtonStyle())
-                .controlSize(.small)
-                .help("Format, save folder, recording FPS, audio & Quick Access options")
+                } label: { Label("Toggle Desktop Icons", systemImage: "menubar.dock.rectangle") }
+                Toggle("Append OCR Text", isOn: Binding(get: { textCapture.additiveClipboard }, set: { textCapture.additiveClipboard = $0 }))
+                Divider()
+                Button { showingSettingsSheet = true } label: { Label("Capture Settings…", systemImage: "slider.horizontal.3") }
+            } label: {
+                Label("More", systemImage: "ellipsis.circle").font(AOMFont.callout)
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help("Self-Timer, Text, QR Code, Measure, Open & Annotate, settings")
+            Spacer(minLength: 0)
         }
-        .padding(.horizontal, AOMSpace.x1)
-        .padding(.vertical, AOMSpace.x1)
     }
 
     /// What the gallery shows, with the thumbnail size at the trailing end of

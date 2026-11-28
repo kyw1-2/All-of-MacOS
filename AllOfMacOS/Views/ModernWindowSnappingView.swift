@@ -133,6 +133,10 @@ struct ModernWindowSnappingView: View {
                     // D21: the real displays and the active zones first.
                     AOMMonitorCanvas(zones: appState.effectiveSnapZones, selectedID: $selectedDisplayID,
                                      onEditZones: { editZones(for: $0) })
+                    // 7.24: no zones yet — three starter sets instead of an empty screen.
+                    if appState.effectiveSnapZones.filter(\.isEnabled).isEmpty, appState.activeSnapProfile == nil {
+                        SnapZoneStarterCards()
+                    }
                     quickZonesBar
                     if wide {
                         HStack(alignment: .top, spacing: AOMSpace.sectionGap) {

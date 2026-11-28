@@ -477,6 +477,12 @@ struct MenuBarWeatherPane: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Toggle("Show in menu bar", isOn: Binding(get: { modules.isOn(.weather) }, set: { _ = modules.set(.weather, on: $0) }))
                         .toggleStyle(.switch)
+                    // 7.24 (Stats' combined modules): one icon fewer in the bar.
+                    Toggle("Inside AOM's icon", isOn: Binding(get: { MenuBarWeather.showsInAOMIcon },
+                                                              set: { weather.setShowsInAOMIcon($0) }))
+                        .toggleStyle(.switch)
+                        .disabled(!modules.isOn(.weather))
+                        .help("Shows the weather beside AOM's icon instead of as an icon of its own")
                     HStack(spacing: 8) {
                         Image(systemName: "mappin.and.ellipse").foregroundStyle(AOMColor.textSecondary)
                         Text(weather.city?.name ?? "No city").font(.system(size: 13, weight: .semibold)).lineLimit(1)

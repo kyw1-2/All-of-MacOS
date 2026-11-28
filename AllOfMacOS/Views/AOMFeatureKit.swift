@@ -397,6 +397,41 @@ struct AOMCardGroup<Content: View>: View {
     }
 }
 
+// MARK: - App-wide appearance (7.24)
+
+/// 7.24 (menu bar spec §4.1, P0): Settings › Appearance used to style only
+/// the main and Settings windows; the menu bar panel, the launcher, Quick
+/// Entry, the Drop Shelf and the menu bar strip followed the system, so a
+/// Mac in Light with AOM set to Dark showed a white panel under a dark
+/// window. The choice now sets the whole app's appearance (nil = System);
+/// a launcher theme with its own scheme still overrides it on its panel.
+@MainActor
+enum AOMAppAppearance {
+    static func appearance(for choice: String) -> NSAppearance? {
+        switch choice {
+        case "dark": return NSAppearance(named: .darkAqua)
+        case "light": return NSAppearance(named: .aqua)
+        default: return nil
+        }
+    }
+
+    static func apply(defaults: UserDefaults = .standard) {
+        let wanted = appearance(for: defaults.string(forKey: "AOMAppearance") ?? "system")
+        if NSApp.appearance?.name != wanted?.name { NSApp.appearance = wanted }
+    }
+
+    private static var observer: NSObjectProtocol?
+
+    /// Applies now and on every change of the setting.
+    static func start() {
+        apply()
+        guard observer == nil else { return }
+        observer = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { apply() }
+        }
+    }
+}
+
 // MARK: - Preview hooks
 
 /// Isolated UI previews (`--aom-ui-preview`) can show floating panels and
@@ -406,12 +441,8 @@ struct AOMCardGroup<Content: View>: View {
 /// `AOMAppearance` instead. Real launches never take this path.
 enum AOMFeaturePreview {
     @MainActor static func applyPanelAppearance() {
-        guard PresetManager.isUIPreview,
-              ProcessInfo.processInfo.arguments.contains("--aom-preview-panel-appearance") else { return }
-        let choice = UserDefaults.standard.string(forKey: "AOMAppearance") ?? "system"
-        let appearance: NSAppearance? = choice == "dark" ? NSAppearance(named: .darkAqua)
-            : choice == "light" ? NSAppearance(named: .aqua) : nil
-        if NSApp.appearance?.name != appearance?.name { NSApp.appearance = appearance }
+        // 7.24: every launch follows the setting now (AOMAppAppearance).
+        AOMAppAppearance.apply()
     }
 }
 

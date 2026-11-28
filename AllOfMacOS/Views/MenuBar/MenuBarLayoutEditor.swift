@@ -352,12 +352,17 @@ extension MenuBarSection {
 extension MenuBarLayoutModel {
     /// The menu bar's sampled colour (the window's colour until it is read).
     var laneColor: Color {
-        barColor.map { Color(nsColor: $0.withAlphaComponent(1)) } ?? Color(nsColor: .windowBackgroundColor)
+        laneNSColor.map { Color(nsColor: MenuBarLaneColor.calmed($0)) } ?? Color(nsColor: .windowBackgroundColor)
+    }
+
+    /// 7.24: the read bar colour, or a slate when only light pictures are cached.
+    var laneNSColor: NSColor? {
+        barColor ?? laneFallback
     }
 
     /// Ink that reads on `laneColor` (Gemini 7.10: white glyphs vanished on light bars).
     var ink: Color {
-        guard let color = barColor?.usingColorSpace(.sRGB) else { return AOMColor.text }
+        guard let color = laneNSColor.map(MenuBarLaneColor.calmed)?.usingColorSpace(.sRGB) else { return AOMColor.text }
         let luminance = 0.2126 * color.redComponent + 0.7152 * color.greenComponent + 0.0722 * color.blueComponent
         return luminance > 0.55 ? .black : .white
     }

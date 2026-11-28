@@ -179,11 +179,15 @@ struct MenuBarPaneNavigation: View {
     @FocusState private var focusedTab: MenuBarSettingsTab?
     static let width: CGFloat = 184
     /// Below this page width the list becomes a pop-up above the pane.
-    static let sideBySideWidth: CGFloat = 860
+    /// 7.24 (menu bar spec §3.2): 860 → 700, so a 1,024–1,320 pt window keeps
+    /// the eight panes in view (the pane still gets 500 pt).
+    static let sideBySideWidth: CGFloat = 700
 
-    /// Pure (V06): side by side from 868 pt, stacked below 852 pt, and in
-    /// between whatever it already was.
+    /// Pure (V06): side by side from 708 pt, stacked below 692 pt, and in
+    /// between whatever it already was. A zero width (the first layout pass)
+    /// changes nothing.
     static func sideBySide(width: CGFloat, current: Bool) -> Bool {
+        guard width > 0 else { return current }
         if width >= sideBySideWidth + 8 { return true }
         if width < sideBySideWidth - 8 { return false }
         return current

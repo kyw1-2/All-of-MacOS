@@ -292,8 +292,12 @@ final class MenuBarLayoutModel: ObservableObject {
     static let shared = MenuBarLayoutModel()
 
     @Published private(set) var items: [MenuBarLayoutItem] = []
-    @Published private(set) var images: [String: NSImage] = [:]
+    @Published private(set) var images: [String: NSImage] = [:] {
+        didSet { laneFallback = barColor == nil ? MenuBarLaneColor.fallback(iconLuminance: MenuBarLaneColor.iconLuminance(Array(images.values))) : nil }
+    }
     @Published private(set) var barColor: NSColor?
+    /// 7.24: the lane before a bar colour is known (see MenuBarLaneColor).
+    private(set) var laneFallback: NSColor?
     @Published private(set) var busy = false
     @Published private(set) var status: String?
     @Published private(set) var lastRefresh: Date?
@@ -312,6 +316,10 @@ final class MenuBarLayoutModel: ObservableObject {
         DistributedNotificationCenter.default().addObserver(forName: Notification.Name("AppleInterfaceThemeChangedNotification"), object: nil, queue: .main) { _ in
             MainActor.assumeIsolated { MenuBarLayoutModel.shared.lastReveal = .distantPast }
         }
+        // 7.24 (menu bar spec §3.2): the bar's colour is kept with its
+        // pictures; without it, white icons from a dark bar were drawn on the
+        // window's light grey until the next read.
+        barColor = MenuBarLaneColor.stored()
         guard let folder = Self.cacheFolder,
               let data = try? Data(contentsOf: folder.appendingPathComponent("index.json")),
               let index = try? JSONDecoder().decode([String: String].self, from: data) else { return }
@@ -320,6 +328,8 @@ final class MenuBarLayoutModel: ObservableObject {
         for (file, key) in index {
             if let image = NSImage(contentsOf: folder.appendingPathComponent(file)) { images[key] = image }
         }
+        // Observers don't run inside init.
+        if barColor == nil { laneFallback = MenuBarLaneColor.fallback(iconLuminance: MenuBarLaneColor.iconLuminance(Array(images.values))) }
     }
 
     /// Application Support/AllOfMacOS/MenuBarImages (never in previews or tests).
@@ -456,7 +466,10 @@ final class MenuBarLayoutModel: ObservableObject {
                         // Pictures stay from earlier reads (an item behind the notch keeps its last one).
                         self.images.merge(pictures.images) { _, new in new }
                         self.store(pictures.images)
-                        if let color = pictures.background { self.barColor = color }
+                        if let color = pictures.background {
+                            self.barColor = color
+                            MenuBarLaneColor.store(color)
+                        }
                         done()
                     }
                 }
@@ -631,8 +644,9 @@ final class MenuBarLayoutModel: ObservableObject {
         items = laid
         images = pictures
         status = nil
-        // A blue wallpaper behind a translucent bar, white icons — as on this Mac.
-        barColor = NSColor(srgbRed: 0.16, green: 0.38, blue: 0.68, alpha: 1)
+        // 7.24: a dark slate bar with white icons (was a saturated blue that
+        // stood out on the dark page).
+        barColor = NSColor(srgbRed: 0.165, green: 0.192, blue: 0.251, alpha: 1)
         lastRefresh = Date()
     }
 
@@ -661,5 +675,62 @@ final class MenuBarLayoutModel: ObservableObject {
                                    width: glyph.size.width, height: glyph.size.height))
             return true
         }
+    }
+}
+
+/// 7.24 (menu bar spec §3.2): the lane behind the icon pictures — the read
+/// bar colour, kept between launches and calmed (saturation × 0.55) so a
+/// vivid wallpaper doesn't shout from the page; before any read, a slate
+/// when the cached pictures are light (white icons), else the window colour.
+enum MenuBarLaneColor {
+    static let key = "AOMMenuBarLaneColor"
+
+    static func store(_ color: NSColor, defaults: UserDefaults = .standard) {
+        guard !PresetManager.isUIPreview, !PresetManager.isRunningTests,
+              let rgb = color.usingColorSpace(.sRGB) else { return }
+        defaults.set([Double(rgb.redComponent), Double(rgb.greenComponent), Double(rgb.blueComponent)], forKey: key)
+    }
+
+    static func stored(defaults: UserDefaults = .standard) -> NSColor? {
+        guard !PresetManager.isUIPreview,
+              let parts = defaults.array(forKey: key) as? [Double], parts.count == 3 else { return nil }
+        return NSColor(srgbRed: parts[0], green: parts[1], blue: parts[2], alpha: 1)
+    }
+
+    /// Pure: the same lightness with less colour.
+    static func calmed(_ color: NSColor) -> NSColor {
+        guard let rgb = color.usingColorSpace(.sRGB) else { return color }
+        var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        rgb.getHue(&h, saturation: &s, brightness: &b, alpha: &a)
+        return NSColor(hue: h, saturation: s * 0.55, brightness: b, alpha: 1)
+    }
+
+    static let slate = NSColor(srgbRed: 0.165, green: 0.192, blue: 0.251, alpha: 1)
+
+    /// Mean luminance (0…1) of the opaque pixels of `images`, nil without any.
+    static func iconLuminance(_ images: [NSImage]) -> Double? {
+        var total = 0.0, count = 0.0
+        for image in images.prefix(24) {
+            guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { continue }
+            let w = 16, h = 12
+            var pixels = [UInt8](repeating: 0, count: w * h * 4)
+            guard let context = CGContext(data: &pixels, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                                          space: CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { continue }
+            context.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+            for i in stride(from: 0, to: pixels.count, by: 4) where pixels[i + 3] > 128 {
+                let alpha = Double(pixels[i + 3]) / 255
+                let r = Double(pixels[i]) / 255 / alpha, g = Double(pixels[i + 1]) / 255 / alpha, b = Double(pixels[i + 2]) / 255 / alpha
+                total += 0.2126 * r + 0.7152 * g + 0.0722 * b
+                count += 1
+            }
+        }
+        return count > 0 ? total / count : nil
+    }
+
+    /// Pure: the lane before any bar colour is known.
+    static func fallback(iconLuminance: Double?) -> NSColor? {
+        guard let iconLuminance, iconLuminance > 0.6 else { return nil }
+        return slate
     }
 }

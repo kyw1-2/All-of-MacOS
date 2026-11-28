@@ -39,6 +39,13 @@ final class AOMMenuBarPanelModel: ObservableObject {
     /// 7.11: whole minutes left on a timed Keep Awake (nil: off or until turned off).
     @Published var keepAwakeMinutesLeft: Int?
     @Published var clipboardExpiring = 0
+    /// 7.24 (SoundSource): the output, its volume and the outputs to pick.
+    @Published var outputName = "Output"
+    @Published var outputUID: String?
+    @Published var outputs: [AOMMenuBarCraftPanel.SoundStrip.Device] = []
+    @Published var volume: Double?
+    @Published var muted = false
+    private var outputDevices: [AudioOutputDevice] = []
     let appState: AppState?
 
     init(appState: AppState?) {
@@ -64,6 +71,39 @@ final class AOMMenuBarPanelModel: ObservableObject {
         set(\.focusRunning, FocusModule.isSessionActive)
         set(\.micMuted, MicMuteController.shared.isMuted)
         set(\.recording, ScreenRecordingService.shared.isRecording)
+        refreshSound()
+    }
+
+    func refreshSound() {
+        let devices = AudioOutputService.devices()
+        outputDevices = devices
+        let current = AudioOutputService.currentDeviceID()
+        let device = devices.first { $0.id == current }
+        set(\.outputName, device?.name ?? "Output")
+        set(\.outputUID, device?.uid)
+        set(\.outputs, devices.map { .init(id: $0.uid, name: $0.name) })
+        set(\.volume, AudioOutputService.currentVolume().map { Double($0) })
+        set(\.muted, AudioOutputService.isOutputMuted())
+    }
+
+    func selectOutput(_ device: AOMMenuBarCraftPanel.SoundStrip.Device) {
+        AudioOutputService.shared.select(name: device.name, uid: device.id) { [weak self] _ in
+            DispatchQueue.main.async { self?.refreshSound() }
+        }
+    }
+
+    /// Writes the volume straight to the output (the keys' path), so the
+    /// slider follows the pointer; outputs without one keep theirs.
+    func setVolume(_ level: Double) {
+        if ContinuousTargetIO.setSystemVolume(level) {
+            set(\.volume, level)
+            if level > 0 { set(\.muted, false) }
+        }
+    }
+
+    func toggleMute() {
+        AOMPanelOutputMute.set(!muted)
+        refreshSound()
     }
 
     private func set<Value: Equatable>(_ key: ReferenceWritableKeyPath<AOMMenuBarPanelModel, Value>, _ value: Value) {
@@ -76,6 +116,9 @@ final class AOMMenuBarPanelModel: ObservableObject {
 
     /// Anything running that the panel lists on top.
     var hasActiveSessions: Bool { focusRunning || micMuted || recording || keepAwake }
+
+    func keepAwakeHour() { _ = KeepAwakeService.shared.start(minutes: 60, keepDisplay: false); refresh() }
+    func startFocus() { if !focusRunning { FocusModule.toggleSession() }; refresh() }
 
     func toggleEngine() { appState?.toggleGlobalEnabled(); refresh() }
     func toggleSnapping() {
@@ -111,6 +154,8 @@ struct AOMMenuBarPanel: View {
     @ObservedObject private var layout = AOMWorkspaceLayout.shared
     /// 7.8 (ME-02): the person's own quick commands and how many a row.
     @ObservedObject private var menuStore = AOMStatusMenuStore.shared
+    /// 7.24: the recent copies strip.
+    @ObservedObject private var clipboard = ClipboardStore.shared
 
     /// 7.0: drawn by the craft panel (Control Center 26): live sessions on
     /// top, tinted tiles, labelled quick actions with More for the rest,
@@ -121,13 +166,21 @@ struct AOMMenuBarPanel: View {
             liveSessions: liveSessions,
             toggles: tiles,
             quickActions: menuStore.panelCommands().map { command in
-                AOMMenuBarCraftPanel.QuickAction(id: command.id, title: command.title, symbol: command.symbol) {
+                AOMMenuBarCraftPanel.QuickAction(id: command.id, title: Self.shortTitle(command), symbol: command.symbol) {
                     actions.close()
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { command.run() }
                 }
             },
-            quickPerRow: AOMStatusMenuLayout.clampedPerRow(menuStore.layout.panelPerRow),
+            // 7.24: four across by default (the spec's cross-tool four).
+            quickPerRow: menuStore.layout.panel == nil ? 4 : AOMStatusMenuLayout.clampedPerRow(menuStore.layout.panelPerRow),
             launcherShortcutText: AOMLauncherShortcut.isRegistered ? AOMLauncherShortcut.current.displayString : nil,
+            sound: soundStrip,
+            recentClips: recentClips,
+            idleChips: [
+                .init(id: "focus", title: "Focus", symbol: "timer", run: model.startFocus),
+                .init(id: "awake", title: "Keep Awake 1 h", symbol: "cup.and.saucer", run: model.keepAwakeHour),
+            ],
+            search: { AOMMenuBarPanelSearch.results(for: $0, close: actions.close) },
             onToggleMaster: model.toggleEngine,
             onOpenLauncher: {
                 actions.close()
@@ -145,7 +198,6 @@ struct AOMMenuBarPanel: View {
                 // A capture or a window starts after the panel is gone.
                 if command.closesPanel {
                     actions.close()
-                    // The panel is ordered out at once; one frame later it is off screen.
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { command.run() }
                 } else {
                     command.run()
@@ -154,11 +206,75 @@ struct AOMMenuBarPanel: View {
             },
             onResize: actions.resized)
         .aomButtonDefaults()
+        // 7.24 (SwiftBar's refresh on open): read once when shown; a timer
+        // only while something counts down or records.
         .onAppear { model.refresh(); battery.refreshBattery() }
         .onChange(of: model.hasActiveSessions) { _, _ in DispatchQueue.main.async { actions.resized() } }
-        // 7.20: every 5 s (was 1 s) — the panel's own buttons refresh at once; this only
-        // catches changes made elsewhere (a hotkey, Keep Awake counting down in minutes).
-        .onReceive(Timer.publish(every: 5, tolerance: 1, on: .main, in: .common).autoconnect()) { _ in model.refresh() }
+        .onChange(of: clipboard.entries.isEmpty) { _, _ in DispatchQueue.main.async { actions.resized() } }
+        .onReceive(Timer.publish(every: 5, tolerance: 1, on: .main, in: .common).autoconnect()) { _ in
+            if model.hasActiveSessions { model.refresh() }
+        }
+    }
+
+    /// One word or two under a quick action's symbol, so four fit.
+    static func shortTitle(_ command: AOMMenuCommand) -> String {
+        switch command.id {
+        case "qa.captureArea": return "Area"
+        case "qa.clipboardHistory": return "Clipboard"
+        case "focus.awake": return "Keep Awake"
+        case "bar.revealAll": return "Show Icons"
+        default: return command.title
+        }
+    }
+
+    private var soundStrip: AOMMenuBarCraftPanel.SoundStrip {
+        var available = false
+        var appAudioOn = false
+        if #available(macOS 14.2, *) { available = true; appAudioOn = model.appAudio }
+        return .init(deviceName: model.outputName, devices: model.outputs, currentDeviceID: model.outputUID,
+                     volume: model.volume, muted: model.muted, appAudioOn: appAudioOn, appAudioAvailable: available,
+                     onSelectDevice: model.selectOutput, onVolume: model.setVolume, onToggleMute: model.toggleMute,
+                     onToggleAppAudio: model.toggleAppAudio,
+                     onOpenMixer: {
+                         actions.close()
+                         DispatchQueue.main.async { AppDelegate.current?.appState?.selectedMainTab = .audio; AppDelegate.current?.showMainWindow() }
+                     })
+    }
+
+    /// 7.24 (Paste): the last three copies; a click pastes into the app in
+    /// front, ⌥-click only copies. Secrets show as a lock.
+    private var recentClips: [AOMMenuBarCraftPanel.ClipSlot] {
+        guard model.clipboardOn else { return [] }
+        return clipboard.entries.prefix(3).map { entry in
+            let concealed = ClipboardSecretDisplay.conceals(entry)
+            let ago = Self.ago(entry.lastCopiedAt)
+            return .init(id: entry.id, title: concealed ? ClipboardSecretDisplay.rowLabel : entry.title.replacingOccurrences(of: "\n", with: " "),
+                         detail: ago, symbol: Self.symbol(entry.kind), concealed: concealed,
+                         onPaste: {
+                             let copyOnly = NSEvent.modifierFlags.contains(.option)
+                             actions.close()
+                             AOMMenuBarPanelClips.paste(entry.id, copyOnly: copyOnly)
+                         },
+                         onCopy: { AOMMenuBarPanelClips.paste(entry.id, copyOnly: true) })
+        }
+    }
+
+    static func symbol(_ kind: ClipboardEntry.Kind) -> String {
+        switch kind {
+        case .text: return "text.alignleft"
+        case .link: return "link"
+        case .image: return "photo"
+        case .file: return "doc"
+        case .color: return "paintpalette"
+        }
+    }
+
+    static func ago(_ date: Date, now: Date = Date()) -> String {
+        let seconds = max(0, now.timeIntervalSince(date))
+        if seconds < 60 { return "now" }
+        if seconds < 3_600 { return "\(Int(seconds / 60)) min" }
+        if seconds < 86_400 { return "\(Int(seconds / 3_600)) h" }
+        return "\(Int(seconds / 86_400)) d"
     }
 
     private var liveSessions: [AOMMenuBarCraftPanel.LiveSession] {

@@ -224,12 +224,14 @@ final class MeetingRecorder: NSObject, ObservableObject {
         item.button?.image = NSImage(systemSymbolName: "record.circle.fill", accessibilityDescription: "Recording meeting")
         item.button?.contentTintColor = .systemRed
         item.button?.imagePosition = .imageLeading
+        item.button?.font = .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
         item.button?.toolTip = "Recording a meeting — click to stop"
         item.button?.target = self
         item.button?.action = #selector(indicatorClicked)
         indicator = item
         let update = { [weak item] in
-            item?.button?.title = " " + MeetingTranscript.clock(Date().timeIntervalSince(start))
+            item?.button?.title = " " + AOMStatusItemWidth.stable(MeetingTranscript.clock(Date().timeIntervalSince(start)),
+                                                                  key: "meeting", minimumDigits: 4)
         }
         update()
         let timer = Timer(timeInterval: 1, repeats: true) { _ in update() }

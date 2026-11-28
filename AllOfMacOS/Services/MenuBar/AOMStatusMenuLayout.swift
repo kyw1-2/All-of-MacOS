@@ -239,12 +239,20 @@ final class AOMStatusMenuStore: ObservableObject {
     }
 
     /// The panel's quick commands now (AC-02).
+    /// 7.24 (menu bar spec MBP-2): four tools, not three captures under the
+    /// Capture tile — Capture Area, Clipboard History, Keep Awake, Show All
+    /// Hidden Icons. The person's own list (the menu editor) still wins.
+    static let defaultPanelCommandIDs = ["qa.captureArea", "qa.clipboardHistory", "focus.awake", "bar.revealAll"]
+
     func panelCommands() -> [AOMMenuCommand] {
         let index = AOMMenuCommandCatalog.index()
         if let ids = layout.panel {
             return ids.compactMap { index[$0] }
         }
-        return AOMWorkspaceLayout.shared.visibleQuickActions.compactMap { index[$0.layoutID] }
+        let defaults = Self.defaultPanelCommandIDs.compactMap { index[$0] }
+        let rest = AOMWorkspaceLayout.shared.visibleQuickActions.compactMap { index[$0.layoutID] }
+            .filter { command in !defaults.contains { $0.id == command.id } }
+        return defaults + rest
     }
 }
 

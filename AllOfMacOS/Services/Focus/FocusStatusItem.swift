@@ -48,7 +48,9 @@ final class FocusStatusItemController: NSObject, NSMenuDelegate {
             button.image = image
         }
         let font = NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
-        let attributed = NSAttributedString(string: " " + title, attributes: [.font: font])
+        // 7.24: "9:59" → "10:00" no longer widens the item (Itsycal).
+        let attributed = NSAttributedString(string: " " + AOMStatusItemWidth.stable(title, key: "focus", minimumDigits: 4),
+                                            attributes: [.font: font])
         if button.attributedTitle != attributed { button.attributedTitle = attributed }
         let spoken = FocusDurationFormat.spoken(run.remaining(at: session.ticker.now))
         button.setAccessibilityLabel("\(run.phase.title), \(spoken) left\(run.isPaused ? ", paused" : "")")
