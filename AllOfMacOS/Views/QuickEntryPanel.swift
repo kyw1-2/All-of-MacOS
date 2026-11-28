@@ -82,7 +82,7 @@ struct QuickEntryView: View {
                 Picker("Save to", selection: $controller.destination) {
                     ForEach(QuickEntryStore.Destination.allCases) { Label($0.title, systemImage: $0.symbol).tag($0) }
                 }
-                .pickerStyle(.segmented)
+                .aomSegmented()
                 .labelsHidden()
                 .controlSize(.small)
                 .fixedSize()
