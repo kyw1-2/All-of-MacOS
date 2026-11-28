@@ -2,6 +2,11 @@ name: All of MacOS macOS CI
 
 on:
   workflow_dispatch:
+    inputs:
+      package:
+        description: 'Also build the release app and DMG (about 20 minutes more)'
+        type: boolean
+        default: false
   push:
     branches: [main, 'release/aom-studio-cursor-20261013']
   pull_request:
@@ -28,32 +33,57 @@ jobs:
     runs-on: ${{ startsWith(github.ref, 'refs/heads/release/') && 'macos-14' || 'xcode-27' }}
     timeout-minutes: 55
     steps:
+      # Full history: the mtime restore below needs each file's last commit.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Environment
         run: |
           swift --version
           xcodebuild -version
+          # 7.23: the runner's cores, not the MacBook's limit of 2 (CI timing audit).
+          echo "JOBS=$(sysctl -n hw.ncpu)" >> "$GITHUB_ENV"
+          echo "cores $(sysctl -n hw.ncpu), memory $(( $(sysctl -n hw.memsize) / 1073741824 )) GB"
       - name: Verify independent identifiers
         run: |
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' 'AllOfMacOS/App/Info.plist')" = 'com.kyw.allofmacos'
+      # 7.23: incremental debug builds across runs. Sources get their last
+      # commit's time so the cached build only recompiles what changed.
+      - name: Restore source modification times
+        run: bash scripts/ci-restore-mtimes.sh
+      - name: Cache the debug build
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: spm-debug-xcode27-${{ hashFiles('Package.swift', 'Package.resolved') }}-${{ github.ref_name }}-${{ github.sha }}
+          restore-keys: |
+            spm-debug-xcode27-${{ hashFiles('Package.swift', 'Package.resolved') }}-${{ github.ref_name }}-
+            spm-debug-xcode27-${{ hashFiles('Package.swift', 'Package.resolved') }}-main-
+            spm-debug-xcode27-${{ hashFiles('Package.swift', 'Package.resolved') }}-
       - name: Core regression checks
-        run: swift test -j 2
+        run: swift test -j "$JOBS"
 
+      # Packaged on main pushes (the testing prerelease reads that DMG) and on
+      # request (Run workflow › package): a feature check takes minutes, not 40.
       - name: Build test application
+        if: inputs.package || (github.event_name == 'push' && github.ref == 'refs/heads/main')
         env:
           ALLOFMACOS_SIGN_ID: '-'
         run: |
           brew list webp >/dev/null 2>&1 || brew install webp
-          ./build-and-sign.sh
+          ALLOFMACOS_BUILD_JOBS="$JOBS" ./build-and-sign.sh
       - name: Verify application identity
+        if: inputs.package || (github.event_name == 'push' && github.ref == 'refs/heads/main')
         run: |
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' 'build/All of MacOS.app/Contents/Info.plist')" = 'com.kyw.allofmacos'
           codesign --verify --deep --strict 'build/All of MacOS.app'
       - name: Package
+        if: inputs.package || (github.event_name == 'push' && github.ref == 'refs/heads/main')
         run: |
           hdiutil create -quiet -volname 'All of MacOS CI' -srcfolder 'build/All of MacOS.app' -format UDZO 'All-of-MacOS-CI.dmg'
           hdiutil verify 'All-of-MacOS-CI.dmg'
       - uses: actions/upload-artifact@v4
+        if: inputs.package || (github.event_name == 'push' && github.ref == 'refs/heads/main')
         with:
           name: All-of-MacOS-ci-testing-only
           path: All-of-MacOS-CI.dmg

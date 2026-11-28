@@ -15,6 +15,7 @@ on:
       - "build-and-sign.sh"
       - "scripts/resolve-signing-identity.sh"
       - "scripts/package-aom-dev.sh"
+      - "scripts/ci-restore-mtimes.sh"
       - ".github/workflows/release.yml"
   workflow_dispatch:
 
@@ -27,10 +28,41 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # 7.23 (CI timing audit): the suite and the signed release build run side
+  # by side on two runners; publishing waits for both. Before, the release
+  # build started only after the 9-minute suite, one after the other.
+  tests:
+    if: github.ref == 'refs/heads/main' && vars.AOM_SIGNING_READY == 'true'
+    runs-on: xcode-27
+    timeout-minutes: 40
+    steps:
+      - name: Checkout trusted main
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Restore source modification times
+        run: bash scripts/ci-restore-mtimes.sh
+      - name: Cache the debug build
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: spm-debug-xcode27-${{ hashFiles('Package.swift', 'Package.resolved') }}-main-${{ github.sha }}
+          restore-keys: |
+            spm-debug-xcode27-${{ hashFiles('Package.swift', 'Package.resolved') }}-main-
+      - name: Core regression checks
+        run: swift test -j "$(sysctl -n hw.ncpu)"
+
   signed-release:
     if: github.ref == 'refs/heads/main' && vars.AOM_SIGNING_READY == 'true'
     runs-on: xcode-27
     timeout-minutes: 55
+    outputs:
+      tag: ${{ steps.package.outputs.tag }}
+      dmg: ${{ steps.package.outputs.name }}
+      version: ${{ steps.package.outputs.version }}
+      build: ${{ steps.package.outputs.build }}
+      sha256: ${{ steps.package.outputs.sha256 }}
     steps:
       - name: Checkout trusted main
         uses: actions/checkout@v4
@@ -57,9 +89,6 @@ jobs:
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           swift --version
           xcodebuild -version
-
-      - name: Core regression checks
-        run: swift test -j 2
 
       - name: Import AOM Dev signing identity into ephemeral keychain
         uses: apple-actions/import-codesign-certs@v7
@@ -88,11 +117,11 @@ jobs:
           CI: "true"
           ALLOFMACOS_SKIP_AUTO_RELEASE: "1"
           ALLOFMACOS_SIGN_ID: "AOM Dev"
-          ALLOFMACOS_BUILD_JOBS: "2"
         shell: bash
         run: |
           set -euo pipefail
-          bash ./build-and-sign.sh
+          # Whole-module optimisation codegen uses this many threads.
+          ALLOFMACOS_BUILD_JOBS="$(sysctl -n hw.ncpu)" bash ./build-and-sign.sh
 
       - name: Verify app and XPC signatures
         shell: bash
@@ -139,18 +168,43 @@ jobs:
           checksum="$(shasum -a 256 "$dmg" | awk '{print $1}')"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "dmg=$dmg" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename "$dmg")" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "build=$build" >> "$GITHUB_OUTPUT"
           echo "sha256=$checksum" >> "$GITHUB_OUTPUT"
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aom-signed-dmg
+          path: ${{ steps.package.outputs.dmg }}
+          retention-days: 3
+          if-no-files-found: error
+
+  publish:
+    needs: [tests, signed-release]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: aom-signed-dmg
+          path: dmg
+      - name: Check the DMG digest
+        env:
+          SHA256: ${{ needs.signed-release.outputs.sha256 }}
+          NAME: ${{ needs.signed-release.outputs.dmg }}
+        run: |
+          set -euo pipefail
+          echo "$SHA256  dmg/$NAME" | sha256sum -c -
+
       - name: Publish newest main build as GitHub Latest
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.package.outputs.tag }}
-          DMG: ${{ steps.package.outputs.dmg }}
-          VERSION: ${{ steps.package.outputs.version }}
-          BUILD: ${{ steps.package.outputs.build }}
-          SHA256: ${{ steps.package.outputs.sha256 }}
+          TAG: ${{ needs.signed-release.outputs.tag }}
+          DMG: dmg/${{ needs.signed-release.outputs.dmg }}
+          VERSION: ${{ needs.signed-release.outputs.version }}
+          BUILD: ${{ needs.signed-release.outputs.build }}
+          SHA256: ${{ needs.signed-release.outputs.sha256 }}
         shell: bash
         run: |
           set -euo pipefail
