@@ -303,9 +303,8 @@ struct AOMMenuBarPanel: View {
     private var tiles: [AOMMenuBarCraftPanel.ToggleTile] {
         var tiles: [AOMMenuBarCraftPanel.ToggleTile] = [
             // 7.11 (spec §3): Capture is a menu only — opening it captures nothing.
-            .init(id: "capture", title: "Capture", subtitle: "Area · Window", symbol: "camera.viewfinder",
-                  tint: AOMModule.capture.hue, isOn: false, onToggle: nil, menu: AOMFeatureMenus.capture(),
-                  primary: AOMFeatureMenus.capture().first),
+            .init(id: "capture", title: "Capture", subtitle: "Area · Window · Screen", symbol: "camera.viewfinder",
+                  tint: AOMModule.capture.hue, isOn: false, onToggle: nil, menu: AOMFeatureMenus.capture()),
             .init(id: "snap", title: "Drag to Snap", subtitle: !model.engineOn ? "AOM paused" : model.snapping ? "On" : "Off",
                   symbol: "rectangle.split.2x2", tint: AOMModule.tiling.hue, isOn: model.snapping && model.engineOn,
                   onToggle: { if model.engineOn { model.toggleSnapping() } }),

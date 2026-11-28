@@ -258,55 +258,6 @@ struct AOMFilterChip: View {
 
 // MARK: - Empty row inside a card
 
-/// An empty state inside a card (design-336 b.9): a hierarchical glyph in the
-/// rows' 16 pt symbol column, one sentence in Body medium secondary and at
-/// most one regular button, leading-aligned in a 40 pt row. An optional
-/// detail line (Callout, secondary) says what makes the row fill. A page with
-/// nothing in it uses `AOMEmptyState` instead.
-struct AOMCardEmptyRow<Action: View>: View {
-    let message: String
-    var detail: String?
-    let systemImage: String
-    @ViewBuilder var action: Action
-
-    init(_ message: String, detail: String? = nil, systemImage: String,
-         @ViewBuilder action: () -> Action = { EmptyView() }) {
-        self.message = message
-        self.detail = detail
-        self.systemImage = systemImage
-        self.action = action()
-    }
-
-    var body: some View {
-        HStack(spacing: AOMSpace.x2) {
-            Image(systemName: systemImage)
-                .font(AOMFont.body)
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(AOMColor.textSecondary)
-                .frame(width: AOMFeatureSize.emptyRowGlyph)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(message)
-                    .font(AOMFont.bodyEmphasis)
-                    .foregroundStyle(AOMColor.textSecondary)
-                if let detail {
-                    Text(detail)
-                        .font(AOMFont.callout)
-                        .foregroundStyle(AOMColor.textSecondary)
-                }
-            }
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            action
-                .controlSize(.regular)
-        }
-        .padding(.horizontal, AOMSpace.rowInset)
-        .padding(.vertical, AOMSpace.x1)
-        .frame(minHeight: AOMSize.rowDetail)
-        .accessibilityElement(children: .contain)
-    }
-}
-
 // MARK: - Described setting row
 
 /// A setting row with a description under its title, as System Settings

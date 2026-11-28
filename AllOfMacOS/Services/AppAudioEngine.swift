@@ -249,7 +249,6 @@ final class AppAudioEngine {
         set {
             guard !PresetManager.isUIPreview else { return }
             UserDefaults.standard.set(newValue, forKey: "AOMSoundEnabled")
-            UserDefaults.standard.set(newValue, forKey: "AOMAudioEngineEnabled")
             if !newValue {
                 stopAll()
             } else {

@@ -295,28 +295,6 @@ struct AOMInspectorRowLayout: Layout {
     }
 }
 
-/// An "Advanced" group inside an inspector section, folded by default (D09).
-struct AOMInspectorDisclosure<Content: View>: View {
-    let title: String
-    @Binding var isExpanded: Bool
-    @ViewBuilder var content: Content
-
-    init(_ title: String = "Advanced", isExpanded: Binding<Bool>, @ViewBuilder content: () -> Content) {
-        self.title = title
-        self._isExpanded = isExpanded
-        self.content = content()
-    }
-
-    var body: some View {
-        DisclosureGroup(isExpanded: $isExpanded) {
-            VStack(alignment: .leading, spacing: AOMSpace.x2) { content }
-                .padding(.top, AOMSpace.x1)
-        } label: {
-            Text(title).font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
-        }
-    }
-}
-
 // MARK: - Focus after a reveal (D31)
 
 enum AOMRevealFocus {

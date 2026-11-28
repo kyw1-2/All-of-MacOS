@@ -101,6 +101,19 @@ enum ShortcutMenuPress {
             let hasRange = attribute(focused, kAXSelectedTextRangeAttribute) != nil
             guard isTypingRole(role, editable: editable, hasSelectionRange: hasRange) else { return false }
         }
+        // 7.24.1 (7.19 P0-3): the menu item found for this app and shortcut
+        // within the last 10 s is pressed directly — still enabled and the app
+        // still in front — instead of walking the menu bar again (up to 0.35 s).
+        let cacheKey = MenuItemCache.Key(pid: front.processIdentifier, character: character.lowercased(), modifiers: modifiers)
+        if let cached = MenuItemCache.shared.item(for: cacheKey, now: ProcessInfo.processInfo.systemUptime) {
+            AXUIElementSetMessagingTimeout(cached, 0.08)
+            if (attribute(cached, kAXEnabledAttribute) as? Bool) == true,
+               NSWorkspace.shared.frontmostApplication?.processIdentifier == front.processIdentifier,
+               AXUIElementPerformAction(cached, kAXPressAction as CFString) == .success {
+                return true
+            }
+            MenuItemCache.shared.forget(cacheKey)
+        }
         guard let bar = element(attribute(app, kAXMenuBarAttribute)) else { return false }
         AXUIElementSetMessagingTimeout(bar, 0.08)
         var remaining = 120
@@ -113,7 +126,9 @@ enum ShortcutMenuPress {
                        character: character, modifiers: modifiers),
                (attribute(node, kAXEnabledAttribute) as? Bool) == true,
                NSWorkspace.shared.frontmostApplication?.processIdentifier == front.processIdentifier {
-                return AXUIElementPerformAction(node, kAXPressAction as CFString) == .success
+                let pressed = AXUIElementPerformAction(node, kAXPressAction as CFString) == .success
+                if pressed { MenuItemCache.shared.store(node, for: cacheKey, now: ProcessInfo.processInfo.systemUptime) }
+                return pressed
             }
             guard ProcessInfo.processInfo.systemUptime < deadline else { return false }
             for child in attribute(node, kAXChildrenAttribute) as? [AXUIElement] ?? [] {
@@ -128,4 +143,31 @@ enum ShortcutMenuPress {
         }
         return false
     }
+}
+
+/// 7.24.1: the menu items `pressIfTyping` found, per app and shortcut, for
+/// 10 s. Thread-safe: presses come from the navigation queue and the main thread.
+final class MenuItemCache: @unchecked Sendable {
+    static let shared = MenuItemCache()
+    static let lifetime: TimeInterval = 10
+
+    struct Key: Hashable { let pid: pid_t; let character: String; let modifiers: Int }
+
+    private let lock = NSLock()
+    private var entries: [Key: (element: AXUIElement, storedAt: TimeInterval)] = [:]
+
+    func item(for key: Key, now: TimeInterval) -> AXUIElement? {
+        lock.lock(); defer { lock.unlock() }
+        guard let entry = entries[key] else { return nil }
+        guard now - entry.storedAt < Self.lifetime else { entries[key] = nil; return nil }
+        return entry.element
+    }
+
+    func store(_ element: AXUIElement, for key: Key, now: TimeInterval) {
+        lock.lock(); defer { lock.unlock() }
+        if entries.count > 64 { entries = entries.filter { now - $0.value.storedAt < Self.lifetime } }
+        entries[key] = (element, now)
+    }
+
+    func forget(_ key: Key) { lock.lock(); entries[key] = nil; lock.unlock() }
 }

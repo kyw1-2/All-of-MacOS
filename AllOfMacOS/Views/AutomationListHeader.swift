@@ -18,26 +18,6 @@ import SwiftUI
 // right end is the scope (the app's own icon, "All apps", a menu with apps and
 // groups and their counts); the input kinds as a Mail-style category bar.
 
-/// One choice of the scope menu.
-struct AutomationScopeChoice: Identifiable, Hashable {
-    enum Kind: Hashable { case all, everywhere, app(UUID), group(UUID) }
-    let kind: Kind
-    let title: String
-    let count: Int
-    /// An app's bundle identifier, for its icon.
-    var bundleID: String?
-    var id: Kind { kind }
-
-    var symbol: String {
-        switch kind {
-        case .all: return "square.stack.fill"
-        case .everywhere: return "globe"
-        case .app: return "app.fill"
-        case .group: return "square.stack.3d.up.fill"
-        }
-    }
-}
-
 /// One segment of the input bar.
 struct AutomationInputChoice: Identifiable, Hashable {
     let category: TriggerCategory

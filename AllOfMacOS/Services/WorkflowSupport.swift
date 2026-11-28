@@ -176,7 +176,7 @@ enum WorkflowBranchCondition {
         case "notContains": return !source.localizedCaseInsensitiveContains(value)
         case "regex":
             guard value.count <= 256,
-                  let expression = try? NSRegularExpression(pattern: value, options: [.caseInsensitive]) else { return false }
+                  let expression = AOMRegexCache.regex(value, options: [.caseInsensitive]) else { return false }
             let safeSource = String(source.prefix(1024))
             return expression.firstMatch(in: safeSource, range: NSRange(safeSource.startIndex..., in: safeSource)) != nil
         case "is", "isNot":

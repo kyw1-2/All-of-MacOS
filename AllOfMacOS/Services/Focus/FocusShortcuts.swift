@@ -95,7 +95,7 @@ enum FocusShortcutsCLI {
     /// `shortcuts list`) become names. Blank lines and duplicates are dropped.
     static func parseList(_ output: String) -> [FocusShortcutRef] {
         let pattern = #"^(.*\S)\s+\(([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})\)$"#
-        let regex = try? NSRegularExpression(pattern: pattern)
+        let regex = AOMRegexCache.regex(pattern)
         var seen = Set<String>()
         var result: [FocusShortcutRef] = []
         for raw in output.components(separatedBy: .newlines) {

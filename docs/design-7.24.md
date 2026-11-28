@@ -54,3 +54,33 @@
 
 - **Unit tests:** `AllOfMacOSTests/AOM724Tests.swift` covers appearance mapping, lane colour calming and fallback, search scoring, default quick actions present in the catalog, status-item padding, copy ages, panel width and the starter sets. `AOM716Tests` was updated for the 700 pt threshold.
 - **CI:** the suite, the UI snapshots (menubarpanel and launcher in dark, tab13, tab03 and tab04) and the release.
+
+## 5. 7.24.1: the Codex audit and agy's §6 review
+
+- **Sources:** both in `~/Downloads`.
+  - `AOM-7.24-고아코드-비대화-미연결기능-전수조사-및-통합실행명세-2026-11-28.md` (Codex)
+  - §6 of the updated `AOM-7.23.0-디자인-메뉴바-개선-명세서-2026-11-28.md` (agy)
+- **User request (overrides the spec):** keep the tile choices sliding in under the tiles. The page push from 7.24.0 is reverted. Capture's badge opens its choices again, and gets no "primary" action.
+
+| Claim | Checked | Done |
+|---|---|---|
+| App Audio and Keep Awake tiles still in the panel | True in `44b2e3a`, but already fixed in `36c3618` (7.24.0 shipped with four tiles) | — |
+| Capture `primary` not wired | True | Deliberately not wired, per the user's request |
+| Panel can exceed 560 pt | True, about 610 pt with the battery row and three copies | `maxHeight(visible:)`; recent copies show one, with "N more" |
+| Paste from the panel races its own key focus | True: fixed 120 ms, the panel is key | Destination captured at `show`; `ClipboardPasteDelivery.deliver` (relinquish → activate → changeCount check → ⌘V) |
+| 8 orphaned views | 7 confirmed by grep (the "AOMAutomationRow" view is still used for `lastRunText` and kept) | Removed: `AOMToolbarSearch`, `AOMCardEmptyRow`, `AOMInspectorDisclosure`, `AutomationScopeChoice`, `AOMModeButton` (+ its private `AOMModeMark`), `CaptureStudioView.toolButton`, `toolRowMinimum` |
+| `toggleDoNotDisturb` hidden in the browser but offered in the launcher | True | Launcher row removed |
+| `AOMAudioEngineEnabled` written, never read | True | Write removed; key kept in the backup list for old backups |
+| Screen-text trigger editor doesn't restore values | Not reproducible: the trigger panel only creates triggers; there is no path that reopens a saved system-event trigger | — |
+| `ShortcutMenuPress` walks the menu bar each time (up to 0.35 s) | True | `MenuItemCache`: per app and shortcut, 10 s, re-checked enabled and front app |
+| Regexes compiled on hot paths | True (QuickEntryParser, TriggerSystemSignals, WorkflowSupport, FolderRulesMatching, FocusShortcuts) | `AOMRegexCache` (256 entries, failures remembered) |
+| Clipboard polls every 0.15 s | True | 0.5 s, plus reads at 40/120/300 ms after ⌘C or ⌘X (via the keyboard tap) |
+| Folder Rules faults at launch | Found after the 7.24.0 install: 20 faults symbolicated to `FolderRulesEngine.refreshStatus` ← `FolderRulesPage.init` ← `MainWindow.body` | Status published on the next run-loop turn, only for values that changed |
+
+**Not done:**
+- `HardwareController` / `AOMSharedImageStaging`: moving them out of the app target touches the helper and extension build scripts.
+- Dead `PresetManager` keys: removing them would drop keys from old backups.
+- `.claude/worktrees`: agent worktrees outside git; not deleted without asking.
+- God-file splits and the UI-kit merge: no behaviour change; a separate refactor.
+- Event-tap threading (7.19 P0-1): staged, risky.
+- Clipboard blob split: a storage format change.

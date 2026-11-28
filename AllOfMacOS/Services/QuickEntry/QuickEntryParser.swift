@@ -32,7 +32,7 @@ enum QuickEntryParser {
         /// Removes the first match of `pattern` and returns its groups ("" for
         /// a group that took no part).
         func take(_ pattern: String) -> [String]? {
-            guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return nil }
+            guard let regex = AOMRegexCache.regex(pattern, options: [.caseInsensitive]) else { return nil }
             let range = NSRange(text.startIndex..., in: text)
             guard let match = regex.firstMatch(in: text, range: range), let whole = Range(match.range, in: text) else { return nil }
             var groups: [String] = []

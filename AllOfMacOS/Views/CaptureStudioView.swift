@@ -387,11 +387,6 @@ struct CaptureStudioView: View {
         ]
     }
 
-    private func toolButton(_ tool: Tool) -> some View {
-        AOMModeButton(tool.title, symbol: tool.symbol, tint: tool.tint, shortcut: tool.shortcut, help: tool.help,
-                      action: tool.action)
-            .disabled(tool.disabled)
-    }
 
     static let toolbarIDs: Set<String> = ["allInOne", "area", "window", "fullScreen", "scrolling", "record"]
 
@@ -935,9 +930,6 @@ private enum CaptureGalleryMetrics {
     static let columnStretch: CGFloat = 1.6
     /// The empty gallery keeps the page from collapsing under the strip.
     static let emptyMinHeight: CGFloat = 200
-    /// A tool in the one-row strip needs this much for "Measure Screen" in
-    /// Caption; narrower columns use two rows of five.
-    static let toolRowMinimum: CGFloat = 92
 }
 
 // MARK: - Settings sheet

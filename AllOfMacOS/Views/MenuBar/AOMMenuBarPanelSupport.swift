@@ -60,21 +60,30 @@ enum AOMMenuBarPanelSearch {
     }
 }
 
-/// Puts a copy back on the clipboard and pastes it into the app in front.
+/// Puts a copy back on the clipboard and pastes it into the app that was in
+/// front when the panel opened. 7.24.1 (agy §6.1-2): the same delivery as the
+/// shelf — give up the keys, activate the target and wait until it is in
+/// front, check the clipboard still holds this copy, then ⌘V — instead of a
+/// fixed 120 ms wait that raced the panel's own key focus.
 @MainActor
 enum AOMMenuBarPanelClips {
     static func paste(_ id: UUID, copyOnly: Bool) {
+        let target = AOMStatusPanelController.shared.destination
         Task { @MainActor in
-            do { _ = try await ClipboardStore.shared.writeAsync(entryIDs: [id], playSound: false) } catch { return }
-            guard !copyOnly, AXIsProcessTrusted(),
-                  let front = NSWorkspace.shared.frontmostApplication,
-                  front.processIdentifier != ProcessInfo.processInfo.processIdentifier else {
+            let version: Int
+            do { version = try await ClipboardStore.shared.writeAsync(entryIDs: [id], playSound: false) } catch { return }
+            guard !copyOnly, AXIsProcessTrusted(), let target, !target.isTerminated else {
                 GestureHUD.shared.show(title: "Copied", detail: "Press ⌘V to paste it")
                 return
             }
-            // The panel never took focus, so the app in front is still the target.
-            try? await Task.sleep(nanoseconds: 120_000_000)
-            if !ClipboardStackPasteMonitor.sendPaste(to: front) {
+            let outcome = await ClipboardPasteDelivery.deliver(version: version, environment: .init(
+                relinquishFocus: { AOMStatusPanelController.shared.close() },
+                targetIsAlive: { !target.isTerminated },
+                targetIsFrontmost: { NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier },
+                activateTarget: { NSApp.yieldActivation(to: target); return target.activate(options: []) },
+                clipboardVersion: { NSPasteboard.general.changeCount },
+                send: { !PresetManager.isUIPreview && !PresetManager.isRunningTests && ClipboardStackPasteMonitor.sendPaste(to: target) }))
+            if outcome != .pasted {
                 GestureHUD.shared.show(title: "Copied", detail: "Press ⌘V to paste it")
             }
         }

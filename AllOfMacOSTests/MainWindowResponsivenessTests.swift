@@ -87,8 +87,9 @@ final class MainWindowResponsivenessTests: XCTestCase {
 
     /// 3.4.44: idle wake-up budgets for the two always-on pollers.
     func testAlwaysOnPollersStayWithinWakeBudget() {
-        XCTAssertGreaterThanOrEqual(ClipboardStore.pollInterval(recording: true), 0.15)
-        XCTAssertLessThanOrEqual(ClipboardStore.pollInterval(recording: true), 0.2)
+        // 7.24.1: 0.5 s in the background; ⌘C / ⌘X add reads within 300 ms.
+        XCTAssertEqual(ClipboardStore.pollInterval(recording: true), 0.5)
+        XCTAssertEqual(ClipboardStore.copyFollowUps, [0.04, 0.12, 0.3])
         XCTAssertEqual(ClipboardStore.pollInterval(recording: false), 60)
         XCTAssertGreaterThanOrEqual(SecureInputHotKeys.pollInterval, 0.5)
     }

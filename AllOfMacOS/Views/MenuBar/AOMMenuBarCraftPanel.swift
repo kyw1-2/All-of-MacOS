@@ -27,9 +27,11 @@ struct AOMMenuBarCraftPanel: View {
         let isOn: Bool
         /// The switch; nil for a tile that is an action (Capture).
         let onToggle: (() -> Void)?
-        /// The feature's commands, opened as a page of the panel.
+        /// The feature's commands, opened under the tiles (7.11 behaviour,
+        /// kept at the user's request: the choices slide in below, the panel
+        /// doesn't turn into another page).
         var menu: [AOMFeatureCommand]? = nil
-        /// A line at the top of its page ("25 min left").
+        /// A line at the top of the open menu ("25 min left").
         var menuNote: String? = nil
         /// 7.24: what the round badge does when there is no switch (Capture Area).
         var primary: AOMFeatureCommand? = nil
@@ -110,12 +112,15 @@ struct AOMMenuBarCraftPanel: View {
     var onResize: () -> Void = {}
 
     @State private var query = ""
-    @State private var page: String?
-    /// The body's height when the search or a page opens: they take the same
+    @State private var openMenu: String?
+    /// The body's height when the search opens: the results take the same
     /// space, so the panel doesn't jump (spec MBP-3).
     @State private var bodyHeight: CGFloat = 260
     @FocusState private var searchFocused: Bool
     @State private var selectedResult = 0
+    /// 7.24.1 (agy §6.1-1): the newest copy only, unless opened — the panel
+    /// stays under 560 pt even on a laptop with the battery row.
+    @AppStorage("AOMPanelClipsExpanded") private var clipsExpanded = false
 
     private var results: [SearchResult] { query.trimmingCharacters(in: .whitespaces).isEmpty ? [] : search(query) }
 
@@ -125,8 +130,6 @@ struct AOMMenuBarCraftPanel: View {
             searchField
             if !query.trimmingCharacters(in: .whitespaces).isEmpty {
                 resultsList.frame(height: bodyHeight)
-            } else if let id = page, let tile = toggles.first(where: { $0.id == id }), let commands = tile.menu {
-                tilePage(tile, commands).frame(height: bodyHeight)
             } else {
                 mainBody
                     .background(GeometryReader { geometry in
@@ -139,7 +142,7 @@ struct AOMMenuBarCraftPanel: View {
         }
         .padding(14)
         .frame(width: Self.width)
-        .onChange(of: page) { _, _ in DispatchQueue.main.async { onResize() } }
+        .onChange(of: openMenu) { _, _ in DispatchQueue.main.async { onResize() } }
         .onChange(of: query) { _, _ in selectedResult = 0 }
         .onAppear { DispatchQueue.main.async { searchFocused = true } }
         // 7.1: Apple's Liquid Glass (macOS 26+; a material before, an opaque
@@ -185,8 +188,8 @@ struct AOMMenuBarCraftPanel: View {
                 .onKeyPress(.downArrow) { move(1); return .handled }
                 .onKeyPress(.upArrow) { move(-1); return .handled }
                 .onKeyPress(.escape) {
-                    if query.isEmpty, page == nil { return .ignored }
-                    query = ""; page = nil
+                    if query.isEmpty, openMenu == nil { return .ignored }
+                    if query.isEmpty { toggleMenu(nil) } else { query = "" }
                     return .handled
                 }
                 .accessibilityLabel("Search the panel")
@@ -267,6 +270,9 @@ struct AOMMenuBarCraftPanel: View {
             if let sound { soundStrip(sound) }
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
                 ForEach(toggles) { tile in tileView(tile) }
+            }
+            if let id = openMenu, let tile = toggles.first(where: { $0.id == id }), let commands = tile.menu {
+                tileMenu(tile, commands)
             }
             if !recentClips.isEmpty { clipStrip }
             if let accessory { accessory }
@@ -377,9 +383,26 @@ struct AOMMenuBarCraftPanel: View {
 
     private var clipStrip: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text("Recent copies").font(AOMFont.caption.weight(.semibold)).foregroundStyle(AOMCraftColor.inkSecondary)
-                .padding(.horizontal, 4)
-            ForEach(recentClips) { clip in
+            HStack {
+                Text("Recent copies").font(AOMFont.caption.weight(.semibold)).foregroundStyle(AOMCraftColor.inkSecondary)
+                Spacer()
+                if recentClips.count > 1 {
+                    Button {
+                        clipsExpanded.toggle()
+                        DispatchQueue.main.async { onResize() }
+                    } label: {
+                        HStack(spacing: 2) {
+                            Text(clipsExpanded ? "Less" : "\(recentClips.count - 1) more").font(AOMFont.caption)
+                            Image(systemName: clipsExpanded ? "chevron.up" : "chevron.down").font(Font.caption2.weight(.bold))
+                        }
+                        .foregroundStyle(AOMCraftColor.inkSecondary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(clipsExpanded ? "Show only the last copy" : "Show the last three copies")
+                }
+            }
+            .padding(.horizontal, 4)
+            ForEach(clipsExpanded ? recentClips : Array(recentClips.prefix(1))) { clip in
                 Button(action: clip.onPaste) {
                     HStack(spacing: 8) {
                         Image(systemName: clip.concealed ? "lock.fill" : clip.symbol)
@@ -501,9 +524,9 @@ struct AOMMenuBarCraftPanel: View {
         }
     }
 
-    /// The badge always does the tile's thing in one click — flips its
-    /// switch, or runs its first command (Capture Area). The name opens the
-    /// tile's page in place of the body (or flips a plain switch).
+    /// The badge flips the tile's switch (or, for a menu-only tile such as
+    /// Capture, opens its choices); the name opens the choices under the
+    /// tiles, sliding in as through 7.23, or flips a plain switch.
     private func tileView(_ tile: ToggleTile) -> some View {
         HStack(spacing: 0) {
             Button { badgeAction(tile) } label: { tileCircle(tile) }
@@ -514,9 +537,7 @@ struct AOMMenuBarCraftPanel: View {
                 .accessibilityValue(tile.onToggle == nil ? Text("") : (tile.isOn ? Text("On") : Text("Off")))
             Button {
                 if tile.menu != nil {
-                    withAnimation(AOMCraftMotion.resolve(AOMCraftMotion.crossfade, reduceMotion: AOMMotion.systemReduceMotion)) {
-                        page = tile.id
-                    }
+                    toggleMenu(openMenu == tile.id ? nil : tile.id)
                 } else {
                     tile.onToggle?()
                 }
@@ -525,9 +546,10 @@ struct AOMMenuBarCraftPanel: View {
                     tileText(tile)
                     Spacer(minLength: 0)
                     if tile.menu != nil {
-                        Image(systemName: "chevron.right")
+                        Image(systemName: "chevron.down")
                             .font(Font.caption2.weight(.bold))
                             .foregroundStyle(AOMCraftColor.inkSecondary)
+                            .rotationEffect(.degrees(openMenu == tile.id ? 180 : 0))
                     }
                 }
                 .padding(.trailing, 10)
@@ -540,58 +562,62 @@ struct AOMMenuBarCraftPanel: View {
         .frame(height: 52)
         .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
             .fill(tile.isOn ? tile.tint.opacity(0.14) : Color.primary.opacity(0.05)))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .strokeBorder(openMenu == tile.id ? tile.tint.opacity(0.7) : .clear, lineWidth: 1.5))
         .aomCalmHover(radius: 12)
     }
 
     private func badgeAction(_ tile: ToggleTile) {
         if let toggle = tile.onToggle { toggle(); return }
         if let primary = tile.primary { onCommand(primary); return }
-        if tile.menu != nil { page = tile.id }
+        if tile.menu != nil { toggleMenu(openMenu == tile.id ? nil : tile.id) }
     }
 
-    private func tilePage(_ tile: ToggleTile, _ commands: [AOMFeatureCommand]) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+    private func toggleMenu(_ id: String?) {
+        withAnimation(AOMCraftMotion.resolve(AOMCraftMotion.crossfade, reduceMotion: AOMMotion.systemReduceMotion)) {
+            openMenu = id
+        }
+    }
+
+    /// The choices slide in under the tiles (as through 7.23).
+    private func tileMenu(_ tile: ToggleTile, _ commands: [AOMFeatureCommand]) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 6) {
-                Button {
-                    withAnimation(AOMCraftMotion.resolve(AOMCraftMotion.crossfade, reduceMotion: AOMMotion.systemReduceMotion)) {
-                        page = nil
-                    }
-                } label: {
-                    Label("Back", systemImage: "chevron.left").font(AOMFont.caption.weight(.medium))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(AOMCraftColor.inkSecondary)
-                .keyboardShortcut("[", modifiers: .command)
-                Spacer()
                 Image(systemName: tile.symbol).font(AOMFont.caption.weight(.semibold)).foregroundStyle(tile.tint)
                 Text(tile.title).font(AOMFont.callout.weight(.semibold))
                 if let note = tile.menuNote {
                     Text(note).font(AOMFont.caption).foregroundStyle(AOMCraftColor.inkSecondary).lineLimit(1)
                 }
                 Spacer()
-            }
-            ScrollView {
-                VStack(alignment: .leading, spacing: 2) {
-                    ForEach(commands) { command in
-                        Button {
-                            page = nil
-                            onCommand(command)
-                        } label: {
-                            HStack(spacing: 8) {
-                                Image(systemName: command.symbol).font(AOMFont.callout).frame(width: 20)
-                                Text(command.title).font(AOMFont.callout)
-                                Spacer()
-                            }
-                            .padding(.horizontal, 8)
-                            .frame(height: 32)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .aomCalmHover(radius: 7)
-                    }
+                Button { toggleMenu(nil) } label: {
+                    Image(systemName: "xmark").font(Font.caption2.weight(.bold)).foregroundStyle(AOMCraftColor.inkSecondary)
+                        .frame(width: 20, height: 18)
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Close \(tile.title) menu")
+            }
+            .padding(.horizontal, 6)
+            .padding(.bottom, 2)
+            ForEach(commands) { command in
+                Button {
+                    openMenu = nil
+                    onCommand(command)
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: command.symbol).font(AOMFont.callout).frame(width: 18)
+                        Text(command.title).font(AOMFont.callout)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 8)
+                    .frame(height: 28)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .aomCalmHover(radius: 7)
             }
         }
-        .transition(.opacity)
+        .padding(8)
+        .background(tile.tint.opacity(0.10), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .transition(.opacity.combined(with: .move(edge: .top)))
     }
 }

@@ -788,11 +788,20 @@ final class FolderRulesEngine: ObservableObject {
             status.setOn = { on in FolderRulesEngine.shared.setMasterEnabled(on) }
         }
         let count = activeRules.count
-        status.isOn = config.isEnabled
-        status.count = config.isEnabled ? count : nil
-        status.unit = count == 1 ? "rule" : "rules"
-        status.detail = statusDetail
-        status.attention = attention
+        // 7.24.1: only what changed, and never inside a view update — the
+        // engine is first built by FolderRulesPage.init during MainWindow's
+        // body, and publishing then logged 20 SwiftUI faults at launch.
+        let apply = { [weak self] in
+            guard let self else { return }
+            let on = self.config.isEnabled, shown = on ? count : nil, unit = count == 1 ? "rule" : "rules"
+            let detail = self.statusDetail, attention = self.attention
+            if status.isOn != on { status.isOn = on }
+            if status.count != shown { status.count = shown }
+            if status.unit != unit { status.unit = unit }
+            if status.detail != detail { status.detail = detail }
+            if status.attention != attention { status.attention = attention }
+        }
+        DispatchQueue.main.async { MainActor.assumeIsolated { apply() } }
     }
 }
 

@@ -667,9 +667,9 @@ struct PaletteSystemCommand: Identifiable {
         .init(id: "system.appearance", title: "Toggle System Appearance", subtitle: "Light or dark mode · 다크 모드",
               symbol: "circle.lefthalf.filled", group: "Appearance", kind: .action(.toggleDarkMode),
               aliases: ["dark mode", "light mode", "appearance", "다크 모드", "라이트 모드", "다크모드"]),
-        .init(id: "system.dnd", title: "Toggle Do Not Disturb", subtitle: "Focus › Do Not Disturb · 방해 금지",
-              symbol: "moon.circle", group: "Appearance", kind: .action(.toggleDoNotDisturb),
-              aliases: ["do not disturb", "dnd", "방해 금지", "집중 모드"]),
+        // 7.24.1 (Codex audit §3.2): no Toggle Do Not Disturb here — it needs
+        // a Shortcut set up first, so like the action browser it lives only
+        // in automations, where its form says how.
         .init(id: "system.showDesktop", title: "Show Desktop", subtitle: "Move every window aside · 데스크탑 보기",
               symbol: "menubar.dock.rectangle", group: "Apps & windows", kind: .action(.showDesktop),
               aliases: ["desktop", "데스크탑", "바탕화면"]),

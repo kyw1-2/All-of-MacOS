@@ -1,3 +1,15 @@
+## [7.24.1] - 2026-11-28 — The tile menus slide in again, and a cleanup
+
+From the Codex audit of orphaned and half-connected code and agy's review of 7.24 (Downloads, 2026-11-28), each claim checked first. Ledger: `docs/design-7.24.md` §5.
+
+- **Capture's choices slide in below the tiles again** (your request): clicking Capture, Clipboard or another tile with choices shows them under the tiles, as before 7.24, instead of switching the panel to another page. Capture's round badge opens them too.
+- **Pasting a recent copy from the panel** now pastes into the app you were in when the panel opened, the same careful way as the clipboard shelf. It waits until that app is in front and checks the copy is still on the clipboard, instead of a fixed short wait that could lose to the panel's own keyboard focus.
+- **The panel stays under 560 pt**: recent copies show the newest one, with “2 more” to open the rest.
+- **No more launch warnings from Folder Rules**: its status update no longer happens while the window is first drawn (20 SwiftUI warnings at every launch in 7.24.0).
+- **Faster Back and Forward while typing**: the menu command found for an app is remembered for 10 seconds instead of searching the menu bar each time (up to 0.35 s).
+- **Lighter background work**: the clipboard is read every 0.5 s instead of 0.15 s, and right after ⌘C or ⌘X, so copies are caught as quickly as before. Regular expressions used for triggers, workflows, Folder Rules and Quick Entry are compiled once.
+- **Cleanup**: seven unused views were removed. Toggle Do Not Disturb is no longer offered in the launcher, where it couldn't run without setup, matching the action browser. A setting that nothing read is no longer written.
+
 ## [7.24.0] - 2026-11-28 — A menu bar panel you can work in
 
 From the menu bar spec of 2026-11-28 (DeepSeek, against the 7.23 code and snapshots), each claim checked first. Ledger: `docs/design-7.24.md`.

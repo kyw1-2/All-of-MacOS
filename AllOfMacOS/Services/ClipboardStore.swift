@@ -337,7 +337,25 @@ final class ClipboardStore: ObservableObject {
     /// still woke 13 times a second, for nothing it would keep. 3.4.44: the
     /// recording rate halves too (75 → 150 ms); each sample is a pasteboard
     /// server round trip, and 150 ms is still shorter than a copy-then-open.
-    static func pollInterval(recording: Bool) -> TimeInterval { recording ? 0.15 : 60 }
+    ///
+    /// 7.24.1 (7.19 P1-2): 150 → 500 ms, because ⌘C and ⌘X now ask for a
+    /// read at once and again 40, 120 and 300 ms later (`pollSoon`), so a copy
+    /// made from the keyboard is caught as fast as before and the background
+    /// rate drops by two thirds.
+    static func pollInterval(recording: Bool) -> TimeInterval { recording ? 0.5 : 60 }
+
+    /// When an app writes after ⌘C: the key goes down before the app copies.
+    static let copyFollowUps: [TimeInterval] = [0.04, 0.12, 0.3]
+
+    /// ⌘C / ⌘X was pressed: read the pasteboard soon, a few times.
+    func pollSoon() {
+        guard timer != nil, settings.enabled, !paused else { return }
+        for delay in Self.copyFollowUps {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                MainActor.assumeIsolated { self?.poll() }
+            }
+        }
+    }
 
     private func schedulePolling() {
         let interval = Self.pollInterval(recording: settings.enabled && !paused)

@@ -100,7 +100,7 @@ enum FolderRuleMatcher {
     private static func nameMatches(_ condition: FolderRuleCondition, _ name: String) -> Bool {
         if condition.comparison == .matchesRegex {
             guard !condition.pattern.isEmpty,
-                  let regex = try? NSRegularExpression(pattern: normalized(condition.pattern), options: [.caseInsensitive]) else {
+                  let regex = AOMRegexCache.regex(normalized(condition.pattern), options: [.caseInsensitive]) else {
                 return false
             }
             return regex.firstMatch(in: name, range: NSRange(name.startIndex..., in: name)) != nil

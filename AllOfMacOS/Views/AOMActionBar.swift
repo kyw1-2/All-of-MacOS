@@ -472,14 +472,3 @@ enum AOMActionPanelSelection {
     }
 }
 
-/// 7.16 (GPT V09): Search as its own toolbar item, so it never shares a
-/// slot with a page's primary action and stays when the sidebar is hidden.
-struct AOMToolbarSearch: View {
-    let paletteKeys: String
-    @Binding var showingCommandPalette: Bool
-
-    var body: some View {
-        Button { showingCommandPalette = true } label: { Label("Search", systemImage: "magnifyingglass") }
-            .help("Search all tools, settings and commands (\(paletteKeys))")
-    }
-}

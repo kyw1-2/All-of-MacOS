@@ -139,7 +139,7 @@ enum SystemSignalMatcher {
     }
     private static func regexMatches(_ pattern: String, _ name: String) -> Bool {
         guard pattern.count <= 256, name.count <= 1024,
-              let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return false }
+              let regex = AOMRegexCache.regex(pattern, options: [.caseInsensitive]) else { return false }
         return regex.firstMatch(in: name, range: NSRange(name.startIndex..., in: name)) != nil
     }
 

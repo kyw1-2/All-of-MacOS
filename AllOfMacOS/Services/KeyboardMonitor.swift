@@ -471,6 +471,12 @@ class KeyboardMonitor: ObservableObject {
 
         // Text expansion runs before everything else: it only ever sees plain
         // printable typing, and a match swallows its final key.
+        // 7.24.1: ⌘C / ⌘X — Clipboard reads the pasteboard right after (its
+        // background rate is 0.5 s now). The key itself always goes through.
+        if isDown, !isRepeat, keyCode == 8 || keyCode == 7, modifiers.contains(.command),
+           modifiers.isDisjoint(with: [.control, .option]) {
+            MainActor.assumeIsolated { ClipboardStore.shared.pollSoon() }
+        }
         // 7.23: the opt-in Korean/English typing fix watches plain typing only.
         if isDown, let text, !text.isEmpty, modifiers.isDisjoint(with: [.command, .control, .option, .function]),
            !IsSecureEventInputEnabled() {

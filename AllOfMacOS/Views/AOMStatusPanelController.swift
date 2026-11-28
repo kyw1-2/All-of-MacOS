@@ -37,8 +37,18 @@ final class AOMStatusPanelController: NSObject, NSWindowDelegate {
         return CGRect(x: x.rounded(), y: y.rounded(), width: size.width, height: size.height)
     }
 
+    /// 7.24.1 (agy §6.1-2): the app in front when the panel opened — where a
+    /// copy from the panel is pasted, even though the panel holds the keys.
+    private(set) var destination: NSRunningApplication?
+
+    /// 7.24.1 (agy §6.1-1): the panel never covers more than this.
+    static func maxHeight(visible: CGRect) -> CGFloat { min(560, (visible.height * 0.72).rounded()) }
+
     func show<Content: View>(_ content: Content, under button: NSStatusBarButton) {
         close()
+        if let front = NSWorkspace.shared.frontmostApplication, front.processIdentifier != ProcessInfo.processInfo.processIdentifier {
+            destination = front
+        }
         // 7.0: no launcher or shelf left open under the menu bar panel.
         AOMOverlayCoordinator.shared.present(.menuBarPanel, dismiss: { [weak self] in self?.close() }) { _ in }
         guard let buttonWindow = button.window else { return }
