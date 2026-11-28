@@ -59,10 +59,10 @@ final class AOM7230QuickEntryTests: XCTestCase {
 
     func testShortcutClashSaysWhatWhyAndFix() {
         XCTAssertNil(ShortcutClashMessage.make("⌃⌥N", status: .active))
-        let taken = ShortcutClashMessage.make("⌃⌥N", status: .failed(OSStatus(eventHotKeyExistsErr)))
+        let taken = ShortcutClashMessage.make("⌃⌥N", status: .failed(OSStatus(-9878)))
         XCTAssertEqual(taken?.title, "⌃⌥N can't be used")
         XCTAssertTrue(taken?.why.contains("Another app") == true)
-        XCTAssertTrue(ShortcutClashMessage.make("⌥Space", status: .failed(OSStatus(eventHotKeyExistsErr)), launcher: "launcher")?
+        XCTAssertTrue(ShortcutClashMessage.make("⌥Space", status: .failed(OSStatus(-9878)), launcher: "launcher")?
             .why.contains("launcher") == true)
         XCTAssertFalse(QuickEntryShortcut.allCases.contains { $0.displayString == "⌃⌥Space" }, "macOS's input source key")
     }
