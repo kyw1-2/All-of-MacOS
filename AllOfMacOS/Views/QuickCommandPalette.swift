@@ -425,6 +425,10 @@ struct QuickCommandPalette: View {
         .init(id: "emoji.screen", route: .emoji, subtitle: "Find an emoji or symbol by name and type it · 이모지 (:fire)",
               aliases: ["emoji", "emojis", "symbols", "emoji picker", "이모지", "이모티콘", "기호", "특수문자"],
               keywords: "smiley face heart 웃음 하트 표정"),
+        // 7.23 (Monodraw's character picker).
+        .init(id: "symbols.screen", route: .symbols, subtitle: "Box drawing, arrows, maths, shapes, currency · 기호 (→ ≠ ─ ₩)",
+              aliases: ["symbols", "symbol picker", "box drawing", "arrows", "special characters", "기호", "특수기호", "화살표"],
+              keywords: "unicode character math currency box line 수학 통화 선"),
         .init(id: "snippets.screen", route: .snippets, subtitle: "Paste saved text by its keyword; it also expands as you type · 스니펫",
               aliases: ["snippet", "snippets", "text expansion", "스니펫", "상용구", "자주 쓰는 문구"],
               keywords: "typed string abbreviation espanso textexpander 텍스트 확장"),
@@ -478,6 +482,7 @@ struct QuickCommandPalette: View {
         items += upNextItems()
         items += emojiRootItems()
         items += calculatorItems()
+        items += sentenceItems()
         items += quicklinkItems()
         items += commandItems()
         items += automationItems()
@@ -532,6 +537,32 @@ struct QuickCommandPalette: View {
                 item.sendText = result.display
                 return item
             }
+    }
+
+    /// 7.23 (DeepSeek design reference §2.2, Fantastical): a sentence with a
+    /// day or time ("내일 3시 회의") offers itself as an event (↩) or a
+    /// reminder (⌘↩) above the results. Anything that doesn't parse — or is
+    /// a calculation — searches as before, with no error.
+    private func sentenceItems() -> [PaletteItem] {
+        guard isSearching, trimmed.contains(" "), AOMCalculator.evaluate(trimmed) == nil,
+              let sentence = QuickEntryParser.parse(trimmed) else { return [] }
+        let text = trimmed
+        func add(_ destination: QuickEntryStore.Destination) {
+            close()
+            Task { @MainActor in
+                let outcome = await QuickEntryStore.shared.save(text, to: destination)
+                switch outcome {
+                case .saved(let detail): GestureHUD.shared.show(title: destination == .event ? "Event Added" : "Reminder Added", detail: detail)
+                case .failed(let title, let why, _): GestureHUD.shared.show(title: title, detail: why)
+                }
+            }
+        }
+        return [PaletteItem(
+            id: "sentence", title: "Add “\(sentence.title)”", subtitle: QuickEntryParser.describe(sentence) + " · Calendar",
+            icon: "calendar.badge.plus", section: .commands,
+            primary: PaletteAction(title: "Add to Calendar", symbol: "calendar") { add(.event) },
+            secondaries: [PaletteAction(title: "Add as Reminder", symbol: "checklist") { add(.reminder) }],
+            placement: .pinned, accessory: "Event")]
     }
 
     private func quicklinkItems() -> [PaletteItem] {
@@ -608,6 +639,12 @@ struct QuickCommandPalette: View {
         // Keycaps mirror the user's real bindings; unbound commands show none.
         // Capture Text resolves to the OCR binding, as in CaptureMenu.
         // 7.6 (Codex M08, M12).
+        // 7.23: Quick Entry, the small field from any app (Things-style).
+        command("quickentry", "Quick Entry", "A note, reminder or event from any app · 빠른 입력", "square.and.pencil",
+                keys: QuickEntryShortcut.current == .off ? nil : QuickEntryShortcut.current.displayString,
+                keywords: "quick entry capture note jot remind todo things 빠른 입력 메모 할 일") { QuickEntryController.shared.show() }
+        command("files.dualpane", "Two-Pane Browser", "Two folders side by side; drag to copy, ⌘ to move · 두 창 파일", "rectangle.split.2x1",
+                keywords: "dual pane two pane commander transmit copy move files folders 파일 두 창 복사 이동") { AOMFileToolsLauncher.dualPane() }
         command("menubar.strip", "Menu Bar Strip", "Every menu bar icon in one row, hidden ones first · 메뉴바 아이콘 띠", "menubar.rectangle",
                 keywords: "menu bar icons notch hidden status items ice bar bartender 메뉴바 노치 숨은 아이콘") { MenuBarStripController.shared.show() }
         command("audio.mark", "I Just Heard a Glitch", "Save what AOM saw 10 s before and after; playback isn't touched · 방금 잡음 들림", "waveform.badge.exclamationmark",
@@ -1151,6 +1188,7 @@ struct QuickCommandPalette: View {
                 // 7.2: here the field is the search (brew search, Spotlight, names) or an input.
                 case .tool(let tool) where tool.takesQuery: items = toolItems(tool)
                 case .emoji: items = emojiItems()
+                case .symbols: items = symbolItems()
                 case .contacts: items = contactItems()
                 case .hotkey, .hotkeyFinder, .newSnippet, .scriptArgument, .snippetArguments, .saveSearch, .availability,
                      .clipboardDiff: items = routeItems(route)
@@ -1254,7 +1292,7 @@ struct QuickCommandPalette: View {
                 brew.searchText = term
                 if !term.isEmpty { brew.whenIdle { if brew.searchText == term, brew.tab == .search { brew.search() } } }
             }
-        case .tool, .automationCatalog, .folder, .rulePreview, .emoji, .snippets, .newSnippet, .scripts, .scriptOutput,
+        case .tool, .automationCatalog, .folder, .rulePreview, .emoji, .symbols, .snippets, .newSnippet, .scripts, .scriptOutput,
              .scriptArgument, .snippetArguments, .schedule, .contacts, .sendTo, .hotkey, .themes, .saveSearch,
              .clipboardCompare, .clipboardDiff: break
         case .availability: enterAvailability()
@@ -1697,6 +1735,7 @@ struct QuickCommandPalette: View {
         case .folder(let url): return folderItems(url)
         case .rulePreview(let id): return rulePreviewItems(id)
         case .emoji: return emojiItems()
+        case .symbols: return symbolItems()
         case .snippets: return snippetItems()
         case .newSnippet(let text): return newSnippetItems(text)
         case .scripts: return scriptItems()
@@ -2043,7 +2082,7 @@ struct QuickCommandPalette: View {
         let pasteTitle = canPaste ? "Paste to \(target?.localizedName ?? "App")" : "Copy"
         let search = isSearching ? ClipboardSearchQuery(trimmed) : nil
         let boards = clipboardStore.boards
-        let matching = search.map { query in clipboardStore.entries.lazy.filter { query.matches($0, boards: boards) } }
+        let matching = search.map { query in clipboardStore.entries.lazy.filter { query.matches($0, boards: boards, contentHidden: { ClipboardSecretDisplay.conceals($0) }) } }
         // 7.2 (report 05 §3-E): the kind filter of the chips (⇥).
         let kind = clipboardFilter
         let source: LazyFilterSequence<[ClipboardEntry]> = matching

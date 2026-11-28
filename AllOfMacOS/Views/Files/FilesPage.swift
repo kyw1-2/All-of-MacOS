@@ -26,7 +26,7 @@ struct FilesPage: View {
     @Environment(\.undoManager) private var undoManager
     @Environment(\.openSettings) private var openSettings
 
-    private var isOn: Bool { settings.dialogHelper || settings.shakeOpensShelf || settings.shiftOpensShelf }
+    private var isOn: Bool { settings.dialogHelper || settings.shakeOpensShelf || settings.shiftOpensShelf || settings.edgeOpensShelf }
 
     @State private var selection: FilesLocationSelection?
     @State private var arrangement: AOMWorkbenchArrangement = .listDetail

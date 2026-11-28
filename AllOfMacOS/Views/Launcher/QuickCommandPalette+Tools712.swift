@@ -121,7 +121,7 @@ extension QuickCommandPalette {
         let search = isSearching ? ClipboardSearchQuery(trimmed) : nil
         let boards = clipboardStore.boards
         let others = clipboardStore.entries.lazy.filter { $0.id != id && self.clipText($0) != nil }
-            .filter { search?.matches($0, boards: boards) ?? true }.prefix(200)
+            .filter { search?.matches($0, boards: boards, contentHidden: { ClipboardSecretDisplay.conceals($0) }) ?? true }.prefix(200)
         return others.map { entry in
             // 7.13 (GPT F04): the older copy goes on the left once, here;
             // the route keeps that order so Swap Sides really swaps.

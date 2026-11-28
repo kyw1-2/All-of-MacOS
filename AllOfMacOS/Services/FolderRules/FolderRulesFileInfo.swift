@@ -29,6 +29,10 @@ struct FolderRuleFileInfo: Equatable {
     var depth = 0
     /// 7.12 (NEW-2): the first page's text, read only for a rule that needs it.
     var pdf: FolderRulePDFContent?
+    /// 7.23 (DeepSeek design reference §2.3, Hazel): only a placeholder is
+    /// on this Mac (iCloud Optimise Storage, a file provider's online-only
+    /// file). Its content can't be read until it is downloaded.
+    var isCloudOnly = false
 
     init(url: URL, name: String? = nil, isDirectory: Bool = false, isPackage: Bool = false,
          contentType: String? = nil, isScreenCapture: Bool = false, size: Int64 = 0,
@@ -221,8 +225,18 @@ enum FolderRuleFileReader {
 
     private static let keys: Set<URLResourceKey> = [
         .nameKey, .isDirectoryKey, .isPackageKey, .isSymbolicLinkKey, .isHiddenKey, .contentTypeKey, .fileSizeKey,
-        .addedToDirectoryDateKey, .creationDateKey, .contentModificationDateKey, .tagNamesKey
+        .addedToDirectoryDateKey, .creationDateKey, .contentModificationDateKey, .tagNamesKey,
+        .isUbiquitousItemKey, .ubiquitousItemDownloadingStatusKey
     ]
+
+    /// `SF_DATALESS`: the file's data lives with its file provider.
+    static let datalessFlag: UInt32 = 0x4000_0000
+
+    /// Pure: a placeholder whose content isn't on this Mac.
+    static func isCloudOnly(ubiquitous: Bool, status: URLUbiquitousItemDownloadingStatus?, flags: UInt32) -> Bool {
+        if flags & datalessFlag != 0 { return true }
+        return ubiquitous && status == .notDownloaded
+    }
 
     /// Nil for items rules never touch: symbolic links, hidden items and
     /// unfinished downloads. `directorySizes` adds up folder contents (only
@@ -250,12 +264,15 @@ enum FolderRuleFileReader {
             .flatMap(FolderRuleMetadata.decodeBool) ?? false
         let lastUsed = FolderRuleMetadata.attribute(FolderRuleMetadata.lastUsedDateAttribute, at: path)
             .flatMap(FolderRuleMetadata.decodeLastUsedDate)
-        return FolderRuleFileInfo(url: url, name: name, isDirectory: isDirectory, isPackage: isPackage,
-                                  contentType: values.contentType?.identifier, isScreenCapture: screenCapture, size: size,
-                                  dateAdded: values.addedToDirectoryDate, dateCreated: values.creationDate,
-                                  dateModified: values.contentModificationDate, dateLastOpened: lastUsed,
-                                  whereFroms: whereFroms, tags: values.tagNames ?? [],
-                                  device: UInt64(UInt32(bitPattern: status.st_dev)), inode: UInt64(status.st_ino), depth: depth)
+        var info = FolderRuleFileInfo(url: url, name: name, isDirectory: isDirectory, isPackage: isPackage,
+                                      contentType: values.contentType?.identifier, isScreenCapture: screenCapture, size: size,
+                                      dateAdded: values.addedToDirectoryDate, dateCreated: values.creationDate,
+                                      dateModified: values.contentModificationDate, dateLastOpened: lastUsed,
+                                      whereFroms: whereFroms, tags: values.tagNames ?? [],
+                                      device: UInt64(UInt32(bitPattern: status.st_dev)), inode: UInt64(status.st_ino), depth: depth)
+        info.isCloudOnly = !isDirectory && isCloudOnly(ubiquitous: values.isUbiquitousItem ?? false,
+                                                       status: values.ubiquitousItemDownloadingStatus, flags: UInt32(status.st_flags))
+        return info
     }
 
     /// The total size of a folder's contents, stopping after 20,000 items.

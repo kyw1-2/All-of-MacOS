@@ -111,8 +111,20 @@ struct ClipboardSearchQuery {
         return false
     }
 
-    func matches(_ entry: ClipboardEntry, boards: [ClipboardPinboard]) -> Bool {
+    /// `contentHidden` is asked at most once, only when a word has to be
+    /// looked for in the item's content: a hidden item's words never match
+    /// (an excluded word therefore never excludes it), so its value cannot be
+    /// probed by typing. Metadata terms and `is:secret` still apply.
+    func matches(_ entry: ClipboardEntry, boards: [ClipboardPinboard],
+                 contentHidden: ((ClipboardEntry) -> Bool)? = nil) -> Bool {
         guard !terms.isEmpty else { return true }
+        var hidden: Bool?
+        func isHidden() -> Bool {
+            if let hidden { return hidden }
+            let value = contentHidden?(entry) ?? false
+            hidden = value
+            return value
+        }
         return terms.allSatisfy { term in
             let matched: Bool
             switch term.field {
@@ -131,6 +143,7 @@ struct ClipboardSearchQuery {
                 switch term.value.lowercased() {
                 case "pinned": matched = !entry.pinboardIDs.isEmpty
                 case "unpinned": matched = entry.pinboardIDs.isEmpty
+                case "secret", "secrets", "hidden": matched = ClipboardItemClassifier.classify(entry) == .secret
                 default: matched = false
                 }
             case "before", "after", "on":
@@ -141,7 +154,9 @@ struct ClipboardSearchQuery {
                     default: matched = entry.lastCopiedAt >= date && entry.lastCopiedAt < (term.dayEnd ?? date)
                     }
                 } else { matched = false }
-            default: matched = Self.contains(entry, term.value)
+            default:
+                if isHidden() { return term.excluded ? true : false }
+                matched = Self.contains(entry, term.value)
             }
             return term.excluded ? !matched : matched
         }

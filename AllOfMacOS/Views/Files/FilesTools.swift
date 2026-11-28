@@ -12,7 +12,7 @@ final class FileToolsModel: ObservableObject {
     enum Tool: String, Identifiable {
         case pdfMerge, pdfCompress, pdfSplit, pdfExtract, pdfRemove, pdfRotate, pdfReorder, imagesToPDF,
              pdfToImages, pdfProtect, pdfUnlock, pdfPageNumbers, pdfCompare
-        case zipExtract, folderCompare
+        case zipExtract, folderCompare, dualPane
         case convertImage, convertVideo, qrCode
         case batchRename, whatsUsing, fileHash
         var id: String { rawValue }
@@ -139,6 +139,7 @@ final class FileToolsModel: ObservableObject {
         case .pdfCompare: AOMFileToolsLauncher.comparePDFs()
         case .zipExtract: AOMFileToolsLauncher.openZip()
         case .folderCompare: AOMFileToolsLauncher.compareFolders()
+        case .dualPane: AOMFileToolsLauncher.dualPane()
         case .convertImage: convertImage()
         case .convertVideo: convertVideo()
         case .qrCode: makeQR()
@@ -552,7 +553,7 @@ struct FilesToolsMenu: View {
                  (.pdfReorder, "Reorder Pages…"), (.imagesToPDF, "Images to PDF…"), (.pdfToImages, "PDF to Images…"),
                  (.pdfProtect, "Add PDF Password…"), (.pdfUnlock, "Remove PDF Password…"), (.pdfPageNumbers, "Add Page Numbers…"),
                  (.pdfCompare, "Compare Two PDFs…")]),
-        ("Archives & Folders", [(.zipExtract, "Extract from ZIP…"), (.folderCompare, "Compare Folders…")]),
+        ("Archives & Folders", [(.zipExtract, "Extract from ZIP…"), (.folderCompare, "Compare Folders…"), (.dualPane, "Two-Pane Browser…")]),
         ("Image & Video", [(.convertImage, "Convert Image…"), (.convertVideo, "Convert Video…"), (.qrCode, "QR Code…")]),
         ("File Info", [(.batchRename, "Batch Rename…"), (.whatsUsing, "What's Using a File…"), (.fileHash, "File SHA-256…")])
     ]

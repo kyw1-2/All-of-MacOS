@@ -99,6 +99,8 @@ struct FolderRulesEnvironment {
     /// Copies into a folder the user can't write to, through the standard
     /// administrator prompt. Nil means success.
     var copyAsAdministrator: (_ source: URL, _ destination: URL) -> FolderRuleFailure?
+    /// 7.23: asks iCloud or the file provider to bring a cloud-only file down.
+    var download: (URL) -> Void = { url in try? FileManager.default.startDownloadingUbiquitousItem(at: url) }
 }
 
 extension FolderRulesEnvironment {

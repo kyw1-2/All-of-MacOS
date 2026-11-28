@@ -466,12 +466,15 @@ final class ClipboardStore: ObservableObject {
                   board: UUID? = nil, since: Date? = nil) -> [ClipboardEntry] {
         if query.isEmpty, kind == nil, source == nil, board == nil, since == nil { return entries }
         let search = ClipboardSearchQuery(query, boards: boards)
+        // 7.23: hidden secrets are not found by their words (see ClipboardSearchQuery.matches).
+        let conceal: ((ClipboardEntry) -> Bool)? = ClipboardPreferences.shared.concealSecrets
+            ? { ClipboardItemClassifier.classify($0) == .secret } : nil
         let matched = entries.filter { entry in
             (kind == nil || entry.kind == kind) &&
             (source == nil || entry.sourceBundleID == source || entry.sourceName == source) &&
             (board == nil || entry.pinboardIDs.contains(board!)) &&
             (since == nil || entry.lastCopiedAt >= since!) &&
-            search.matches(entry, boards: boards)
+            search.matches(entry, boards: boards, contentHidden: conceal)
         }
         return Self.ordered(matched, board: board, boards: boards)
     }

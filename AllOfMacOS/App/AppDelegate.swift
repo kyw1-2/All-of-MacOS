@@ -124,6 +124,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             // 6.5: ⌘K from any app (⌥Space unless changed in Settings › Shortcuts).
             MainActor.assumeIsolated {
                 GlobalHotKeyManager.shared.start { AOMLauncherController.shared.toggle() }
+                // 7.23: Quick Entry from any app (⌃⌥N unless changed in Settings › Shortcuts).
+                GlobalHotKeyManager.shared.startQuickEntry { QuickEntryController.shared.toggle() }
                 // 7.2: every launcher row's own hotkey (⌘K › Set Hotkey…).
                 PaletteHotkeyStore.shared.start { AOMLauncherController.shared.run($0) }
             }

@@ -240,6 +240,10 @@ struct FolderRulePassOutput: Equatable {
     /// 7.2.2: approved or picked items left alone because they changed or
     /// no longer match.
     var skippedApproved = 0
+    /// 7.23 (Hazel): cloud-only files left alone by the Leave Them choice,
+    /// and those asked to download (rules run once they arrive).
+    var cloudSkipped: [String] = []
+    var cloudDownloading: [String] = []
 
     mutating func recheck(_ seconds: TimeInterval) {
         recheckAfter = min(recheckAfter ?? seconds, seconds)
@@ -261,6 +265,8 @@ struct FolderRulePreviewItem: Identifiable, Equatable {
         case noMatch
         /// 7.12 (NEW-2): the rule can't decide this PDF; it stays where it is.
         case needsReview(String)
+        /// 7.23: only in iCloud or a file provider (left alone, or downloading first).
+        case cloudOnly(FolderRuleCloudPolicy)
     }
 
     var id: String
@@ -434,6 +440,18 @@ final class FolderRulesRunner: @unchecked Sendable {
                 seenPaths.insert(info.url.path)
                 guard stability.isStable(info, now: now) else {
                     output.recheck(FolderRuleStability.quietPeriod + 0.5)
+                    continue
+                }
+                // 7.23 (Hazel): a placeholder has no content to match or move.
+                if info.isCloudOnly {
+                    switch input.config.cloudFiles {
+                    case .skip:
+                        output.cloudSkipped.append(info.name)
+                    case .download:
+                        output.cloudDownloading.append(info.name)
+                        environment.download(info.url)
+                        output.recheck(5)
+                    }
                     continue
                 }
                 Self.attachPDF(&info, rules: rules)
@@ -638,6 +656,9 @@ final class FolderRulesRunner: @unchecked Sendable {
                     break
                 }
             }
+            if state == .willRun, info.isCloudOnly {
+                state = .cloudOnly(config.cloudFiles)
+            }
             if state == .willRun {
                 if memory.isSettled(key, signature: rule.conditionSignature) {
                     state = .handled
@@ -652,6 +673,15 @@ final class FolderRulesRunner: @unchecked Sendable {
         }
         return FolderRulePreview(ruleID: rule.id, folderState: .ok(items: entries.count), items: items,
                                  inProgress: inProgress, scanned: entries.count)
+    }
+
+    /// 7.23: the cloud-only files a pass left alone or is downloading, in
+    /// Hazel's words — "" when there were none.
+    static func cloudSummary(skipped: Int, downloading: Int) -> String {
+        var parts: [String] = []
+        if skipped > 0 { parts.append("Skipped \(skipped) cloud-only file\(skipped == 1 ? "" : "s")") }
+        if downloading > 0 { parts.append("Downloading \(downloading) cloud-only file\(downloading == 1 ? "" : "s") before applying rules") }
+        return parts.joined(separator: " · ")
     }
 
     /// One file against one rule (the inspector's "Test a file").

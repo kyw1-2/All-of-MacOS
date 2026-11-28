@@ -18,6 +18,8 @@ struct FolderRulesConfig: Codable, Equatable {
     /// Entries the last decode skipped or rules it turned off because part
     /// of them could not be read. Never written back.
     var decodeLosses = 0
+    /// 7.23 (Hazel): what rules do with files that are only in the cloud.
+    var cloudFiles: FolderRuleCloudPolicy = .download
 
     init(isEnabled: Bool = false, folders: [FolderRuleFolder] = [], rules: [FolderRule] = []) {
         self.isEnabled = isEnabled
@@ -25,12 +27,13 @@ struct FolderRulesConfig: Codable, Equatable {
         self.rules = rules
     }
 
-    enum CodingKeys: String, CodingKey { case version, isEnabled, folders, rules }
+    enum CodingKeys: String, CodingKey { case version, isEnabled, folders, rules, cloudFiles }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         version = try c.decodeIfPresent(Int.self, forKey: .version) ?? Self.currentVersion
         isEnabled = try c.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? false
+        cloudFiles = (try? c.decodeIfPresent(FolderRuleCloudPolicy.self, forKey: .cloudFiles)) ?? .download
         // Element by element (Codex audit F02): one malformed rule used to
         // empty the whole list, and the next save wrote that empty list.
         let folderList = (try? c.decodeIfPresent(LossyArray<FolderRuleFolder>.self, forKey: .folders)) ?? LossyArray()
@@ -42,6 +45,24 @@ struct FolderRulesConfig: Codable, Equatable {
 
     func rules(in folderID: UUID) -> [FolderRule] { rules.filter { $0.folderID == folderID } }
     func folder(_ id: UUID) -> FolderRuleFolder? { folders.first { $0.id == id } }
+}
+
+/// 7.23 (DeepSeek design reference §2.3): Hazel's two choices for files
+/// whose content is only in iCloud or a file provider.
+enum FolderRuleCloudPolicy: String, Codable, CaseIterable, Identifiable {
+    /// Download first, then apply the rules (the default: rules see every file).
+    case download
+    /// Leave them as they are; they are counted as skipped.
+    case skip
+
+    var id: String { rawValue }
+    var title: String { self == .download ? "Download, Then Apply" : "Leave Them" }
+    var explanation: String {
+        switch self {
+        case .download: "Cloud-only files are downloaded before rules are applied to them."
+        case .skip: "Cloud-only files are left as they are and rules are not applied to them."
+        }
+    }
 }
 
 /// A folder the user picked to watch (Downloads, Desktop, or one added with

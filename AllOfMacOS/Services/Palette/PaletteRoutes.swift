@@ -47,6 +47,8 @@ enum PaletteRoute: Hashable {
     /// One folder rule's dry run.
     case rulePreview(UUID)
     case emoji
+    /// 7.23: box drawing, arrows, maths, shapes and currency.
+    case symbols
     case snippets
     /// The field takes the new snippet's keyword; the text is fixed.
     case newSnippet(String)
@@ -99,6 +101,7 @@ enum PaletteRoute: Hashable {
         case .folder(let url): return url.path == "/" ? "Macintosh HD" : url.lastPathComponent
         case .rulePreview: return "Rule Preview"
         case .emoji: return "Emoji & Symbols"
+        case .symbols: return "Symbols"
         case .snippets: return "Snippets"
         case .newSnippet: return "New Snippet"
         case .scripts: return "Script Commands"
@@ -141,6 +144,7 @@ enum PaletteRoute: Hashable {
         case .folder: return "Filter this folder…"
         case .rulePreview: return "Filter the files…"
         case .emoji: return "Search emoji and symbols — fire, heart, 불, 하트…"
+        case .symbols: return "Search symbols — arrow, box, sum, won, 화살표…"
         case .snippets: return "Search snippets by keyword or text…"
         case .newSnippet: return "Type the keyword that expands it, such as ;sig"
         case .scripts: return "Search script commands…"
@@ -182,6 +186,7 @@ enum PaletteRoute: Hashable {
         case .folder: return "folder"
         case .rulePreview: return "folder.badge.gearshape"
         case .emoji: return "face.smiling"
+        case .symbols: return "function"
         case .snippets, .newSnippet, .snippetArguments: return "text.badge.plus"
         case .scripts, .scriptOutput, .scriptArgument: return "terminal"
         case .schedule: return "calendar"
@@ -207,7 +212,7 @@ enum PaletteRoute: Hashable {
     /// changes the Mac (the root, Emoji, Snippets, Clipboard, files, models).
     var allowsQuickRun: Bool {
         switch self {
-        case .emoji, .snippets, .clipboard, .folder, .aiModels, .windowLayouts, .soundDevices, .sendTo, .contacts, .schedule,
+        case .emoji, .symbols, .snippets, .clipboard, .folder, .aiModels, .windowLayouts, .soundDevices, .sendTo, .contacts, .schedule,
              .clipboardCompare:
             return true
         case .tool(let tool):

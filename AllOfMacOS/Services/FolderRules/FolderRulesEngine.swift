@@ -49,6 +49,9 @@ final class FolderRulesEngine: ObservableObject {
     /// The disk image a manual install is working on.
     @Published private(set) var installing: String?
     @Published var message: FolderRulesMessage?
+    /// 7.23 (Hazel): the last pass's cloud-only files, by name.
+    @Published private(set) var cloudSkipped: [String] = []
+    @Published private(set) var cloudDownloading: [String] = []
 
     let store: FolderRulesStore
     let runner: FolderRulesRunner
@@ -259,6 +262,8 @@ final class FolderRulesEngine: ObservableObject {
             saveActivity()
         }
         addApprovals(output.approvals, now: now)
+        if cloudSkipped != output.cloudSkipped { cloudSkipped = output.cloudSkipped }
+        if cloudDownloading != output.cloudDownloading { cloudDownloading = output.cloudDownloading }
         for (ruleID, reason) in output.stoppedRules {
             guard let index = config.rules.firstIndex(where: { $0.id == ruleID }) else { continue }
             config.rules[index].isEnabled = false
@@ -500,6 +505,14 @@ final class FolderRulesEngine: ObservableObject {
         config.rules.append(rule)
         saveConfig()
         return rule
+    }
+
+    /// 7.23: Leave Them or Download, Then Apply for cloud-only files.
+    func setCloudPolicy(_ policy: FolderRuleCloudPolicy) {
+        guard config.cloudFiles != policy else { return }
+        config.cloudFiles = policy
+        saveConfig()
+        schedulePass(nil, after: 0.5)
     }
 
     /// Saves an edited rule. A change to its conditions lets it look at

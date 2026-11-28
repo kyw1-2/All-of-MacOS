@@ -74,6 +74,20 @@ enum AOMPermission: String, CaseIterable, Identifiable {
         case .fullDiskAccess: "Optional for protected files used by advanced custom actions"
         }
     }
+    /// 7.23 (DeepSeek design reference §2.4, AppCleaner): what stops working
+    /// without this access, in one sentence — said where access is missing.
+    var failureConsequence: String {
+        switch self {
+        case .accessibility: "Window moves, typed snippets and gesture actions do nothing"
+        case .inputMonitoring: "Hotkeys and typed abbreviations are not noticed"
+        case .screenRecording: "Screenshots show only the desktop and recordings stay black"
+        case .microphone: "Recordings and meeting notes have no voice"
+        case .automation: "Actions that control other apps by AppleScript fail"
+        case .filesAndFolders: "Saving into Desktop, Documents or Downloads can fail"
+        case .clipboard: "macOS asks again before AOM reads what you copied"
+        case .fullDiskAccess: "Some leftovers of uninstalled apps stay behind and protected folders can't be scanned"
+        }
+    }
     var icon: String {
         switch self {
         case .accessibility: "figure.stand"
@@ -114,9 +128,26 @@ enum AOMPermission: String, CaseIterable, Identifiable {
             case .notDetermined: .notDetermined
             @unknown default: .notDetermined
             }
-        case .automation, .filesAndFolders, .clipboard, .fullDiskAccess:
+        case .fullDiskAccess:
+            // 7.23: opening (never reading) a file only Full Disk Access
+            // reaches is the one read-only test; anything else is unknown.
+            Self.fullDiskAccessGranted.map { $0 ? .granted : .denied } ?? .manualReview
+        case .automation, .filesAndFolders, .clipboard:
             .manualReview
         }
+    }
+
+    /// True when a file only Full Disk Access reaches can be opened, false
+    /// when macOS refuses it, nil when the probe file isn't there.
+    static var fullDiskAccessGranted: Bool? {
+        let probes = ["/Library/Application Support/com.apple.TCC/TCC.db",
+                      NSHomeDirectory() + "/Library/Safari/Bookmarks.plist"]
+        for path in probes where FileManager.default.fileExists(atPath: path) {
+            let fd = open(path, O_RDONLY)
+            if fd >= 0 { close(fd); return true }
+            if errno == EPERM || errno == EACCES { return false }
+        }
+        return nil
     }
     static func screenPane(major: Int) -> String {
         major >= 26 ? "Privacy_AudioCapture" : "Privacy_ScreenCapture"

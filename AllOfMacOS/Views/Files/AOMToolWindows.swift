@@ -133,6 +133,14 @@ enum AOMFileToolsLauncher {
     }
 
     /// Compare Folders: what one folder has that the other doesn't.
+    /// 7.23: the two-pane browser; one window, brought forward when open.
+    static func dualPane() {
+        AOMToolWindows.shared.show("dualpane", title: "Two-Pane Browser", size: NSSize(width: 980, height: 620),
+                                   minSize: NSSize(width: 640, height: 420), autosave: "AOMFilesDualPane") {
+            FilesDualPaneView()
+        }
+    }
+
     static func compareFolders(_ urls: [URL] = []) {
         let model = FolderCompareModel()
         model.left = urls.first

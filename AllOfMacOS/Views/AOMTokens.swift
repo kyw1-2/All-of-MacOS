@@ -44,8 +44,12 @@ enum AOMSpace {
     static let x5: CGFloat = 20
     /// Gap between bezel-less icon buttons; one regular control high.
     static let x6: CGFloat = 24
+    /// 7.23: a drop zone's inner margin.
+    static let x7: CGFloat = 28
     /// Top of an empty state or first-run block.
     static let x8: CGFloat = 32
+    /// 7.23: a drop zone's least height (the uninstaller, AppCleaner-style).
+    static let dropZone: CGFloat = 180
     static let x10: CGFloat = 40
     static let x12: CGFloat = 48
 
@@ -220,6 +224,10 @@ enum AOMFont {
     static let timestamp = Font.subheadline.monospacedDigit()
     /// Token (pill) labels in token fields and condition values.
     static let token = Font.callout
+    /// 7.23: Quick Entry's one field (Title 3, 15).
+    static let entry = Font.title3
+    /// 7.23 (DeepSeek design reference §4): calculator answers, right-aligned figures.
+    static let monoNumber = Font.system(size: 15, weight: .medium, design: .monospaced)
 }
 
 // MARK: - Corner radii (continuous corners everywhere)
@@ -235,6 +243,8 @@ enum AOMRadius {
     static let card: CGFloat = 12
     /// ⌘K palette, the Workspace header, large HUDs, floating panels.
     static let panel: CGFloat = 14
+    /// 7.23: dashed drop zones, a little inside a card's 12.
+    static let dropZone: CGFloat = 10
 
     /// HUDs, toasts and the recording bar.
     static let hud = panel

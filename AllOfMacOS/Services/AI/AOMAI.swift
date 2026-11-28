@@ -863,7 +863,9 @@ extension AOMAIClient {
         case .cannotConnectToHost, .cannotFindHost:
             return "Couldn't reach \(url?.host ?? "the server")." + AOMLocalProxy.unreachableHint(host: url?.host, port: url?.port)
         case .timedOut: return "The model took too long to respond."
-        default: return error.localizedDescription
+        default:
+            // 7.23: the shared per-cause wording (clock, certificate, DNS).
+            return ConnectFailureReason.classify(error, host: url?.host).sentence
         }
     }
 

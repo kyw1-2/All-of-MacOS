@@ -150,7 +150,7 @@ struct WeatherProvider {
             switch error.code {
             case .notConnectedToInternet, .networkConnectionLost, .timedOut, .cannotFindHost, .cannotConnectToHost, .dataNotAllowed:
                 throw WeatherError.offline
-            default: throw WeatherError.failed(error.localizedDescription)
+            default: throw WeatherError.failed(ConnectFailureReason.classify(error, host: "Open-Meteo").title)
             }
         }
     }

@@ -277,6 +277,40 @@ struct LauncherShortcutSettings: View {
             status = GlobalHotKeyManager.shared.apply(value)
         }
         LauncherOptionsSettings()
+        QuickEntryShortcutSettings()
+    }
+}
+
+/// 7.23: the Quick Entry key, with Things' three-part message when it
+/// can't be registered (what, why, what to do).
+struct QuickEntryShortcutSettings: View {
+    @State private var choice = QuickEntryShortcut.current
+    @State private var status = GlobalHotKeyManager.shared.quickEntryStatus
+
+    private var clash: ShortcutClashMessage? {
+        ShortcutClashMessage.make(choice.displayString, status: status,
+                                  launcher: AOMLauncherShortcut.current.keyCode == choice.keyCode
+                                    && AOMLauncherShortcut.current.carbonModifiers == choice.carbonModifiers ? "launcher" : nil)
+    }
+
+    var body: some View {
+        AOMSection("Quick Entry", detail: choice.displayString) {
+            HubRowShell(icon: "square.and.pencil", tint: .orange, title: "Write a note, reminder or event from any app",
+                        subtitle: status == .off ? "Off: open it from ⌘K › Quick Entry." : "A small field over the app you're in; ⌘↩ saves, esc closes.") {
+                Picker("", selection: $choice) {
+                    ForEach(QuickEntryShortcut.allCases) { Text($0.displayString).tag($0) }
+                }
+                .labelsHidden()
+                .frame(width: 140)
+                .accessibilityLabel("Quick Entry shortcut")
+            }
+            if let clash {
+                AOMNotice(.warning, "\(clash.title). \(clash.why) \(clash.fix).")
+            }
+        }
+        .onChange(of: choice) { _, value in
+            status = GlobalHotKeyManager.shared.applyQuickEntry(value)
+        }
     }
 }
 

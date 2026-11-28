@@ -384,6 +384,36 @@ extension QuickCommandPalette {
         return row
     }
 
+    // MARK: Symbols (7.23)
+
+    func symbolItems() -> [PaletteItem] {
+        guard isSearching else {
+            let recent = PaletteRecentSymbols.all.compactMap { glyph in PaletteSymbols.all.first { $0.glyph == glyph } }
+            let rest = PaletteSymbols.all.filter { !PaletteRecentSymbols.all.contains($0.glyph) }
+            return recent.map { symbolRow($0, group: "Recently used") } + rest.map { symbolRow($0, group: $0.category.title) }
+        }
+        return PaletteSymbols.matches(trimmed).map { symbolRow($0, group: nil) }
+    }
+
+    func symbolRow(_ symbol: PaletteSymbol, group: String?) -> PaletteItem {
+        var row = screenRow("symbol.\(symbol.glyph)", symbol.name, "\(symbol.category.title) · \(symbol.codePoint)",
+                            icon: "function", group: group, section: .emoji,
+                            primary: PaletteAction(title: "Type Symbol", symbol: "keyboard") {
+                                PaletteRecentSymbols.record(symbol.glyph)
+                                insertIntoFrontApp(symbol.glyph, announce: symbol.glyph)
+                            },
+                            secondaries: [
+                                PaletteAction(title: "Copy Symbol", symbol: "doc.on.doc") {
+                                    PaletteRecentSymbols.record(symbol.glyph)
+                                    copyToClipboard(symbol.glyph, announce: symbol.glyph)
+                                },
+                                PaletteAction(title: "Copy Code Point", symbol: "number") { copyToClipboard(symbol.codePoint, announce: symbol.codePoint) },
+                            ])
+        row.glyph = symbol.glyph
+        row.sendText = symbol.glyph
+        return row
+    }
+
     // MARK: Clipboard filters (report 05 §3-E)
 
     static let clipboardFilters: [ClipboardEntry.Kind?] = [nil] + ClipboardEntry.Kind.allCases.map { $0 }
@@ -1671,7 +1701,7 @@ extension QuickCommandPalette {
 
     var showsInfoDetail: Bool {
         switch navigation.current {
-        case .emoji?, .snippets?, .contacts?, .schedule?, .folder?, .tool(.files)?, .rulePreview?:
+        case .emoji?, .symbols?, .snippets?, .contacts?, .schedule?, .folder?, .tool(.files)?, .rulePreview?:
             return true
         case .tool(.brew(let tab, _))?:
             return tab != .services

@@ -28,7 +28,8 @@ struct PermissionsSettingsView: View {
                     AOMNotice(.info, permissionChangeMessage)
                 }
 
-                AOMSection("Core permissions", detail: "\(requiredGranted) of \(requiredPermissions.count) allowed") {
+                AOMSection("Core permissions", detail: "\(requiredGranted) of \(requiredPermissions.count) allowed",
+                           footer: Self.precheckNote) {
                     ForEach(requiredPermissions) { permission in
                         permissionRow(permission)
                     }
@@ -72,6 +73,20 @@ struct PermissionsSettingsView: View {
         }
     }
 
+    /// 7.23 (DeepSeek design reference §2.8, Moom): checking is read-only and
+    /// never stands in for macOS's own approval.
+    static let precheckNote = "Checking here never skips macOS's own approval window. Each access is approved once, in System Settings."
+
+    /// What the access allows and, while it is missing, what fails without it.
+    static func detail(_ permission: AOMPermission, allowed: Bool) -> String {
+        allowed ? permission.explanation : "\(permission.explanation). Without it: \(Self.lowercasedFirst(permission.failureConsequence))."
+    }
+
+    static func lowercasedFirst(_ text: String) -> String {
+        guard let first = text.first else { return text }
+        return first.lowercased() + text.dropFirst()
+    }
+
     /// The status pill column: as wide as the widest pill ("Check Manually").
     private static let pillColumn: CGFloat = 120
 
@@ -94,7 +109,7 @@ struct PermissionsSettingsView: View {
         return Button {
             openSettings(permission)
         } label: {
-            AOMInlineSettingRow(permission.title, detail: permission.explanation, symbol: permission.icon) {
+            AOMInlineSettingRow(permission.title, detail: Self.detail(permission, allowed: allowed), symbol: permission.icon) {
                 HStack(spacing: AOMSpace.x3) {
                     if !allowed {
                         Text("Allow…")

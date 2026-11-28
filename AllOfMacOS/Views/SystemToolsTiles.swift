@@ -67,6 +67,12 @@ struct SystemToolTile: View {
                             Text(state.text).font(AOMFont.caption)
                                 .foregroundStyle(state.tone == .success ? AOMColor.successText : AOMColor.textSecondary)
                                 .lineLimit(1)
+                        } else if dropApp != nil, !isRunning {
+                            // 7.23 (DeepSeek design reference §2.4, AppCleaner): the drop is said, short, with the verb bold.
+                            Text(dropTargeted ? "Release to review it" : "**Drop** an app here, or click to choose")
+                                .font(AOMFont.caption)
+                                .foregroundStyle(dropTargeted ? AOMColor.accent : AOMColor.textSecondary)
+                                .lineLimit(1)
                         }
                     }.frame(maxWidth: .infinity, alignment: .leading)
                     if isRunning { ProgressView().controlSize(.small) }
@@ -79,7 +85,7 @@ struct SystemToolTile: View {
                 }
                 .padding(.horizontal, AOMSpace.rowInset)
                 .padding(.vertical, AOMSpace.x1)
-                .frame(maxWidth: .infinity, minHeight: state == nil ? AOMSize.rowStandard : AOMSize.rowDetail, alignment: .leading)
+                .frame(maxWidth: .infinity, minHeight: state == nil && dropApp == nil ? AOMSize.rowStandard : AOMSize.rowDetail, alignment: .leading)
             }
             .buttonStyle(AOMRowButtonStyle(radius: AOMRadius.well))
             .disabled(isRunning)

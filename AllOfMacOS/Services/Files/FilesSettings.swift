@@ -33,6 +33,7 @@ final class FilesSettings: ObservableObject {
         static let excludedApps = "AOMFilesExcludedApps"
         static let shake = "AOMFilesShelfShake"
         static let shiftWhileDragging = "AOMFilesShelfShift"
+        static let edge = "AOMFilesShelfEdge"
         static let sensitivity = "AOMFilesShakeSensitivity"
         static let hideAfterDragOut = "AOMFilesShelfHideAfterDragOut"
     }
@@ -54,6 +55,9 @@ final class FilesSettings: ObservableObject {
     @Published var shakeOpensShelf: Bool { didSet { store(shakeOpensShelf, Key.shake) } }
     /// Pressing Shift while dragging files also opens it.
     @Published var shiftOpensShelf: Bool { didSet { store(shiftOpensShelf, Key.shiftWhileDragging) } }
+    /// 7.23 (DeepSeek design reference §2.5, DaisyDisk's drop area): a file
+    /// dragged against the left or right edge of a screen opens the shelf there.
+    @Published var edgeOpensShelf: Bool { didSet { store(edgeOpensShelf, Key.edge) } }
     /// 7.3: the shelf hides once its files were dropped somewhere (off until turned on).
     @Published var hideShelfAfterDragOut: Bool { didSet { store(hideShelfAfterDragOut, Key.hideAfterDragOut) } }
     @Published var sensitivity: FilesShakeSensitivity {
@@ -79,6 +83,7 @@ final class FilesSettings: ObservableObject {
         excludedApps = defaults.stringArray(forKey: Key.excludedApps) ?? []
         shakeOpensShelf = flag(Key.shake, false)
         shiftOpensShelf = flag(Key.shiftWhileDragging, false)
+        edgeOpensShelf = flag(Key.edge, false)
         hideShelfAfterDragOut = flag(Key.hideAfterDragOut, false)
         sensitivity = defaults.string(forKey: Key.sensitivity).flatMap(FilesShakeSensitivity.init(rawValue:)) ?? .medium
     }

@@ -202,6 +202,12 @@ final class ClipboardPanelState: ObservableObject {
             pendingSearchKey = key
             let snapshot = store.entries, boards = store.boards
             let range = Self.dateRange(for: recentDays)
+            // 7.23 (7.22 open item): a hidden secret is not found by typing
+            // part of its value — the card stayed hidden but still showed up
+            // as a match, which told an onlooker the text was there. It is
+            // still found by app, type, pinboard, date or `is:secret`.
+            let conceal = ClipboardPreferences.shared.concealSecrets
+            let revealed = revealedSecrets
             searchTask = Task.detached(priority: .userInitiated) { [weak self, weak store] in
                 let search = ClipboardSearchQuery(key.query, boards: boards)
                 var matches: [ClipboardEntry] = []
@@ -211,7 +217,10 @@ final class ClipboardPanelState: ObservableObject {
                        (key.source == nil || entry.sourceBundleID == key.source || entry.sourceName == key.source) &&
                        (key.board == nil || entry.pinboardIDs.contains(key.board!)) &&
                        (range.since == nil || entry.lastCopiedAt >= range.since!) &&
-                       (range.before == nil || entry.lastCopiedAt < range.before!) && search.matches(entry, boards: boards) {
+                       (range.before == nil || entry.lastCopiedAt < range.before!) &&
+                       search.matches(entry, boards: boards, contentHidden: { entry in
+                           conceal && !revealed.contains(entry.id) && ClipboardItemClassifier.classify(entry) == .secret
+                       }) {
                         matches.append(entry)
                     }
                 }

@@ -110,7 +110,7 @@ enum FilesModule {
             FilesShakeMonitor.shared.stop()
         } else {
             FilesShakeMonitor.shared.configure(shake: settings.shakeOpensShelf, shift: settings.shiftOpensShelf,
-                                               sensitivity: settings.sensitivity,
+                                               edge: settings.edgeOpensShelf, sensitivity: settings.sensitivity,
                                                isExcluded: { settings.isExcluded($0) })
         }
         publishStatus()
@@ -122,7 +122,7 @@ enum FilesModule {
         let status = AOMModuleStatusBoard.files
         let shelfCount = FilesShelfStore.shared.items.count
         let recent = FilesRecentModel.shared
-        let summary = statusSummary(dialogHelper: settings.dialogHelper, shake: settings.shakeOpensShelf || settings.shiftOpensShelf,
+        let summary = statusSummary(dialogHelper: settings.dialogHelper, shake: settings.shakeOpensShelf || settings.shiftOpensShelf || settings.edgeOpensShelf,
                                     needsAccessibility: settings.dialogHelper && !AXIsProcessTrusted(),
                                     shelfCount: shelfCount, downloadsToday: recent.loaded ? recent.downloadsToday : nil)
         if status.isOn != summary.isOn { status.isOn = summary.isOn }

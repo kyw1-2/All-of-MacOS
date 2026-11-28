@@ -93,8 +93,44 @@ final class GlobalHotKeyManager {
         return status
     }
 
+    // MARK: 7.23 Quick Entry (a second Carbon hot key, id 2)
+
+    private var quickEntryRef: EventHotKeyRef?
+    private var onQuickEntry: (() -> Void)?
+    private(set) var quickEntryStatus: Status = .off
+
+    func startQuickEntry(onTrigger: @escaping () -> Void) {
+        onQuickEntry = onTrigger
+        installHandler()
+        applyQuickEntry(QuickEntryShortcut.current)
+    }
+
+    @discardableResult
+    func applyQuickEntry(_ shortcut: QuickEntryShortcut) -> Status {
+        QuickEntryShortcut.current = shortcut
+        if let quickEntryRef { UnregisterEventHotKey(quickEntryRef); self.quickEntryRef = nil }
+        guard let modifiers = shortcut.carbonModifiers else { quickEntryStatus = .off; return quickEntryStatus }
+        if AOMLauncherShortcut.current != .off, AOMLauncherShortcut.current.carbonModifiers == modifiers,
+           AOMLauncherShortcut.current.keyCode == shortcut.keyCode {
+            quickEntryStatus = .failed(OSStatus(eventHotKeyExistsErr))
+            return quickEntryStatus
+        }
+        var ref: EventHotKeyRef?
+        let result = RegisterEventHotKey(shortcut.keyCode, modifiers, EventHotKeyID(signature: signature, id: 2),
+                                         GetApplicationEventTarget(), 0, &ref)
+        if result == noErr, let ref {
+            quickEntryRef = ref
+            quickEntryStatus = .active
+        } else {
+            quickEntryStatus = .failed(result)
+            GestureLog.shared.logFromAnyThread("Quick Entry shortcut \(shortcut.displayString) not registered (\(result))", level: .error)
+        }
+        return quickEntryStatus
+    }
+
     func stop() {
         unregister()
+        if let quickEntryRef { UnregisterEventHotKey(quickEntryRef); self.quickEntryRef = nil }
         if let handlerRef { RemoveEventHandler(handlerRef); self.handlerRef = nil }
         status = .off
     }
@@ -112,9 +148,12 @@ final class GlobalHotKeyManager {
             var id = EventHotKeyID()
             let read = GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
                                          nil, MemoryLayout<EventHotKeyID>.size, nil, &id)
-            guard read == noErr, id.signature == 0x414F_4D4C, id.id == 1 else { return OSStatus(eventNotHandledErr) }
+            guard read == noErr, id.signature == 0x414F_4D4C, id.id == 1 || id.id == 2 else { return OSStatus(eventNotHandledErr) }
             let manager = Unmanaged<GlobalHotKeyManager>.fromOpaque(context).takeUnretainedValue()
-            DispatchQueue.main.async { MainActor.assumeIsolated { manager.onTrigger?() } }
+            let number = id.id
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { number == 2 ? manager.onQuickEntry?() : manager.onTrigger?() }
+            }
             return noErr
         }, 1, &spec, context, &handlerRef)
         if result != noErr {
@@ -129,5 +168,65 @@ extension AOMLauncherShortcut {
     /// took is not advertised as the way in.
     @MainActor static var isRegistered: Bool {
         current != .off && GlobalHotKeyManager.shared.status == .active
+    }
+}
+
+/// 7.23: the Quick Entry key. ⌃⌥Space (the report's pick) is not offered:
+/// macOS uses it to switch input sources, which Korean typing depends on.
+enum QuickEntryShortcut: String, CaseIterable, Identifiable {
+    case controlOptionN, optionShiftSpace, controlOptionJ, off
+
+    static let defaultsKey = "AOMQuickEntryShortcut"
+    var id: String { rawValue }
+
+    static var current: QuickEntryShortcut {
+        get { QuickEntryShortcut(rawValue: UserDefaults.standard.string(forKey: defaultsKey) ?? "") ?? .controlOptionN }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: defaultsKey) }
+    }
+
+    var carbonModifiers: UInt32? {
+        switch self {
+        case .controlOptionN, .controlOptionJ: return UInt32(controlKey | optionKey)
+        case .optionShiftSpace: return UInt32(optionKey | shiftKey)
+        case .off: return nil
+        }
+    }
+
+    var keyCode: UInt32 {
+        switch self {
+        case .controlOptionN: return UInt32(kVK_ANSI_N)
+        case .controlOptionJ: return UInt32(kVK_ANSI_J)
+        case .optionShiftSpace, .off: return UInt32(kVK_Space)
+        }
+    }
+
+    var displayString: String {
+        switch self {
+        case .controlOptionN: return "⌃⌥N"
+        case .optionShiftSpace: return "⌥⇧Space"
+        case .controlOptionJ: return "⌃⌥J"
+        case .off: return "Off"
+        }
+    }
+}
+
+/// 7.23 (DeepSeek design reference §2.1, Things' three shortcut messages):
+/// a shortcut that can't be used says what, why and what to do, in that order.
+struct ShortcutClashMessage: Equatable {
+    let title: String
+    let why: String
+    let fix: String
+
+    static func make(_ shortcut: String, status: GlobalHotKeyManager.Status, launcher: String? = nil) -> ShortcutClashMessage? {
+        guard case .failed(let code) = status else { return nil }
+        let why: String
+        if let launcher, code == OSStatus(eventHotKeyExistsErr) {
+            why = "AOM's \(launcher) already uses it."
+        } else if code == OSStatus(eventHotKeyExistsErr) {
+            why = "Another app already registered it (Raycast, Alfred and ChatGPT often do)."
+        } else {
+            why = "macOS refused it (error \(code))."
+        }
+        return ShortcutClashMessage(title: "\(shortcut) can't be used", why: why, fix: "Pick another shortcut, or change it in the other app")
     }
 }

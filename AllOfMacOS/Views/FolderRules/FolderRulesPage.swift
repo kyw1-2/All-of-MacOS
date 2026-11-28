@@ -240,6 +240,19 @@ struct FolderRulesNotices: View {
                 Button("Open Privacy Settings") { FolderRulesPrivacy.openFilesAndFolders() }
             }
         }
+        // 7.23 (DeepSeek design reference §2.3, Hazel): files only in iCloud
+        // or a file provider, said in a sentence, with the choice beside it.
+        if !engine.cloudSkipped.isEmpty || !engine.cloudDownloading.isEmpty {
+            AOMNotice(.info, FolderRulesRunner.cloudSummary(skipped: engine.cloudSkipped.count, downloading: engine.cloudDownloading.count),
+                      detail: engine.config.cloudFiles.explanation + " " + Self.names(engine.cloudSkipped + engine.cloudDownloading)) {
+                Picker("Cloud-only files", selection: Binding(get: { engine.config.cloudFiles }, set: { engine.setCloudPolicy($0) })) {
+                    ForEach(FolderRuleCloudPolicy.allCases) { Text($0.title).tag($0) }
+                }
+                .labelsHidden()
+                .fixedSize()
+                .help("What rules do with files whose content is only in iCloud or a file provider")
+            }
+        }
         if let blocked = engine.savesBlocked {
             AOMNotice(.error, "Folder Rules can’t save", detail: blocked) {
                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([FolderRulesStore().configURL]) }
@@ -252,6 +265,10 @@ struct FolderRulesNotices: View {
                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([setAside]) }
             }
         }
+    }
+
+    static func names(_ names: [String]) -> String {
+        names.prefix(3).joined(separator: ", ") + (names.count > 3 ? " and \(names.count - 3) more." : ".")
     }
 
     private var deniedFolders: [FolderRuleFolder] {

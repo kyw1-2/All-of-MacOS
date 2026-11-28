@@ -103,16 +103,20 @@ final class FilesShakeMonitor {
     private var dragHandled = false
     private var shiftEnabled = false
     private var shakeEnabled = false
+    private var edgeEnabled = false
     private var isExcluded: (String?) -> Bool = { _ in false }
 
     var isRunning: Bool { !monitors.isEmpty }
 
-    func configure(shake: Bool, shift: Bool, sensitivity: FilesShakeSensitivity, isExcluded: @escaping (String?) -> Bool) {
+    func configure(shake: Bool, shift: Bool, edge: Bool = false, sensitivity: FilesShakeSensitivity,
+                   isExcluded: @escaping (String?) -> Bool) {
         self.isExcluded = isExcluded
         detector = FilesShakeDetector(sensitivity: sensitivity)
         shakeEnabled = shake
         shiftEnabled = shift
-        if shake || shift { install() } else { stop() }
+        edgeEnabled = edge
+        stop()
+        if shake || shift || edge { install() }
     }
 
     func stop() {
@@ -147,9 +151,14 @@ final class FilesShakeMonitor {
             dragBaseline = nil
             detector.reset()
         case .leftMouseDragged:
-            guard shakeEnabled, !dragHandled, dragBaseline != nil else { return }
+            guard shakeEnabled || edgeEnabled, !dragHandled, dragBaseline != nil else { return }
             let location = NSEvent.mouseLocation
-            if detector.add(x: location.x, time: event.timestamp) { trigger(at: location) }
+            if edgeEnabled, let edge = FilesEdgeDetector.edge(at: location, screens: NSScreen.screens.map(\.frame)) {
+                // The shelf opens beside the edge, inside the screen, so the drop lands on it.
+                trigger(at: FilesEdgeDetector.shelfPoint(for: edge, at: location))
+                return
+            }
+            if shakeEnabled, detector.add(x: location.x, time: event.timestamp) { trigger(at: location) }
         case .flagsChanged:
             guard shiftEnabled, !dragHandled, dragBaseline != nil, NSEvent.pressedMouseButtons & 1 == 1,
                   event.modifierFlags.contains(.shift) else { return }
@@ -175,5 +184,32 @@ final class FilesShakeMonitor {
                                       "com.apple.NSFilePromiseItemMetaData", "com.apple.pasteboard.promised-file-url",
                                       "com.apple.pasteboard.promised-file-content-type"]
         return !types.isDisjoint(with: fileTypes)
+    }
+}
+
+/// 7.23 (DeepSeek design reference §2.5): "against the edge" for a drag —
+/// within two points of the left or right edge of a screen, where no other
+/// screen continues. Pure, so arrangements are unit-tested.
+enum FilesEdgeDetector {
+    enum Edge: Equatable { case left(CGRect), right(CGRect) }
+
+    static let margin: CGFloat = 2
+
+    static func edge(at point: NSPoint, screens: [CGRect]) -> Edge? {
+        guard let screen = screens.first(where: { $0.insetBy(dx: -1, dy: 0).contains(point) }) else { return nil }
+        func continues(_ x: CGFloat) -> Bool {
+            screens.contains { $0 != screen && $0.contains(CGPoint(x: x, y: point.y)) }
+        }
+        if point.x <= screen.minX + margin, !continues(screen.minX - 4) { return .left(screen) }
+        if point.x >= screen.maxX - margin - 1, !continues(screen.maxX + 4) { return .right(screen) }
+        return nil
+    }
+
+    /// Where the shelf opens for an edge: its width in from the edge, at the pointer's height.
+    static func shelfPoint(for edge: Edge, at point: NSPoint, width: CGFloat = 320) -> NSPoint {
+        switch edge {
+        case .left(let screen): return NSPoint(x: screen.minX + width / 2 + 12, y: point.y)
+        case .right(let screen): return NSPoint(x: screen.maxX - width / 2 - 12, y: point.y)
+        }
     }
 }

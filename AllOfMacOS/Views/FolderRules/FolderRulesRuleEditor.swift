@@ -359,6 +359,7 @@ struct FolderRulesPreviewRow: View {
         case .earlierRule(let name): return ("Goes to “\(name)”", .neutral)
         case .noMatch: return ("Doesn't match", .neutral)
         case .needsReview(let reason): return ("Needs review — \(reason)", .warning)
+        case .cloudOnly(let policy): return (policy == .skip ? "Cloud-only — left as it is" : "Cloud-only — downloads first", .neutral)
         }
     }
 }

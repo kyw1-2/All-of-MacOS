@@ -103,6 +103,8 @@
 	<string>The launcher's My Schedule lists your next events and joins meeting links. AOM only reads events, and only after you choose Allow there.</string>
 	<key>NSCalendarsUsageDescription</key>
 	<string>The launcher's My Schedule lists your next events and joins meeting links. AOM only reads events, and only after you choose Allow there.</string>
+	<key>NSCalendarsWriteOnlyAccessUsageDescription</key>
+	<string>Quick Entry adds the events you write (“lunch tomorrow 12pm”) to your calendar, only when you save one.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>AOM uses your camera only when Camera Overlay is enabled and you start a screen recording.</string>
 	<key>NSContactsUsageDescription</key>
@@ -117,6 +119,10 @@
 	<string></string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>AOM records microphone audio only when you start a screen recording with the microphone selected, or start a meeting recording.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>Quick Entry adds the reminders you write to Reminders, only when you save one.</string>
+	<key>NSRemindersUsageDescription</key>
+	<string>Quick Entry adds the reminders you write to Reminders, only when you save one.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>AOM writes a transcript of a meeting you record, using speech recognition on this Mac only. The audio is not sent anywhere.</string>
 	<key>NSNetworkVolumesUsageDescription</key>

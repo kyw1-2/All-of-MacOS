@@ -86,7 +86,10 @@ extension SystemToolsModel {
                 title: "Uninstall \(name)",
                 detail: "The app and the files it left in ~/Library, by folder. Files named with its bundle ID are checked"
                     + (nameOnly > 0 ? "; \(nameOnly) that only share its name are not, because other apps may use them" : "")
-                    + ". Everything goes to the Trash, so Finder's Put Back works.",
+                    + ". Everything goes to the Trash, so Finder's Put Back works."
+                    + (AOMPermission.fullDiskAccessGranted == false
+                       ? " Full Disk Access is off for All of MacOS, so some leftovers in protected folders may stay behind (System Settings › Privacy & Security › Full Disk Access)."
+                       : ""),
                 candidates: review.items, selected: review.preselected, groupsByNote: true, safeDefault: true,
                 hints: Dictionary(uniqueKeysWithValues: review.nameOnly.map { ($0, "Matches the app's name only; check it if it's this app's") }),
                 uninstallTarget: (app, review.bundleID))

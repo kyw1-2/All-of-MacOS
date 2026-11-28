@@ -116,6 +116,8 @@ struct FilesShelfSection: View {
             .disabled(!settings.shakeOpensShelf)
             AOMToggleRow("Shift while dragging opens it too", detail: "Press ⇧ during a file drag instead of shaking",
                          indent: true, isOn: $settings.shiftOpensShelf)
+            AOMToggleRow("Dragging to a screen edge opens it", detail: "Push a dragged file against the left or right edge of the screen",
+                         symbol: "rectangle.righthalf.inset.filled.arrow.right", isOn: $settings.edgeOpensShelf)
             AOMToggleRow("Hide after dragging files out", detail: "Once another app takes them; never while the shelf is still working",
                          symbol: "eye.slash", isOn: $settings.hideShelfAfterDragOut)
             AOMSettingRow("Keyboard shortcut", detail: shortcutDetail, symbol: "command") {
