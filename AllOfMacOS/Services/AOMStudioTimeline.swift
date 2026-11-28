@@ -227,3 +227,58 @@ struct AOMStudioClip: Codable, Equatable, Identifiable {
         return nil
     }
 }
+
+extension AOMStudioTimeline {
+    /// 7.23: Screen Studio hides the camera for pauses of 1.388 s or more.
+    static let cameraHideShortestPause = 1.388
+    /// Fade out and back in over this long, inside the pause.
+    static let cameraFade = 0.25
+
+    /// Pure: 1 shows the camera, 0 hides it; it fades over `cameraFade` at
+    /// each end of a hidden range, never outside it.
+    static func cameraOpacity(at time: Double, hidden: [[Double]]) -> Double {
+        var opacity = 1.0
+        for range in hidden where range.count == 2 && range[1] > range[0] {
+            let start = range[0], end = range[1]
+            guard time > start, time < end else { continue }
+            let fade = min(cameraFade, (end - start) / 2)
+            let value = min(1, min(time - start, end - time) / fade)
+            opacity = min(opacity, 1 - value)
+        }
+        return max(0, opacity)
+    }
+
+    /// Pure: the pauses long enough to hide the camera, as [start, end] pairs.
+    static func cameraHiddenRanges(silences: [ClosedRange<Double>]) -> [[Double]] {
+        silences.filter { $0.upperBound - $0.lowerBound >= cameraHideShortestPause }.map { [$0.lowerBound, $0.upperBound] }
+    }
+}
+
+extension AOMStudioTimeline {
+    /// 7.23 (Screen Studio's zoom slices): a zoom as a range — in over
+    /// `ramp` before `start`, held to `end`, out over `ramp` after it — as
+    /// the four keyframes the renderer reads.
+    static func rangeKeyframes(start: Double, end: Double, magnification: Double, focusX: Double, focusY: Double,
+                               ramp: Double = 0.4, duration: Double) -> [AOMStudioZoomKeyframe] {
+        let a = max(0, min(start, end)), b = min(duration, max(start, end))
+        guard b - a >= 0.2 else { return [] }
+        return [AOMStudioZoomKeyframe(time: max(0, a - ramp), magnification: 1, focusX: focusX, focusY: focusY),
+                AOMStudioZoomKeyframe(time: a, magnification: magnification, focusX: focusX, focusY: focusY),
+                AOMStudioZoomKeyframe(time: b, magnification: magnification, focusX: focusX, focusY: focusY),
+                AOMStudioZoomKeyframe(time: min(duration, b + ramp), magnification: 1, focusX: focusX, focusY: focusY)]
+    }
+}
+
+extension AOMOneEuroFilter {
+    /// 7.23 (Screen Studio's Smooth ↔ Precise): 0 is precise (little
+    /// smoothing, no lag), 1 is smooth; 0.5 is the 7.22 default (1.0, 8.0).
+    static func parameters(smoothing: Double) -> (minCutoff: Double, beta: Double) {
+        let s = min(1, max(0, smoothing))
+        return (pow(4, 1 - 2 * s), 8 * pow(2, 1 - 2 * s))
+    }
+
+    static func filter(_ points: [AOMCursorPoint], smoothing: Double) -> [AOMCursorPoint] {
+        let p = parameters(smoothing: smoothing)
+        return filter(points, minCutoff: p.minCutoff, beta: p.beta)
+    }
+}

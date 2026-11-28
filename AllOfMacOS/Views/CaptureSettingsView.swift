@@ -109,6 +109,7 @@ struct CaptureSettingsView: View {
             pointerGroup
             clicksGroup
             cameraAudioGroup
+            MeetingSettingsSection()
             keystrokesGroup
             whileRecordingGroup
             afterCaptureGroup
@@ -730,5 +731,32 @@ struct CaptureSettingsView: View {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         CaptureSettings.saveDirectory = url
         saveDirectory = url.path
+    }
+}
+
+/// 7.23: meeting notes — offer or record by itself when a call takes the
+/// microphone during a calendar meeting, and the "Others" voice split.
+struct MeetingSettingsSection: View {
+    @State private var offers = MeetingRecordOffer.isEnabled
+    @State private var auto = MeetingAutoRecord.isEnabled
+    @State private var voices = MeetingVoices.isEnabled
+
+    var body: some View {
+        AOMSection("Meeting notes", footer: "Recordings, transcripts and summaries stay on this Mac, in Documents › AOM Meetings. A red dot shows in the menu bar while one records.") {
+            AOMToggleRow("Offer to record when a call starts", detail: "When the microphone turns on during a calendar meeting",
+                         isOn: $offers)
+            AOMToggleRow("Record without asking", detail: "Starts at once instead of offering; click the red dot to stop",
+                         indent: true, isOn: $auto)
+                .aomDependentRows(enabled: offers)
+            AOMToggleRow("Tell voices apart in “Others”", detail: "Others 1 and Others 2 when two voices are clearly different",
+                         isOn: $voices)
+        }
+        .onChange(of: offers) { _, value in
+            MeetingRecordOffer.isEnabled = value
+            if !value { auto = false }
+            MeetingAlerts.shared.restartIfRunning()
+        }
+        .onChange(of: auto) { _, value in MeetingAutoRecord.isEnabled = value }
+        .onChange(of: voices) { _, value in MeetingVoices.isEnabled = value }
     }
 }

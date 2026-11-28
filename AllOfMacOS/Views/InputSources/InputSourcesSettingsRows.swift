@@ -234,3 +234,19 @@ struct InputSourcesBadgeRow: View {
         .onChange(of: position) { _, value in InputSourceBadgeSettings.position = value }
     }
 }
+
+/// 7.23: the opt-in automatic Korean/English typing fix.
+struct TypingAutoFixRow: View {
+    @State private var isOn = TypingAutoFix.isEnabled
+
+    var body: some View {
+        HubRowShell(icon: "character.bubble", tint: .indigo, title: "Fix Korean typed in English",
+                    subtitle: "“dkssud ” becomes “안녕 ” as you press Space, and the input switches to Korean. Not in terminals or code editors.",
+                    onLabelTap: { isOn.toggle() }) {
+            Toggle("Fix Korean typed in English", isOn: $isOn)
+                .labelsHidden()
+                .toggleStyle(AOMRowSwitchStyle())
+        }
+        .onChange(of: isOn) { _, value in TypingAutoFix.isEnabled = value }
+    }
+}

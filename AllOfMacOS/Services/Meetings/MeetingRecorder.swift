@@ -263,6 +263,15 @@ final class MeetingRecorder: NSObject, ObservableObject {
         } else {
             notes.append("Speech Recognition is off for AOM, so no transcript was written. The recording is kept.")
         }
+        // 7.23: "Others" split by voice when two voices are clearly apart.
+        let othersURL = folder.appendingPathComponent("others.caf")
+        if FileManager.default.fileExists(atPath: othersURL.path) {
+            let sorted = lines.sorted { $0.time < $1.time }
+            lines = await Task.detached(priority: .utility) { MeetingVoices.label(sorted, others: othersURL) }.value
+        }
+        // 7.23: one mixed file to share (meeting.m4a), the CAFs kept.
+        let micURL = folder.appendingPathComponent("microphone.caf")
+        _ = await MeetingMixdown.mix(microphone: micURL, others: othersURL, to: folder.appendingPathComponent("meeting.m4a"))
         let markdown = MeetingTranscript.markdown(title: recording.title, startedAt: recording.startedAt,
                                                   duration: recording.duration, lines: lines)
         try? markdown.write(to: folder.appendingPathComponent("transcript.md"), atomically: true, encoding: .utf8)
@@ -452,6 +461,11 @@ enum MeetingTranscriber {
         guard let recognizer = recognizer(), recognizer.isAvailable else { throw Failure.unavailable("Speech recognition isn't available for this language.") }
         guard recognizer.supportsOnDeviceRecognition else {
             throw Failure.unavailable("On-device recognition isn't available for \(recognizer.locale.identifier); nothing was sent off this Mac.")
+        }
+        // 7.23: macOS 26's SpeechAnalyzer reads the whole file at once with
+        // better accuracy and timing; SFSpeechRecognizer stays the fallback.
+        if #available(macOS 26.0, *), let words = try? await MeetingSpeechAnalyzer.transcribe(url, locale: recognizer.locale) {
+            return MeetingTranscript.lines(words: words, speaker: speaker, offset: 0)
         }
         let source = try AVAudioFile(forReading: url)
         let format = source.processingFormat

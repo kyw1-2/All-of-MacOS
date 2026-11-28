@@ -709,6 +709,10 @@ final class CaptureCoordinator {
 
     /// Presents the area-selection overlay and returns the chosen global rect, or
     /// `nil` when the user pressed Escape.
+    /// 7.23: the area picker alone, for a trigger's screen region (global,
+    /// top-left coordinates); nothing is captured.
+    func pickRegion() async -> CGRect? { await presentSelection() }
+
     private func presentSelection(startInWindowMode: Bool = false) async -> CGRect? {
         await withCheckedContinuation { continuation in
             let controller = SelectionOverlayController(startInWindowMode: startInWindowMode) { rect in

@@ -93,8 +93,9 @@ enum AOMSize {
     static let sidebarCompactMin: CGFloat = 200
     static let sidebarCompactIdeal: CGFloat = 208
     /// A settings row: one line, and one line with a description under it.
-    static let rowStandard: CGFloat = 34
-    static let rowDetail: CGFloat = 44
+    /// 7.23 (DeepSeek 7.21 report §5.3): 34/44 → 30/38, System Settings' density.
+    static let rowStandard: CGFloat = 30
+    static let rowDetail: CGFloat = 38
     /// One- and two-line list rows (AOMListRow).
     static let rowSingle: CGFloat = 26
     static let rowDouble: CGFloat = 38
@@ -719,4 +720,41 @@ enum AOMTranslucency {
     static func passThrough(blur: CGFloat, page: CGFloat, card: CGFloat? = nil) -> CGFloat {
         blur * (1 - page) * (1 - (card ?? 0))
     }
+}
+
+// MARK: - Page archetypes (7.23, DeepSeek 7.21 report §5.2)
+
+/// What kind of page a tool is, which sets how wide its column runs and
+/// whether its header carries the tool's mark. Board pages summarise
+/// (Workspace, System Tools, Activity); Studio pages edit one big thing;
+/// Instrument pages are live controls; Flow pages are lists of rules;
+/// Form pages are settings.
+enum AOMPageArchetype: String, CaseIterable {
+    case board, studio, instrument, flow, form
+
+    var maxWidth: CGFloat {
+        switch self {
+        case .board: AOMSize.contentMaxWidth
+        case .studio: 1_400
+        case .instrument: 1_040
+        case .flow: AOMSize.contentMaxWidth
+        case .form: 960
+        }
+    }
+}
+
+extension AOMMainTab {
+    var archetype: AOMPageArchetype {
+        switch self {
+        case .home, .tools, .insights: .board
+        case .capture, .menuBar: .studio
+        case .audio, .focus: .instrument
+        case .gestures, .folderRules, .textActions: .flow
+        case .snapping, .clipboard, .files: .form
+        }
+    }
+
+    /// Only Workspace keeps the large mark beside its sentence; every other
+    /// page is already named and marked in the sidebar and the toolbar.
+    var headerShowsMark: Bool { self == .home }
 }

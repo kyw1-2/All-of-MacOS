@@ -233,3 +233,65 @@ enum KeyboardLayoutFixer {
         if let target { _ = InputSources.select(target.id) }
     }
 }
+
+// MARK: - 7.23 automatic fix (the 7.22 open item)
+
+/// Opt-in: a word typed with an English layout that makes whole Korean
+/// syllables and isn't an English word ("dkssud ") is replaced as Space is
+/// typed ("안녕 ") and the input source switches to Korean. Never in secure
+/// fields, AOM itself or the developer tools below; off by default.
+@MainActor
+final class TypingAutoFix {
+    static let shared = TypingAutoFix()
+    static let defaultsKey = "AOMTypingAutoFix"
+    static var isEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: defaultsKey) }
+        set { UserDefaults.standard.set(newValue, forKey: defaultsKey) }
+    }
+    /// Code and terminals, where a non-word like "dkssud" may be meant.
+    static let excludedApps: Set<String> = ["com.apple.Terminal", "com.googlecode.iterm2", "com.apple.dt.Xcode", "com.microsoft.VSCode",
+                                            "dev.warp.Warp-Stable", "com.todesktop.230313mzl4w4u92", "com.jetbrains.intellij", "net.kovidgoyal.kitty",
+                                            "com.mitchellh.ghostty", "dev.zed.Zed", "com.sublimetext.4"]
+
+    private var word = ""
+    private var app = ""
+
+    /// Pure: the Hangul for `word` when it should be fixed, else nil.
+    nonisolated static func candidate(_ word: String, isEnglishWord: (String) -> Bool) -> String? {
+        guard (3...24).contains(word.count), word.allSatisfy({ $0.isASCII && $0.isLetter }),
+              HangulLayoutConverter.looksLikeMistypedKorean(word) else { return nil }
+        let converted = HangulLayoutConverter.toHangul(word)
+        guard converted.count >= 2, converted.allSatisfy(HangulLayoutConverter.isHangulSyllable) else { return nil }
+        return isEnglishWord(word.lowercased()) ? nil : converted
+    }
+
+    /// One typed character (the tap's text). Returns nothing: the key always goes through.
+    func observe(_ text: String, bundleID: String) {
+        guard Self.isEnabled else { return }
+        if bundleID != app { word = ""; app = bundleID }
+        if text.count == 1, let c = text.first, c.isASCII, c.isLetter {
+            word.append(c)
+            if word.count > 24 { word = "" }
+            return
+        }
+        defer { word = "" }
+        guard text == " ", !Self.excludedApps.contains(bundleID),
+              !(InputSources.currentID() ?? "").localizedCaseInsensitiveContains("Korean"),
+              let converted = Self.candidate(word, isEnglishWord: Self.isEnglishWord) else { return }
+        let erase = word.count + 1
+        // After the space has gone in: erase the word and the space, type the fix.
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.03) {
+            TypedStringEngine.shared.erase(erase)
+            DispatchQueue.main.async {
+                ActionExecutor.typeReplacementText(converted + " ")
+                KeyboardLayoutFixer.switchInputSource(korean: true)
+            }
+        }
+    }
+
+    static func isEnglishWord(_ word: String) -> Bool {
+        let checker = NSSpellChecker.shared
+        let range = checker.checkSpelling(of: word, startingAt: 0, language: "en", wrap: false, inSpellDocumentWithTag: 0, wordCount: nil)
+        return range.location == NSNotFound
+    }
+}

@@ -522,7 +522,7 @@ enum SettingsCatalog {
         "launcherTheme": "Launcher", "launcherOpacity": "Launcher", "launcherMaterial": "Launcher",
         "hud": "Feedback", "hudOpacity": "Feedback",
         "inputSourcesSwitch": "Input sources", "inputSourcesRules": "Input sources",
-        "inputSourcesRemember": "Input sources", "inputSourcesFallback": "Input sources",
+        "inputSourcesRemember": "Input sources", "inputSourcesFallback": "Input sources", "typingAutoFix": "Input sources",
         "linkRules": "Links",
         // The window-tiling rows mirror the Window Tiling page and use its
         // row names, in boxes of 8 rows or fewer (e.2).
@@ -581,6 +581,7 @@ enum SettingsCatalog {
             item("inputSourcesBadge", .general, "Show the input source when it changes", "A 한 or A badge beside the cursor", ["input source", "입력 소스", "한영", "한/영", "badge", "배지", "indicator", "표시", "cursor", "커서", "input source pro", "showyedge"], AnyView(InputSourcesBadgeRow())),
             item("inputSourcesRules", .general, "Apps and their input sources", "Terminal in English, KakaoTalk in Korean", ["input source", "입력 소스", "한영", "terminal", "터미널", "kakaotalk", "카카오톡", "app", "앱"], AnyView(InputSourcesRulesRows())),
             item("inputSourcesRemember", .general, "Remember in other apps", "Apps without a rule get back the input source they used last", ["remember", "기억", "input source", "입력 소스", "한영"], AnyView(InputSourcesRememberRow())),
+            item("typingAutoFix", .general, "Fix Korean typed in English", "dkssud becomes 안녕 as you press Space", ["한영 자동", "자동 변환", "오타", "dkssud", "korean", "english", "layout", "typing", "input source", "입력 소스"], AnyView(TypingAutoFixRow())),
             item("inputSourcesFallback", .general, "Other apps", "The input source for apps without a rule", ["default", "기본", "input source", "입력 소스", "한영"], AnyView(InputSourcesFallbackRow())),
             // Link rules (Velja/Choosy): which browser opens which link, tracking parameters removed.
             item("linkRules", .general, "Link rules", "Open links in the browser you choose and remove tracking parameters", ["link", "링크", "browser", "브라우저", "default browser", "기본 브라우저", "safari", "chrome", "utm", "fbclid", "tracking", "추적", "velja", "choosy", "router", "라우터"], AnyView(HubActionRow(icon: "arrow.triangle.branch", tint: .blue, title: "Link rules", subtitle: "Open links in the browser you choose, without tracking parameters") {

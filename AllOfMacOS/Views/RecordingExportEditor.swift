@@ -49,6 +49,13 @@ struct RecordingExportEditor: View {
     @State private var clipsBeforeSilenceCut: [AOMStudioClip]?
     @State private var cuttingSilences = false
     @State private var silenceStrength = 1
+    /// 7.23: pauses found in the sound (source time), drawn hatched on the strip.
+    @State private var silenceMarks: [ClosedRange<Double>] = []
+    @State private var findingPauses = false
+    /// 7.23: the camera layer fades out for pauses of 1.4 s or more.
+    @State private var cameraHidden: [[Double]] = []
+    @State private var cursorSmoothing = 0.5
+    @State private var zoomLength = 3.0
     @State private var followCursor = false
     @State private var outputAspect: AOMStudioAspect = .source
     @State private var outputResolution: AOMStudioResolution = .source
@@ -281,6 +288,17 @@ struct RecordingExportEditor: View {
                         if let previous = clipsBeforeSilenceCut { clips = previous; clipsBeforeSilenceCut = nil; saveProject() }
                     }
                     .disabled(clipsBeforeSilenceCut == nil)
+                    Button(findingPauses ? "Listening…" : "Show Pauses") { findPauses(forCamera: false) }
+                        .disabled(findingPauses || cuttingSilences || muteAudio)
+                        .help("Marks the pauses on the strip below without cutting anything")
+                }
+            }
+            // 7.23: the pauses, hatched, over the whole source (Screen Studio's timeline marks).
+            if !silenceMarks.isEmpty, duration > 0 {
+                cardRow {
+                    AOMSilenceStrip(duration: duration, silences: silenceMarks, clips: exportClips)
+                        .frame(height: 18)
+                        .accessibilityLabel("\(silenceMarks.count) pauses")
                 }
             }
             AOMSettingRow("Preview") {
@@ -329,11 +347,37 @@ struct RecordingExportEditor: View {
                     report("No pauses long enough to cut were found.", tone: .neutral)
                     return
                 }
+                silenceMarks = silences
                 clipsBeforeSilenceCut = clips
                 clips = next
                 saveProject()
                 let count = max(0, next.count - base.count)
                 report("Cut \(count) pause\(count == 1 ? "" : "s"), \(Self.clock(removed)) shorter. Preview Sequence to check it.", tone: .success)
+            } catch {
+                report(error.localizedDescription, tone: .warning)
+            }
+        }
+    }
+
+    /// 7.23: finds the pauses once — for the strip, or to hide the camera.
+    private func findPauses(forCamera: Bool) {
+        findingPauses = true
+        Task { @MainActor in
+            defer { findingPauses = false }
+            do {
+                let levels = try await AOMSilenceCutter.levels(of: AOMStudioSourceLink.resolve(source))
+                let silences = AOMSilenceCutter.silentRanges(levels: levels, options: .standard)
+                silenceMarks = silences
+                if forCamera {
+                    cameraHidden = AOMStudioTimeline.cameraHiddenRanges(silences: silences)
+                    saveProject()
+                    updatePreview()
+                    report(cameraHidden.isEmpty ? "No pause is long enough to hide the camera."
+                           : "The camera hides for \(cameraHidden.count) pause\(cameraHidden.count == 1 ? "" : "s").",
+                           tone: cameraHidden.isEmpty ? .neutral : .success)
+                } else {
+                    report(silences.isEmpty ? "No pauses found." : "\(silences.count) pauses marked.", tone: .neutral)
+                }
             } catch {
                 report(error.localizedDescription, tone: .warning)
             }
@@ -388,6 +432,22 @@ struct RecordingExportEditor: View {
                         zoomKeyframes.sort { $0.time < $1.time }
                     }
                     .disabled(isExporting || !validRange)
+                    // 7.23 (Screen Studio's zoom slices): one zoom over a stretch of time.
+                    Button("Add Zoom Range") {
+                        let range = AOMStudioTimeline.rangeKeyframes(start: zoomAt, end: zoomAt + zoomLength, magnification: zoomLevel,
+                                                                     focusX: focusX, focusY: focusY, duration: duration)
+                        guard !range.isEmpty else { return }
+                        previousZoomKeyframes = zoomKeyframes
+                        let span = (range.first!.time - 0.001)...(range.last!.time + 0.001)
+                        zoomKeyframes.removeAll { span.contains($0.time) }
+                        zoomKeyframes += range
+                        zoomKeyframes.sort { $0.time < $1.time }
+                        report("Zoom \(String(format: "%.1f×", zoomLevel)) from \(Self.clock(zoomAt)) for \(String(format: "%.1f", zoomLength)) s.", tone: .success)
+                    }
+                    .help("Zooms in at the At time, holds for the length, then zooms out")
+                    .disabled(isExporting || !validRange)
+                    Stepper(String(format: "%.1f s", zoomLength), value: $zoomLength, in: 0.5...30, step: 0.5)
+                        .fixedSize()
                     Button("Suggest Smart Zooms") {
                         guard let track = editableCursorTrack else { return }
                         let suggested = AOMStudioTimeline.suggestedZooms(track: track, start: start, end: end)
@@ -452,6 +512,15 @@ struct RecordingExportEditor: View {
                       ? "The system pointer is already in this video; the cursor track adds only the highlight." : nil)) {
             if let track = editableCursorTrack {
                 AOMToggleRow("Smooth editable cursor", detail: "\(track.points.count) cursor samples", isOn: $includeSmoothedCursor)
+                // 7.23: Screen Studio's Smooth ↔ Precise.
+                cardRow {
+                    Text("Motion").font(AOMFont.body).foregroundStyle(AOMColor.text)
+                        .frame(width: AOMFeatureSize.editorRowTitle, alignment: .leading)
+                    Text("Precise").font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
+                    Slider(value: $cursorSmoothing, in: 0...1).accessibilityLabel("Cursor smoothing")
+                    Text("Smooth").font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
+                }
+                .disabled(!includeSmoothedCursor)
                 sliderRow("Cursor size", value: $cursorSize, in: 0.5...2, step: 0.1, label: String(format: "%.1f×", cursorSize))
             }
             AOMSettingRow("Cursor") {
@@ -465,7 +534,7 @@ struct RecordingExportEditor: View {
     private var studioSettings: AOMStudioSettings {
         AOMStudioSettings(keyframes: zoomKeyframes, backdrop: .none,
                           paddingFraction: 0, motionBlurRadius: motionBlurRadius,
-                          cursorPoints: includeSmoothedCursor ? AOMOneEuroFilter.filter(editableCursorTrack?.points ?? []) : [],
+                          cursorPoints: includeSmoothedCursor ? AOMOneEuroFilter.filter(editableCursorTrack?.points ?? [], smoothing: cursorSmoothing) : [],
                           cursorOverlaySize: cursorSize, clicks: editableCursorTrack?.clicks ?? [],
                           showClickRipples: showRipples, cursorStyle: cursorStyle,
                           keystrokes: keyEvents.filter { $0.isValid }.sorted { $0.time < $1.time }, showKeystrokes: showKeys,
@@ -474,7 +543,9 @@ struct RecordingExportEditor: View {
                           aspect: outputAspect, resolution: outputResolution, keystrokeStyle: keyStyle,
                           background: background, clickStyle: clickStyle,
                           cursorHighlight: highlightOn ? highlight : nil,
-                          followsCursor: followCursor ? true : nil)
+                          followsCursor: followCursor ? true : nil,
+                          cameraHiddenRanges: cameraHidden.isEmpty ? nil : cameraHidden,
+                          cursorSmoothing: cursorSmoothing == 0.5 ? nil : cursorSmoothing)
     }
 
     // MARK: - Click marks and cursor highlight (3.3.3, C06)
@@ -547,6 +618,13 @@ struct RecordingExportEditor: View {
                 sliderRow("Roundness", value: $cameraRoundness, in: 0...0.5, label: Self.percent(cameraRoundness))
                 sliderRow("Camera X", value: $cameraX, in: 0...1, label: Self.percent(cameraX))
                 sliderRow("Camera Y", value: $cameraY, in: 0...1, label: Self.percent(cameraY))
+                // 7.23 (Screen Studio hideDuringSilenceMs): the camera steps away while nobody speaks.
+                AOMToggleRow("Hide during pauses", detail: cameraHidden.isEmpty ? "Fades out for pauses of 1.4 s or more"
+                                                     : "Hidden for \(cameraHidden.count) pause\(cameraHidden.count == 1 ? "" : "s")",
+                             isOn: Binding(get: { !cameraHidden.isEmpty }, set: { on in
+                                 if on { findPauses(forCamera: true) } else { cameraHidden = []; saveProject() }
+                             }))
+                    .disabled(findingPauses || muteAudio)
             }
             .disabled(!showCamera)
         }
@@ -882,6 +960,8 @@ struct RecordingExportEditor: View {
         keyScale = settings.keystrokeScale; keyY = settings.keystrokeY; showCamera = settings.showCamera
         keyStyle = settings.keystrokeStyle ?? .dark
         cameraSize = settings.cameraSize; cameraX = settings.cameraX; cameraY = settings.cameraY; cameraRoundness = settings.cameraRoundness
+        cameraHidden = settings.cameraHiddenRanges ?? []
+        cursorSmoothing = settings.cursorSmoothing ?? 0.5
         outputAspect = settings.aspect; outputResolution = settings.resolution
     }
 
@@ -966,5 +1046,40 @@ struct AOMPlayerView: NSViewRepresentable {
 
     func updateNSView(_ view: AVPlayerView, context: Context) {
         if view.player !== player { view.player = player }
+    }
+}
+
+/// 7.23: the source as a bar, the exported ranges filled, pauses hatched.
+struct AOMSilenceStrip: View {
+    let duration: Double
+    let silences: [ClosedRange<Double>]
+    let clips: [AOMStudioClip]
+
+    var body: some View {
+        Canvas { context, size in
+            let scale = size.width / max(0.001, duration)
+            let full = CGRect(origin: .zero, size: size)
+            context.fill(Path(roundedRect: full, cornerRadius: 3), with: .color(AOMColor.track))
+            for clip in clips {
+                let rect = CGRect(x: clip.start * scale, y: 0, width: max(1, (clip.end - clip.start) * scale), height: size.height)
+                context.fill(Path(rect), with: .color(AOMColor.accent.opacity(0.35)))
+            }
+            for silence in silences {
+                let rect = CGRect(x: silence.lowerBound * scale, y: 0,
+                                  width: max(1, (silence.upperBound - silence.lowerBound) * scale), height: size.height)
+                context.drawLayer { layer in
+                    layer.clip(to: Path(rect))
+                    var x = rect.minX - size.height
+                    var hatch = Path()
+                    while x < rect.maxX {
+                        hatch.move(to: CGPoint(x: x, y: size.height))
+                        hatch.addLine(to: CGPoint(x: x + size.height, y: 0))
+                        x += 4
+                    }
+                    layer.stroke(hatch, with: .color(AOMColor.textSecondary.opacity(0.6)), lineWidth: 1)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
     }
 }

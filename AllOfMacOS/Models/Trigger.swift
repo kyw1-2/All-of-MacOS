@@ -139,6 +139,10 @@ enum SystemTriggerKind: Codable, Hashable {
     /// on-device text recognition every `intervalSeconds` (2–60) while the
     /// screen changes. Needs Screen Recording permission.
     case screenTextAppears(text: String, intervalSeconds: Int)
+    /// 7.23 (the 7.22 open item): the same, read only in `area` — the front
+    /// window or a region picked on screen — so a toast in a corner or one
+    /// app's status line is watched without the rest of the screen.
+    case screenTextAppearsIn(text: String, intervalSeconds: Int, area: ScreenTextArea)
 
     static let defaultHoverDwellMs = 300
     static let screenTextIntervalRange = 2...60
@@ -191,6 +195,7 @@ enum SystemTriggerKind: Codable, Hashable {
         case .variableChanged(let n): return n.isEmpty ? "Any variable changes" : "Variable changes: \(n)"
         case .microphoneInUse(let active): return active ? "Microphone turns on" : "Microphone turns off"
         case .screenTextAppears(let text, _): return text.isEmpty ? "Text appears on screen" : "Text appears on screen: \(text)"
+        case .screenTextAppearsIn(let text, _, let area): return "Text appears \(area.phrase): \(text)"
         }
     }
 
@@ -465,5 +470,28 @@ enum TriggerListQuery {
             if comparison != .orderedSame { return comparison == .orderedAscending }
             return $0.id.uuidString < $1.id.uuidString
         }
+    }
+}
+
+/// 7.23: where a screen-text trigger reads.
+enum ScreenTextArea: Codable, Hashable {
+    /// The display under the pointer (the 7.22 behaviour).
+    case display
+    /// The frontmost app's front window.
+    case frontWindow
+    /// A fixed region in global top-left coordinates.
+    case region(x: Double, y: Double, width: Double, height: Double)
+
+    var phrase: String {
+        switch self {
+        case .display: "on screen"
+        case .frontWindow: "in the front window"
+        case .region(_, _, let w, let h): "in a \(Int(w))×\(Int(h)) region"
+        }
+    }
+
+    var rect: CGRect? {
+        if case .region(let x, let y, let w, let h) = self, w >= 8, h >= 8 { return CGRect(x: x, y: y, width: w, height: h) }
+        return nil
     }
 }

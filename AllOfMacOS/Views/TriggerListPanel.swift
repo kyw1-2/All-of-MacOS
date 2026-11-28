@@ -63,6 +63,18 @@ struct AddTriggerSheet: View {
     @State private var gamepadControl = "a"
     @State private var eventPressed = true
     @State private var screenTextInterval = 5
+    /// 7.23: where the text is read — the display, the front window or a picked region.
+    @State private var screenTextArea: ScreenTextArea = .display
+    private var screenTextAreaChoice: Int {
+        switch screenTextArea { case .display: 0; case .frontWindow: 1; case .region: 2 }
+    }
+    private func pickScreenTextRegion() {
+        Task { @MainActor in
+            if let rect = await CaptureCoordinator.shared.pickRegion() {
+                screenTextArea = .region(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height)
+            }
+        }
+    }
     @State private var snippetFormAtCaret = SnippetCaretForm.isEnabled
     @State private var powerOnAC = true
     @State private var systemEventAppID = ""
@@ -576,6 +588,22 @@ struct AddTriggerSheet: View {
                     AOMRowStepper("Check every", value: $screenTextInterval, in: SystemTriggerKind.screenTextIntervalRange,
                                   display: "\(screenTextInterval) s")
                 }
+                AOMSettingRow("Where", detail: screenTextArea.rect.map { "Region \(Int($0.width))×\(Int($0.height)) at \(Int($0.minX)), \(Int($0.minY))" },
+                              help: "A smaller area is read faster and can't match text elsewhere on the screen.") {
+                    HStack(spacing: AOMSpace.x2) {
+                        Picker("Where", selection: Binding(get: { screenTextAreaChoice }, set: { choice in
+                            switch choice {
+                            case 0: screenTextArea = .display
+                            case 1: screenTextArea = .frontWindow
+                            default: pickScreenTextRegion()
+                            }
+                        })) {
+                            Text("Whole screen").tag(0); Text("Front window").tag(1); Text("Region").tag(2)
+                        }
+                        .labelsHidden().pickerStyle(.menu).fixedSize()
+                        if case .region = screenTextArea { Button("Pick Again…") { pickScreenTextRegion() } }
+                    }
+                }
             }
             if systemEventKind == "micOn" || systemEventKind == "micOff" {
                 AOMSettingRow("Microphone", help: "Watches the default input device. Any app counts, including a call, a dictation or a recording. Pair it with Run Scene to set up for meetings.") {
@@ -714,7 +742,9 @@ struct AddTriggerSheet: View {
             case "clipboard": return .systemEvent(.clipboardChanged)
             case "micOn": return .systemEvent(.microphoneInUse(active: true))
             case "micOff": return .systemEvent(.microphoneInUse(active: false))
-            case "screenText": return .systemEvent(.screenTextAppears(text: eventFilter, intervalSeconds: screenTextInterval))
+            case "screenText":
+                if screenTextArea == .display { return .systemEvent(.screenTextAppears(text: eventFilter, intervalSeconds: screenTextInterval)) }
+                return .systemEvent(.screenTextAppearsIn(text: eventFilter, intervalSeconds: screenTextInterval, area: screenTextArea))
             case "power": return .systemEvent(.powerSourceChanged(ac: powerOnAC))
             case "lock": return .systemEvent(.screenLocked)
             case "unlock": return .systemEvent(.screenUnlocked)

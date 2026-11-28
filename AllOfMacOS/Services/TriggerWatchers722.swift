@@ -136,13 +136,15 @@ struct ScreenTextWatchSet {
 final class ScreenTextWatcher {
     private var watch: ScreenTextWatchSet
     private let interval: TimeInterval
+    private let area: ScreenTextArea
     private let onAppear: (String) -> Void
     private var timer: Timer?
     private var busy = false
     private var lastThumbnail: [UInt8] = []
 
-    init(texts: Set<String>, interval: TimeInterval, onAppear: @escaping (String) -> Void) {
+    init(texts: Set<String>, interval: TimeInterval, area: ScreenTextArea = .display, onAppear: @escaping (String) -> Void) {
         watch = ScreenTextWatchSet(texts: texts)
+        self.area = area
         self.interval = min(60, max(2, interval))
         self.onAppear = onAppear
     }
@@ -163,10 +165,7 @@ final class ScreenTextWatcher {
     private func tick() {
         guard !busy, ScreenCaptureService.hasPermission, !PresetManager.isRunningTests else { return }
         busy = true
-        let point = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { $0.frame.contains(point) } ?? NSScreen.main
-        guard let number = screen?.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { busy = false; return }
-        let bounds = CGDisplayBounds(number.uint32Value)
+        guard let bounds = Self.bounds(for: area) else { busy = false; return }
         Task { @MainActor [weak self] in
             defer { self?.busy = false }
             guard let capture = try? await ScreenCaptureService.shared.captureArea(bounds, showsCursor: false, pixelSnap: true) else { return }
@@ -176,6 +175,30 @@ final class ScreenTextWatcher {
             self.lastThumbnail = thumbnail
             let text = await ClipboardScreenContextOCR.recognize(capture.image)
             for appeared in self.watch.appeared(in: text) { self.onAppear(appeared) }
+        }
+    }
+
+    /// 7.23: the global top-left rectangle to read for an area, nil when
+    /// there is nothing to read (no front window).
+    static func bounds(for area: ScreenTextArea) -> CGRect? {
+        switch area {
+        case .display:
+            let point = NSEvent.mouseLocation
+            let screen = NSScreen.screens.first { $0.frame.contains(point) } ?? NSScreen.main
+            guard let number = screen?.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { return nil }
+            return CGDisplayBounds(number.uint32Value)
+        case .frontWindow:
+            guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier,
+                  let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
+            else { return nil }
+            for info in list where (info[kCGWindowOwnerPID as String] as? pid_t) == pid && (info[kCGWindowLayer as String] as? Int) == 0 {
+                guard let dict = info[kCGWindowBounds as String] as? NSDictionary,
+                      let rect = CGRect(dictionaryRepresentation: dict), rect.width >= 40, rect.height >= 40 else { continue }
+                return rect
+            }
+            return nil
+        case .region:
+            return area.rect
         }
     }
 

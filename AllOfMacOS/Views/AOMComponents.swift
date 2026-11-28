@@ -36,11 +36,13 @@ enum AOMPreviewHooks {
 /// primary action asks for `.regular` itself. The page name lives in the
 /// toolbar (`navigationTitle`), never repeated here.
 struct AOMPage<Content: View>: View {
-    var maxWidth: CGFloat = AOMSize.contentMaxWidth
+    /// Nil: the page archetype's width (7.23).
+    var maxWidth: CGFloat?
     var spacing: CGFloat = AOMSpace.sectionGap
     @ViewBuilder var content: Content
+    @Environment(\.aomPageTab) private var pageTab
 
-    init(maxWidth: CGFloat = AOMSize.contentMaxWidth, spacing: CGFloat = AOMSpace.sectionGap,
+    init(maxWidth: CGFloat? = nil, spacing: CGFloat = AOMSpace.sectionGap,
          @ViewBuilder content: () -> Content) {
         self.maxWidth = maxWidth
         self.spacing = spacing
@@ -53,7 +55,7 @@ struct AOMPage<Content: View>: View {
             // no longer creates every switch, pop-up and chart below the fold.
             LazyVStack(alignment: .leading, spacing: spacing) { content }
                 .controlSize(.small)
-                .frame(maxWidth: maxWidth, alignment: .leading)
+                .frame(maxWidth: maxWidth ?? pageTab?.archetype.maxWidth ?? AOMSize.contentMaxWidth, alignment: .leading)
                 .padding(.horizontal, AOMSpace.pageMargin)
                 .padding(.top, AOMSpace.pageTop)
                 .padding(.bottom, AOMSpace.pageMargin)
@@ -136,7 +138,22 @@ struct AOMPageHeader<Trailing: View>: View {
         // the sentence don't fit side by side (a narrow window, a long
         // translated string), the controls move under the sentence instead
         // of squeezing it.
-        if identity, let pageTab {
+        if identity, let pageTab, !pageTab.headerShowsMark {
+            // 7.23: no mark beside the sentence on tool pages.
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .center, spacing: AOMSpace.x3) {
+                    headerText.frame(minWidth: 200, idealWidth: 300, maxWidth: .infinity, alignment: .leading)
+                    trailingControls
+                }
+                .frame(minHeight: AOMSize.rowDetail)
+                .padding(.horizontal, AOMSpace.rowInset)
+                VStack(alignment: .leading, spacing: AOMSpace.x2) {
+                    headerText.frame(maxWidth: .infinity, alignment: .leading)
+                    trailingControls
+                }
+                .padding(.horizontal, AOMSpace.rowInset)
+            }
+        } else if identity, let pageTab {
             ViewThatFits(in: .horizontal) {
                 AOMHeroBand(identity: pageTab.identity, active: active) {
                     headerText.frame(minWidth: 200, idealWidth: 300, maxWidth: .infinity, alignment: .leading)

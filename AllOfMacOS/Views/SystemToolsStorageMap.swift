@@ -18,6 +18,10 @@ final class StorageMapModel: ObservableObject, Identifiable {
     @Published var showsRings = UserDefaults.standard.bool(forKey: "AOMStorageMapRings") {
         didSet { UserDefaults.standard.set(showsRings, forKey: "AOMStorageMapRings") }
     }
+    /// 7.23 (the 7.22 open item, DaisyDisk/GrandPerspective overlays): colour by folder, kind or age.
+    @Published var coloring = StorageColoring(rawValue: UserDefaults.standard.string(forKey: "AOMStorageMapColoring") ?? "") ?? .folders {
+        didSet { UserDefaults.standard.set(coloring.rawValue, forKey: "AOMStorageMapColoring") }
+    }
     private var stop: AOMCancelFlag?
 
     init(root: URL) { self.root = root }
@@ -91,14 +95,17 @@ struct StorageMapView: View {
                     list(current).frame(width: 280)
                     Group {
                         if model.showsRings {
-                            StorageSunburst(node: current, selection: model.selection) { node in
+                            StorageSunburst(node: current, selection: model.selection, tapped: { node in
                                 if node.canOpen { model.open(node) } else { model.selection = node.id }
-                            }
+                            }, coloring: model.coloring)
                         } else {
-                            StorageTreemap(node: current, selection: model.selection) { node in
+                            StorageTreemap(node: current, selection: model.selection, tapped: { node in
                                 if node.canOpen { model.open(node) } else { model.selection = node.id }
-                            }
+                            }, coloring: model.coloring)
                         }
+                    }
+                    .overlay(alignment: .bottomLeading) {
+                        if model.coloring != .folders { StorageColoringLegend(coloring: model.coloring).padding(AOMSpace.x2) }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
@@ -131,6 +138,11 @@ struct StorageMapView: View {
                     .lineLimit(1)
             }
             Spacer()
+            Picker("Colour", selection: $model.coloring) {
+                ForEach(StorageColoring.allCases) { Text($0.title).tag($0) }
+            }
+            .labelsHidden().pickerStyle(.menu).fixedSize()
+            .help("Colour the map by folder, by kind of file, or by when files last changed")
             Picker("View", selection: $model.showsRings) {
                 Image(systemName: "square.grid.2x2").help("Map").tag(false)
                 Image(systemName: "circle.circle").help("Rings").tag(true)
@@ -234,6 +246,7 @@ struct StorageTreemap: View {
     let node: StorageNode
     let selection: StorageNode.ID?
     let tapped: (StorageNode) -> Void
+    var coloring: StorageColoring = .folders
 
     var body: some View {
         GeometryReader { proxy in
@@ -244,7 +257,7 @@ struct StorageTreemap: View {
                     let rect = rects[index].insetBy(dx: 1, dy: 1)
                     if rect.width > 1, rect.height > 1 {
                         RoundedRectangle(cornerRadius: 3)
-                            .fill(Self.color(child, index: index))
+                            .fill(Self.color(child, index: index, coloring: coloring))
                             .overlay(RoundedRectangle(cornerRadius: 3)
                                 .stroke(child.id == selection ? AOMColor.focusRing : Color.clear, lineWidth: 2))
                             .overlay(alignment: .topLeading) {
@@ -288,6 +301,18 @@ struct StorageTreemap: View {
         case .link: return "arrowshape.turn.up.right"
         case .otherVolume: return "externaldrive"
         case .smallerItems: return "square.grid.3x3"
+        }
+    }
+
+    static func color(_ node: StorageNode, index: Int, coloring: StorageColoring) -> Color {
+        switch coloring {
+        case .folders: return color(node, index: index)
+        case .kind:
+            guard node.kind == .file else { return node.kind == .folder ? Color(white: 0.6) : Color(white: 0.5) }
+            return StorageColoring.kindColor(StorageColoring.kind(of: node.name))
+        case .age:
+            guard node.kind == .file else { return Color(white: 0.6) }
+            return StorageColoring.ageColor(StorageColoring.age(of: node.url))
         }
     }
 
@@ -354,6 +379,7 @@ struct StorageSunburst: View {
     let node: StorageNode
     let selection: StorageNode.ID?
     let tapped: (StorageNode) -> Void
+    var coloring: StorageColoring = .folders
     @State private var hovered: StorageNode.ID?
 
     var body: some View {
@@ -374,7 +400,7 @@ struct StorageSunburst: View {
                         path.addArc(center: center, radius: inner, startAngle: a1, endAngle: a0, clockwise: true)
                         path.closeSubpath()
                         // Deeper rings fade, so the first ring reads first.
-                        let base = StorageTreemap.color(segment.node, index: segment.index)
+                        let base = StorageTreemap.color(segment.node, index: segment.index, coloring: coloring)
                         let dimmed = segment.depth == 1 ? 1.0 : (segment.depth == 2 ? 0.78 : 0.58)
                         context.fill(path, with: .color(base.opacity(hovered == segment.id ? 1 : dimmed)))
                         if segment.id == selection || segment.id == hovered {
@@ -409,5 +435,116 @@ struct StorageSunburst: View {
             }
         }
         .accessibilityHidden(true)
+    }
+}
+
+/// 7.23: how the map is coloured. Kind is read from the name; age from the
+/// file's modification date, read once per file and kept for the session.
+enum StorageColoring: String, CaseIterable, Identifiable {
+    case folders, kind, age
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .folders: "By Folder"
+        case .kind: "By Kind"
+        case .age: "By Age"
+        }
+    }
+
+    enum FileKind: String, CaseIterable { case image, video, audio, document, archive, code, app, other }
+    enum Age: Int, CaseIterable { case week, month, year, older, unknown }
+
+    /// Pure: a file's kind from its extension.
+    static func kind(of name: String) -> FileKind {
+        let ext = (name as NSString).pathExtension.lowercased()
+        switch ext {
+        case "png", "jpg", "jpeg", "heic", "gif", "tiff", "tif", "webp", "raw", "cr2", "nef", "dng", "psd", "svg", "bmp": return .image
+        case "mov", "mp4", "m4v", "avi", "mkv", "webm", "mts": return .video
+        case "mp3", "m4a", "aac", "wav", "aiff", "aif", "flac", "caf", "ogg", "logicx": return .audio
+        case "pdf", "doc", "docx", "pages", "key", "keynote", "numbers", "xls", "xlsx", "ppt", "pptx", "txt", "md", "rtf", "epub", "hwp", "hwpx": return .document
+        case "zip", "dmg", "pkg", "tar", "gz", "tgz", "bz2", "xz", "7z", "rar", "iso", "xip": return .archive
+        case "swift", "py", "js", "ts", "c", "h", "m", "cpp", "rs", "go", "java", "kt", "rb", "sh", "json", "yml", "yaml", "html", "css": return .code
+        case "app": return .app
+        default: return .other
+        }
+    }
+
+    /// Pure: a modification date's bucket.
+    static func age(of date: Date?, now: Date = Date()) -> Age {
+        guard let date else { return .unknown }
+        let days = now.timeIntervalSince(date) / 86_400
+        if days < 7 { return .week }
+        if days < 31 { return .month }
+        if days < 365 { return .year }
+        return .older
+    }
+
+    private static let lock = NSLock()
+    private static var ages: [URL: Date] = [:]
+
+    static func age(of url: URL) -> Age {
+        lock.lock()
+        if let cached = ages[url] { lock.unlock(); return age(of: cached) }
+        lock.unlock()
+        let date = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+        if let date { lock.lock(); if ages.count > 50_000 { ages.removeAll() }; ages[url] = date; lock.unlock() }
+        return age(of: date)
+    }
+
+    static func kindColor(_ kind: FileKind) -> Color {
+        switch kind {
+        case .image: Color(hue: 0.92, saturation: 0.5, brightness: 0.8)
+        case .video: Color(hue: 0.0, saturation: 0.55, brightness: 0.78)
+        case .audio: Color(hue: 0.08, saturation: 0.6, brightness: 0.85)
+        case .document: Color(hue: 0.58, saturation: 0.55, brightness: 0.78)
+        case .archive: Color(hue: 0.13, saturation: 0.55, brightness: 0.75)
+        case .code: Color(hue: 0.38, saturation: 0.5, brightness: 0.7)
+        case .app: Color(hue: 0.75, saturation: 0.45, brightness: 0.78)
+        case .other: Color(white: 0.62)
+        }
+    }
+
+    static func ageColor(_ age: Age) -> Color {
+        switch age {
+        case .week: Color(hue: 0.38, saturation: 0.6, brightness: 0.72)
+        case .month: Color(hue: 0.2, saturation: 0.55, brightness: 0.78)
+        case .year: Color(hue: 0.1, saturation: 0.55, brightness: 0.82)
+        case .older: Color(hue: 0.02, saturation: 0.55, brightness: 0.75)
+        case .unknown: Color(white: 0.6)
+        }
+    }
+
+    static func title(_ kind: FileKind) -> String { kind.rawValue.capitalized }
+    static func title(_ age: Age) -> String {
+        switch age {
+        case .week: "This week"
+        case .month: "This month"
+        case .year: "This year"
+        case .older: "Older"
+        case .unknown: "Unknown"
+        }
+    }
+}
+
+struct StorageColoringLegend: View {
+    let coloring: StorageColoring
+
+    var body: some View {
+        HStack(spacing: AOMSpace.x2) {
+            if coloring == .kind {
+                ForEach(StorageColoring.FileKind.allCases, id: \.self) { item(StorageColoring.title($0), StorageColoring.kindColor($0)) }
+            } else {
+                ForEach(StorageColoring.Age.allCases.filter { $0 != .unknown }, id: \.self) { item(StorageColoring.title($0), StorageColoring.ageColor($0)) }
+            }
+        }
+        .padding(.horizontal, AOMSpace.x2).padding(.vertical, AOMSpace.x1)
+        .background(.regularMaterial, in: Capsule())
+    }
+
+    private func item(_ title: String, _ color: Color) -> some View {
+        HStack(spacing: 3) {
+            Circle().fill(color).frame(width: 8, height: 8)
+            Text(title).font(AOMFont.caption)
+        }
     }
 }

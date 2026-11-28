@@ -268,6 +268,11 @@ struct AOMStudioSettings: Codable, Equatable {
     /// zoomed in, the camera follows the pointer (low-passed, ~120 ms)
     /// instead of staying on the keyframe's focus. nil in older projects = off.
     var followsCursor: Bool? = nil
+    /// 7.23 (Screen Studio's hideDuringSilenceMs 1388): source-time pauses
+    /// during which the camera layer fades out. nil in older projects = always shown.
+    var cameraHiddenRanges: [[Double]]? = nil
+    /// 7.23: the cursor's Smooth ↔ Precise slider; nil = 0.5.
+    var cursorSmoothing: Double? = nil
 
     var isActive: Bool {
         !keyframes.isEmpty || (backdrop != .none && paddingFraction > 0) || background?.isActive == true
@@ -367,7 +372,8 @@ enum AOMStudioRenderer {
                 }
             }
         }
-        if settings.showCamera, let cameraImage {
+        let cameraOpacity = AOMStudioTimeline.cameraOpacity(at: time, hidden: settings.cameraHiddenRanges ?? [])
+        if settings.showCamera, let cameraImage, cameraOpacity > 0.01 {
             let side = min(extent.width, extent.height) * min(0.6, max(0.1, settings.cameraSize))
             let x = min(extent.maxX - side, max(extent.minX, extent.minX + settings.cameraX * extent.width - side / 2))
             let y = min(extent.maxY - side, max(extent.minY, extent.maxY - settings.cameraY * extent.height - side / 2))
@@ -375,7 +381,8 @@ enum AOMStudioRenderer {
             let scale = max(side / cameraImage.extent.width, side / cameraImage.extent.height)
             let scaled = cameraImage.transformed(by: CGAffineTransform(scaleX: -scale, y: scale))
             let placed = scaled.transformed(by: CGAffineTransform(translationX: target.midX - scaled.extent.midX, y: target.midY - scaled.extent.midY))
-            if let mask = CIFilter(name: "CIRoundedRectangleGenerator", parameters: ["inputExtent": CIVector(cgRect: target), "inputRadius": side * min(0.5, max(0, settings.cameraRoundness)), "inputColor": CIColor.white])?.outputImage {
+            if let mask = CIFilter(name: "CIRoundedRectangleGenerator", parameters: ["inputExtent": CIVector(cgRect: target), "inputRadius": side * min(0.5, max(0, settings.cameraRoundness)),
+                                                                                    "inputColor": CIColor(red: cameraOpacity, green: cameraOpacity, blue: cameraOpacity)])?.outputImage {
                 result = placed.applyingFilter("CIBlendWithMask", parameters: [kCIInputBackgroundImageKey: result, kCIInputMaskImageKey: mask]).cropped(to: extent)
             }
         }

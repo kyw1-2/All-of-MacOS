@@ -176,7 +176,7 @@ struct ModernWindowSnappingView: View {
                 .padding(.horizontal, AOMSpace.pageMargin)
                 .padding(.top, AOMSpace.pageTop)
                 .padding(.bottom, AOMSpace.x8)
-                .frame(maxWidth: AOMSize.contentMaxWidth, alignment: .topLeading)
+                .frame(maxWidth: AOMMainTab.snapping.archetype.maxWidth, alignment: .topLeading)
                 .frame(maxWidth: .infinity)
             }
             .scrollIndicators(.automatic)

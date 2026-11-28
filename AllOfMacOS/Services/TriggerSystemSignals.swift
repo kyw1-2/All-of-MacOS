@@ -43,7 +43,7 @@ enum SystemSignal: Equatable {
     /// never the first reading).
     case microphone(active: Bool)
     /// 7.22: a watched text was not on screen at the last check and now is.
-    case screenTextAppeared(text: String)
+    case screenTextAppeared(text: String, area: ScreenTextArea = .display)
 }
 
 /// The independent OS observers a set of triggers needs. A preset only pays for
@@ -56,15 +56,15 @@ enum SignalSource: Hashable {
     case files(Set<String>)
     case microphone
     /// The texts to watch for, checked every `interval` seconds.
-    case screenText(Set<String>, interval: Int)
+    case screenText(Set<String>, interval: Int, area: ScreenTextArea = .display)
 
     /// The sources required by a collection of trigger kinds.
     static func needs(for kinds: [SystemTriggerKind]) -> Set<SignalSource> {
         var out = Set<SignalSource>()
         var paths = Set<String>()
         var hidFilters = Set<GenericHIDFilter>()
-        var screenTexts = Set<String>()
-        var screenInterval = SystemTriggerKind.screenTextIntervalRange.upperBound
+        var screenTexts: [ScreenTextArea: Set<String>] = [:]
+        var screenIntervals: [ScreenTextArea: Int] = [:]
         for kind in kinds {
             switch kind {
             case .hidInput(let vendor, let product, _, _, _, _):
@@ -88,16 +88,21 @@ enum SignalSource: Hashable {
             case .fileDidChange(let path):
                 if let normalized = TriggerSystemPaths.normalized(path) { paths.insert(normalized) }
             case .microphoneInUse: out.insert(.microphone)
-            case .screenTextAppears(let text, let interval):
+            case .screenTextAppears(let text, let interval), .screenTextAppearsIn(let text, let interval, _):
                 let wanted = ScreenTextWatchSet.normalized(text)
                 guard !wanted.isEmpty else { break }
-                screenTexts.insert(wanted)
-                screenInterval = min(screenInterval, max(SystemTriggerKind.screenTextIntervalRange.lowerBound, interval))
+                var area = ScreenTextArea.display
+                if case .screenTextAppearsIn(_, _, let chosen) = kind { area = chosen }
+                screenTexts[area, default: []].insert(wanted)
+                screenIntervals[area] = min(screenIntervals[area] ?? SystemTriggerKind.screenTextIntervalRange.upperBound,
+                                            max(SystemTriggerKind.screenTextIntervalRange.lowerBound, interval))
             default: break
             }
         }
         if !paths.isEmpty { out.insert(.files(paths)) }
-        if !screenTexts.isEmpty { out.insert(.screenText(screenTexts, interval: screenInterval)) }
+        for (area, texts) in screenTexts {
+            out.insert(.screenText(texts, interval: screenIntervals[area] ?? SystemTriggerKind.screenTextIntervalRange.upperBound, area: area))
+        }
         if !hidFilters.isEmpty { out.insert(.hid(hidFilters)) }
         return out
     }
@@ -179,8 +184,10 @@ enum SystemSignalMatcher {
         case (.fileDidChange(let path), .fileChanged(let changed)):
             return TriggerSystemPaths.normalized(path) == changed
         case (.microphoneInUse(let wanted), .microphone(let active)): return wanted == active
-        case (.screenTextAppears(let text, _), .screenTextAppeared(let seen)):
+        case (.screenTextAppears(let text, _), .screenTextAppeared(let seen, .display)):
             return ScreenTextWatchSet.normalized(text) == seen
+        case (.screenTextAppearsIn(let text, _, let area), .screenTextAppeared(let seen, let where_)):
+            return area == where_ && ScreenTextWatchSet.normalized(text) == seen
         default: return false
         }
     }
@@ -350,7 +357,7 @@ final class LiveSystemSignalProvider: SystemSignalProvider {
     private var pointerMonitors: [Any] = []
     private var lastVariableSnapshot: [String: String] = [:]
     private var microphoneWatcher: MicrophoneActivityWatcher?
-    private var screenTextWatcher: ScreenTextWatcher?
+    private var screenTextWatchers: [ScreenTextWatcher] = []
 
     func start(_ needs: Set<SignalSource>, emit: @escaping (SystemSignal) -> Void) {
         stop()
@@ -382,11 +389,11 @@ final class LiveSystemSignalProvider: SystemSignalProvider {
             case .microphone:
                 let watcher = MicrophoneActivityWatcher { [weak self] in self?.send(.microphone(active: $0)) }
                 microphoneWatcher = watcher; watcher.start()
-            case .screenText(let texts, let interval):
-                let watcher = ScreenTextWatcher(texts: texts, interval: TimeInterval(interval)) { [weak self] in
-                    self?.send(.screenTextAppeared(text: $0))
+            case .screenText(let texts, let interval, let area):
+                let watcher = ScreenTextWatcher(texts: texts, interval: TimeInterval(interval), area: area) { [weak self] in
+                    self?.send(.screenTextAppeared(text: $0, area: area))
                 }
-                screenTextWatcher = watcher; watcher.start()
+                screenTextWatchers.append(watcher); watcher.start()
             }
         }
     }
@@ -419,7 +426,7 @@ final class LiveSystemSignalProvider: SystemSignalProvider {
         clipboardSink = nil
         pointerMonitors.forEach(NSEvent.removeMonitor); pointerMonitors.removeAll()
         microphoneWatcher?.stop(); microphoneWatcher = nil
-        screenTextWatcher?.stop(); screenTextWatcher = nil
+        screenTextWatchers.forEach { $0.stop() }; screenTextWatchers.removeAll()
         emit = nil
     }
 

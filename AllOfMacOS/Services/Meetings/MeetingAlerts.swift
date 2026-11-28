@@ -61,7 +61,12 @@ final class MeetingAlerts: NSObject {
                 MainActor.assumeIsolated {
                     guard active, let self, MeetingRecorder.shared.phase == .idle,
                           let event = Self.happening(self.feed, now: Date()) else { return }
-                    MeetingRecordOffer.shared.offer(event)
+                    if MeetingAutoRecord.isEnabled {
+                        // 7.23: asked for in Settings › Capture; once per meeting, the red dot shows it.
+                        MeetingRecordOffer.shared.autoStart(event)
+                    } else {
+                        MeetingRecordOffer.shared.offer(event)
+                    }
                 }
             }
             microphoneWatcher = watcher
@@ -75,6 +80,13 @@ final class MeetingAlerts: NSObject {
     /// The timed event under way now (from 5 minutes before its start).
     nonisolated static func happening(_ events: [PaletteSchedule.Event], now: Date) -> PaletteSchedule.Event? {
         events.filter { !$0.isAllDay && $0.start.addingTimeInterval(-300) <= now && $0.end > now }.min { $0.start < $1.start }
+    }
+
+    /// 7.23: applies a changed meeting setting (the microphone watcher) when on.
+    func restartIfRunning() {
+        guard timer != nil else { return }
+        stop()
+        start()
     }
 
     func stop() {
@@ -324,7 +336,10 @@ struct MeetingAlertView: View {
 final class MeetingRecordOffer {
     static let shared = MeetingRecordOffer()
     static let defaultsKey = "AOMMeetingRecordOffer"
-    nonisolated static var isEnabled: Bool { UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? true }
+    nonisolated static var isEnabled: Bool {
+        get { UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: defaultsKey) }
+    }
 
     private var panel: NSPanel?
     private var offered: Set<String> = []
@@ -356,6 +371,14 @@ final class MeetingRecordOffer {
         DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self, weak panel] in
             if let panel, self?.panel === panel { self?.close() }
         }
+    }
+
+    func autoStart(_ event: PaletteSchedule.Event) {
+        let key = MeetingAlerts.key(event)
+        guard !offered.contains(key) else { return }
+        offered.insert(key)
+        MeetingRecorder.shared.start(title: event.title)
+        GestureHUD.shared.show(title: "Recording “\(event.title)”", detail: "Click the red dot in the menu bar to stop")
     }
 
     private func close() {

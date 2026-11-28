@@ -471,6 +471,14 @@ class KeyboardMonitor: ObservableObject {
 
         // Text expansion runs before everything else: it only ever sees plain
         // printable typing, and a match swallows its final key.
+        // 7.23: the opt-in Korean/English typing fix watches plain typing only.
+        if isDown, let text, !text.isEmpty, modifiers.isDisjoint(with: [.command, .control, .option, .function]),
+           !IsSecureEventInputEnabled() {
+            let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
+            if bundleID != Bundle.main.bundleIdentifier, AutomationGate.isOn, ActionExecutor.activeTextTypingSessions == 0 {
+                MainActor.assumeIsolated { TypingAutoFix.shared.observe(text, bundleID: bundleID) }
+            }
+        }
         if isDown, let text, !text.isEmpty,
            processTypedString(text: text, modifiers: modifiers) { return true }
 

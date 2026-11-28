@@ -38,6 +38,7 @@ final class AOMMenuBarPanelModel: ObservableObject {
     @Published var keepAwakeRemaining: String?
     /// 7.11: whole minutes left on a timed Keep Awake (nil: off or until turned off).
     @Published var keepAwakeMinutesLeft: Int?
+    @Published var clipboardExpiring = 0
     let appState: AppState?
 
     init(appState: AppState?) {
@@ -52,6 +53,8 @@ final class AOMMenuBarPanelModel: ObservableObject {
         set(\.engineOn, appState?.globalEnabled ?? true)
         set(\.snapping, appState?.currentPreset.snappingEnabled ?? false)
         set(\.clipboardOn, !ClipboardStore.shared.paused)
+        // 7.23 (the 7.22 open item): items set to expire within the hour.
+        set(\.clipboardExpiring, ClipboardStore.shared.expiringSoonCount(within: 3_600))
         if #available(macOS 14.2, *) { set(\.appAudio, AppAudioEngine.shared.isEnabled) }
         let awake = KeepAwakeService.shared
         set(\.keepAwake, awake.isActive)
@@ -188,7 +191,10 @@ struct AOMMenuBarPanel: View {
             .init(id: "snap", title: "Drag to Snap", subtitle: !model.engineOn ? "AOM paused" : model.snapping ? "On" : "Off",
                   symbol: "rectangle.split.2x2", tint: AOMModule.tiling.hue, isOn: model.snapping && model.engineOn,
                   onToggle: { if model.engineOn { model.toggleSnapping() } }),
-            .init(id: "clip", title: "Clipboard", subtitle: model.clipboardOn ? "Saving copies" : "Paused",
+            .init(id: "clip", title: "Clipboard",
+                  subtitle: !model.clipboardOn ? "Paused"
+                    : model.clipboardExpiring > 0 ? "\(model.clipboardExpiring) expire\(model.clipboardExpiring == 1 ? "s" : "") within an hour"
+                    : "Saving copies",
                   symbol: "doc.on.clipboard", tint: AOMModule.clipboard.hue, isOn: model.clipboardOn, onToggle: model.toggleClipboard,
                   menu: AOMFeatureMenus.clipboard()),
         ]

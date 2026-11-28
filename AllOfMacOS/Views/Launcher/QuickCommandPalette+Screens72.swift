@@ -885,6 +885,7 @@ extension QuickCommandPalette {
             case .earlierRule(let name): group = "Taken by “\(name)”"
             case .noMatch: group = "Doesn't match"
             case .needsReview: group = "Needs review"
+            case .cloudOnly: group = "Only in the cloud"
             }
             var row = screenRow("ruleitem.\(item.id)", item.info.name, item.steps.joined(separator: " → "),
                                 icon: item.info.isDirectory ? "folder" : "doc", group: group, section: .files,

@@ -45,3 +45,38 @@ struct NetworkThroughputGauge: View {
         }
     }
 }
+
+/// 7.23: the busiest apps on the network right now, from nettop.
+struct AppTrafficList: View {
+    @StateObject private var traffic = AppTraffic()
+
+    var body: some View {
+        Group {
+            if let problem = traffic.problem {
+                AOMSettingRow("Couldn't read traffic by app", detail: problem) { Button("Try Again") { traffic.refresh() } }
+            } else if traffic.rows.isEmpty {
+                AOMSettingRow("No app is using the network", detail: "Updated every 3 seconds") { EmptyView() }
+            } else {
+                ForEach(traffic.rows) { row in
+                    HStack(spacing: AOMSpace.x3) {
+                        Text(row.name).font(AOMFont.body).lineLimit(1)
+                        Text("\(row.pid)").font(AOMFont.caption.monospacedDigit()).foregroundStyle(AOMColor.textTertiary)
+                        Spacer()
+                        Label(NetworkThroughput.format(row.received), systemImage: "arrow.down")
+                            .font(AOMFont.caption.monospacedDigit()).foregroundStyle(AOMColor.accent)
+                            .frame(width: 96, alignment: .trailing)
+                        Label(NetworkThroughput.format(row.sent), systemImage: "arrow.up")
+                            .font(AOMFont.caption.monospacedDigit()).foregroundStyle(AOMColor.successText)
+                            .frame(width: 96, alignment: .trailing)
+                    }
+                    .padding(.horizontal, AOMSpace.rowInset)
+                    .frame(minHeight: AOMSize.rowStandard)
+                    .overlay(alignment: .top) { AOMRowDivider() }
+                    .accessibilityElement(children: .combine)
+                }
+            }
+        }
+        .onAppear { traffic.start() }
+        .onDisappear { traffic.stop() }
+    }
+}
