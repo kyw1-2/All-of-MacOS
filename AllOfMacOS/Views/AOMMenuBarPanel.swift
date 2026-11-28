@@ -222,6 +222,7 @@ struct AOMMenuBarPanel: View {
         case "qa.captureArea": return "Area"
         case "qa.clipboardHistory": return "Clipboard"
         case "focus.awake": return "Keep Awake"
+        case "qa.dropShelf": return "Shelf"
         case "bar.revealAll": return "Show Icons"
         default: return command.title
         }
@@ -302,27 +303,22 @@ struct AOMMenuBarPanel: View {
     private var tiles: [AOMMenuBarCraftPanel.ToggleTile] {
         var tiles: [AOMMenuBarCraftPanel.ToggleTile] = [
             // 7.11 (spec §3): Capture is a menu only — opening it captures nothing.
-            .init(id: "capture", title: "Capture", subtitle: "Area · Window · Full Screen", symbol: "camera.viewfinder",
-                  tint: AOMModule.capture.hue, isOn: false, onToggle: nil, menu: AOMFeatureMenus.capture()),
+            .init(id: "capture", title: "Capture", subtitle: "Area · Window", symbol: "camera.viewfinder",
+                  tint: AOMModule.capture.hue, isOn: false, onToggle: nil, menu: AOMFeatureMenus.capture(),
+                  primary: AOMFeatureMenus.capture().first),
             .init(id: "snap", title: "Drag to Snap", subtitle: !model.engineOn ? "AOM paused" : model.snapping ? "On" : "Off",
                   symbol: "rectangle.split.2x2", tint: AOMModule.tiling.hue, isOn: model.snapping && model.engineOn,
                   onToggle: { if model.engineOn { model.toggleSnapping() } }),
             .init(id: "clip", title: "Clipboard",
                   subtitle: !model.clipboardOn ? "Paused"
-                    : model.clipboardExpiring > 0 ? "\(model.clipboardExpiring) expire\(model.clipboardExpiring == 1 ? "s" : "") within an hour"
+                    : model.clipboardExpiring > 0 ? "\(model.clipboardExpiring) expire in 1 h"
                     : "Saving copies",
                   symbol: "doc.on.clipboard", tint: AOMModule.clipboard.hue, isOn: model.clipboardOn, onToggle: model.toggleClipboard,
                   menu: AOMFeatureMenus.clipboard()),
         ]
-        if #available(macOS 14.2, *) {
-            tiles.append(.init(id: "audio", title: "App Audio", subtitle: model.appAudio ? "Per-app volume" : "Off",
-                               symbol: "speaker.wave.2", tint: AOMModule.audio.hue, isOn: model.appAudio, onToggle: model.toggleAppAudio))
-        }
+        // 7.24 (spec §2.3-4): App Audio lives in the sound strip and Keep
+        // Awake in the chips and live sessions, so four tiles remain.
         tiles += [
-            .init(id: "awake", title: "Keep Awake",
-                  subtitle: model.keepAwake ? (model.keepAwakeMinutesLeft.map { "\($0) min left" } ?? "Until turned off") : "Off",
-                  symbol: "cup.and.saucer", tint: AOMModule.focus.hue, isOn: model.keepAwake, onToggle: model.toggleKeepAwake,
-                  menu: AOMFeatureMenus.keepAwake(), menuNote: model.keepAwake ? (model.keepAwakeMinutesLeft.map { "\($0) min left" } ?? "Until turned off") : nil),
             .init(id: "hud", title: "Gesture HUD", subtitle: model.hud ? "On" : "Off", symbol: "rectangle.on.rectangle",
                   tint: AOMModule.automation.hue, isOn: model.hud, onToggle: model.toggleHUD),
             // 7.14: no Mute Mic tile (the user's request); a mute started

@@ -395,16 +395,28 @@ struct CaptureStudioView: View {
 
     static let toolbarIDs: Set<String> = ["allInOne", "area", "window", "fullScreen", "scrolling", "record"]
 
+    /// Names and shortcuts when they fit, then names only, then symbols only
+    /// (the names stay in the help tags and for VoiceOver) — never truncated.
     private var captureToolbar: some View {
+        ViewThatFits(in: .horizontal) {
+            captureToolbar(titles: true, shortcuts: true)
+            captureToolbar(titles: true, shortcuts: false)
+            captureToolbar(titles: false, shortcuts: false)
+        }
+    }
+
+    private func captureToolbar(titles: Bool, shortcuts: Bool) -> some View {
         let all = tools
         return HStack(spacing: AOMSpace.x1) {
             ForEach(all.filter { Self.toolbarIDs.contains($0.id) }) { tool in
                 Button(action: tool.action) {
                     HStack(spacing: AOMSpace.x1) {
                         Image(systemName: tool.symbol).foregroundStyle(tool.tint == AOMTheme.text ? AOMModule.capture.hue : tool.tint)
-                        Text(tool.title).font(AOMFont.callout.weight(.medium)).lineLimit(1)
-                        if let shortcut = tool.shortcut {
-                            Text(shortcut).font(AOMFont.caption).foregroundStyle(AOMColor.textTertiary).lineLimit(1)
+                        if titles {
+                            Text(tool.title).font(AOMFont.callout.weight(.medium)).lineLimit(1).fixedSize()
+                        }
+                        if shortcuts, let shortcut = tool.shortcut {
+                            Text(shortcut).font(AOMFont.caption).foregroundStyle(AOMColor.textTertiary).lineLimit(1).fixedSize()
                         }
                     }
                     .padding(.horizontal, AOMSpace.x2)
@@ -415,6 +427,7 @@ struct CaptureStudioView: View {
                 .buttonStyle(.plain)
                 .disabled(tool.disabled)
                 .help(tool.help ?? (tool.shortcut.map { "\(tool.title) (\($0))" } ?? tool.title))
+                .accessibilityLabel(tool.title)
             }
             Menu {
                 ForEach(all.filter { !Self.toolbarIDs.contains($0.id) }) { tool in
@@ -436,6 +449,7 @@ struct CaptureStudioView: View {
             .menuStyle(.borderlessButton)
             .fixedSize()
             .help("Self-Timer, Text, QR Code, Measure, Open & Annotate, settings")
+            .fixedSize()
             Spacer(minLength: 0)
         }
     }

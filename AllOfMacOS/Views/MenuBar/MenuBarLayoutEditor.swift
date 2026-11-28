@@ -357,7 +357,7 @@ extension MenuBarLayoutModel {
 
     /// 7.24: the read bar colour, or a slate when only light pictures are cached.
     var laneNSColor: NSColor? {
-        barColor ?? laneFallback
+        MenuBarLaneColor.lane(bar: barColor, iconLuminance: pictureLuminance)
     }
 
     /// Ink that reads on `laneColor` (Gemini 7.10: white glyphs vanished on light bars).

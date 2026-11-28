@@ -177,7 +177,7 @@ struct AOMMenuBarCraftPanel: View {
             Image(systemName: "magnifyingglass")
                 .font(AOMFont.callout.weight(.semibold))
                 .foregroundStyle(AOMCraftColor.inkSecondary)
-            TextField("Search commands, hidden icons, copies…", text: $query)
+            TextField("Search commands, icons, copies", text: $query)
                 .textFieldStyle(.plain)
                 .font(AOMFont.body)
                 .focused($searchFocused)

@@ -24,6 +24,10 @@ final class AOM724Tests: XCTestCase {
         XCTAssertNotNil(MenuBarLaneColor.fallback(iconLuminance: 0.95), "white icons get a dark lane")
         XCTAssertNil(MenuBarLaneColor.fallback(iconLuminance: 0.2))
         XCTAssertNil(MenuBarLaneColor.fallback(iconLuminance: nil))
+        let lightBar = NSColor(srgbRed: 0.92, green: 0.92, blue: 0.93, alpha: 1)
+        XCTAssertEqual(MenuBarLaneColor.lane(bar: lightBar, iconLuminance: 0.95), MenuBarLaneColor.slate, "white icons, light bar")
+        XCTAssertEqual(MenuBarLaneColor.lane(bar: lightBar, iconLuminance: 0.1), lightBar)
+        XCTAssertEqual(MenuBarLaneColor.lane(bar: nil, iconLuminance: 0.95), MenuBarLaneColor.slate)
         let white = MenuBarLayoutModel.sampleImage("cloud.fill")
         XCTAssertGreaterThan(MenuBarLaneColor.iconLuminance([white]) ?? 0, 0.8)
     }

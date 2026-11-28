@@ -293,11 +293,11 @@ final class MenuBarLayoutModel: ObservableObject {
 
     @Published private(set) var items: [MenuBarLayoutItem] = []
     @Published private(set) var images: [String: NSImage] = [:] {
-        didSet { laneFallback = barColor == nil ? MenuBarLaneColor.fallback(iconLuminance: MenuBarLaneColor.iconLuminance(Array(images.values))) : nil }
+        didSet { pictureLuminance = MenuBarLaneColor.iconLuminance(Array(images.values)) }
     }
     @Published private(set) var barColor: NSColor?
-    /// 7.24: the lane before a bar colour is known (see MenuBarLaneColor).
-    private(set) var laneFallback: NSColor?
+    /// 7.24: how bright the cached pictures are (see MenuBarLaneColor.lane).
+    private(set) var pictureLuminance: Double?
     @Published private(set) var busy = false
     @Published private(set) var status: String?
     @Published private(set) var lastRefresh: Date?
@@ -329,7 +329,7 @@ final class MenuBarLayoutModel: ObservableObject {
             if let image = NSImage(contentsOf: folder.appendingPathComponent(file)) { images[key] = image }
         }
         // Observers don't run inside init.
-        if barColor == nil { laneFallback = MenuBarLaneColor.fallback(iconLuminance: MenuBarLaneColor.iconLuminance(Array(images.values))) }
+        pictureLuminance = MenuBarLaneColor.iconLuminance(Array(images.values))
     }
 
     /// Application Support/AllOfMacOS/MenuBarImages (never in previews or tests).
@@ -732,5 +732,19 @@ enum MenuBarLaneColor {
     static func fallback(iconLuminance: Double?) -> NSColor? {
         guard let iconLuminance, iconLuminance > 0.6 else { return nil }
         return slate
+    }
+
+    static func luminance(_ color: NSColor) -> Double? {
+        guard let rgb = color.usingColorSpace(.sRGB) else { return nil }
+        return Double(0.2126 * rgb.redComponent + 0.7152 * rgb.greenComponent + 0.0722 * rgb.blueComponent)
+    }
+
+    /// Pure: the lane to draw. Light pictures (white icons from a dark bar)
+    /// never sit on a light lane — pictures and the bar colour can come from
+    /// different reads (a cached picture, a bar read after the look changed).
+    static func lane(bar: NSColor?, iconLuminance: Double?) -> NSColor? {
+        guard let bar else { return fallback(iconLuminance: iconLuminance) }
+        if let icons = iconLuminance, icons > 0.6, (luminance(bar) ?? 0) > 0.55 { return slate }
+        return bar
     }
 }
