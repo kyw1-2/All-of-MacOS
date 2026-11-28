@@ -241,6 +241,19 @@ final class AOM7230StudioMeetingTests: XCTestCase {
         XCTAssertNil(TypingAutoFix.candidate("dks1", isEnglishWord: { _ in false }))
     }
 
+    /// 7.23: the side-button Back crash — the key's character is read on
+    /// the main queue even when asked from the navigation queue.
+    func testShortcutCharacterFromABackgroundQueue() {
+        let done = expectation(description: "character read off the main thread")
+        var character: String?
+        DispatchQueue.global().async {
+            character = ShortcutMenuPress.character(for: 33)
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 5)
+        XCTAssertEqual(character, "[")
+    }
+
     func testPageArchetypes() {
         XCTAssertTrue(AOMMainTab.home.headerShowsMark)
         XCTAssertFalse(AOMMainTab.tools.headerShowsMark)

@@ -33,7 +33,16 @@ enum ShortcutMenuPress {
 
     /// The key's character on an ASCII layout ("[" for kVK_ANSI_LeftBracket),
     /// whatever input source (Korean) is selected.
+    ///
+    /// 7.23 (crash 2026-11-28 10:20, 7.22.0): Text Input Sources must be read
+    /// on the main queue. Back/Forward sent from the side buttons or a gesture
+    /// ran this on the navigation-menu queue, and macOS 27's TSM asserted
+    /// (`dispatch_assert_queue` → SIGTRAP) when the input source had changed
+    /// since its last read — after 한/영 switching AOM quit on the next Back.
     static func character(for keyCode: UInt16) -> String? {
+        guard Thread.isMainThread else {
+            return DispatchQueue.main.sync { character(for: keyCode) }
+        }
         guard let source = TISCopyCurrentASCIICapableKeyboardLayoutInputSource()?.takeRetainedValue(),
               let pointer = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData) else { return nil }
         let data = Unmanaged<CFData>.fromOpaque(pointer).takeUnretainedValue() as Data

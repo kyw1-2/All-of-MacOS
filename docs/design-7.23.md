@@ -56,6 +56,19 @@ There are two inputs to this version.
 | 7.22 open, Typing | Optional automatic fix: a word of 3–24 Latin letters is replaced on Space when all of these hold:<br>- it makes at least two whole Hangul syllables<br>- it isn't an English word (NSSpellChecker)<br>- the input source isn't Korean<br>The input source then switches to Korean. It never runs in secure input, in AOM, or in terminals and editors. | `TypingAutoFix`, Settings › General › Input sources |
 | 7.22 open, UI | Rows are 30/38 pt (were 34/44). Only Workspace's header keeps the 28 pt mark. Page archetypes (board, studio, instrument, flow, form) set the width of `AOMPage` and of the Window Tiling page. | `AOMTokens`, `AOMPageHeader`, `AOMPageArchetype` |
 
+### Defect found while applying (user report: the mouse Back button "sometimes" does nothing)
+
+- 7.22.0 was not running. It had crashed at 10:20 with `EXC_BREAKPOINT` in `dispatch_assert_queue`, thread `com.kyw.allofmacos.navigation-menu`.
+- The crashing call chain was:
+  1. `ActionExecutor.sendNavigationShortcut`
+  2. `ShortcutMenuPress.pressIfTyping`
+  3. `character(for:)`
+  4. `TSMCurrentAsciiCapableKeyboardLayoutInputSourceRefCreate`
+- Text Input Sources are main-queue only on macOS 27; TSM checks this when the input source has changed.
+- The UGREEN rear button sends ⌃←, and AOM's automation turns it into ⌘[. So after a 한/영 switch, the next Back press quit AOM, and the button did nothing from then on.
+- **Fix:** `character(for:)` hops to the main queue. Test: `testShortcutCharacterFromABackgroundQueue`.
+- **Not changed:** the same button also carries a ×2 binding (Mission Control). That delays every single Back by the double-click interval, and two quick Backs open Mission Control instead. This is the user's setting, left as is.
+
 ## 3. Not done (open)
 
 - **Page archetypes:** the archetype sets column width and header mark only. Each page's own layout was not redrawn per archetype; most pages lay out their own containers.
