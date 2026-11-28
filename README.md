@@ -154,11 +154,18 @@
   - **Display & Power**: Display Resolution/Refresh Rate switcher, hardware DDC/CI Brightness, Battery Care (`80–100%` native charge limit, Hold Here, Discharge/Top Up), Sleep Timer, Awake While App Runs, Wake Assertions.
   - **Apps & Storage**: CPU/Memory Activity sheet, Kill Apps, Relaunch App, **App Uninstaller** (scans `~/Library` leftovers), Login Items, **Free Up Space** (Storage Map / Duplicates / Xcode junk / Caches), Eject Volumes, `.dmg` Installer.
   - **Network, Homebrew, Fix It & Tweaks**: Live Network Throughput 60s graph, Network Info, Apple `networkQuality` Speed Test, VPN / Tailscale controls, Flush DNS, Homebrew package/service manager, Restart Finder/Dock/Menu Bar, Repair Launch Services & Spotlight, and grouped Finder/Dock/Screenshot/Menu Bar Spacing tweaks.
-- **Settings Hub (`⌘,`)**: Fast keyword-searchable settings across `General`, `Capture`, `Clipboard`, `Automation`, `AI`, `Shortcuts`, `Permissions`, `Data`, and `About`.
+- **Settings Hub (`⌘,`)**: Fast keyword-searchable settings across `General`, `Capture`, `Clipboard`, `Automation`, `AI`, `Shortcuts`, `Permissions`, `Data`, and `About`, including **Appearance (`System` / `Light` / `Dark`)** and **Window Glass (`Subtle` / `Balanced` / `Clear`)** applied app-wide across the main window, Menu Bar Panel, Quick Entry, Drop Shelf, and Launcher.
 
 | System Tools | Settings Hub (`⌘,`) |
 | :---: | :---: |
 | ![System Tools](docs/images/system-tools.png) | ![Settings](docs/images/settings.png) |
+
+### App-Wide Dark Mode Comparison (`Settings › General › Appearance`)
+Switching Appearance applies immediately across the main workbench, floating Launcher (unless overridden by a custom theme), and Menu Bar Pocket Panel:
+
+| Workspace (Dark) | Floating Launcher (Dark) | Menu Bar Panel (Dark) |
+| :---: | :---: | :---: |
+| ![Workspace Dark](docs/images/workspace-dark.png) | ![Launcher Dark](docs/images/launcher-dark.png) | ![Menu Bar Panel Dark](docs/images/menu-bar-panel-dark.png) |
 
 ---
 
