@@ -380,7 +380,7 @@ enum TriggerValidation {
         case .forceTouchStage(let stage):
             return (1...2).contains(stage) ? nil : "Force Touch stage must be 1 or 2."
         case .screenTextAppears(let text, let interval), .screenTextAppearsIn(let text, let interval, _):
-            if case .screenTextAppearsIn(_, _, let area) = self, case .region = area, area.rect == nil {
+            if case .screenTextAppearsIn(_, _, let area) = kind, case .region = area, area.rect == nil {
                 return "Pick a region at least 8 points wide and high."
             }
             let wanted = text.trimmingCharacters(in: .whitespacesAndNewlines)
