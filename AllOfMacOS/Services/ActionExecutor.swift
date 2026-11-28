@@ -1186,7 +1186,7 @@ final class ActionSequenceRunner {
         let regexMatches: Bool
         if regex.isEmpty { regexMatches = true }
         else if regex.count > 256 { regexMatches = false }
-        else if let expression = try? NSRegularExpression(pattern: regex, options: [.caseInsensitive]) {
+        else if let expression = AOMRegexCache.regex(regex, options: [.caseInsensitive]) {
             let text = String(windowTitle.prefix(1024))
             regexMatches = expression.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
         } else { regexMatches = false }

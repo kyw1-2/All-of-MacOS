@@ -122,6 +122,30 @@ struct AOMMenuBarCraftPanel: View {
     /// stays under 560 pt even on a laptop with the battery row.
     @AppStorage("AOMPanelClipsExpanded") private var clipsExpanded = false
 
+    /// The body's height laid out in full (a hidden copy, measured).
+    @State private var naturalBodyHeight: CGFloat = 0
+
+    /// What the body may take of the 560 pt cap: the header, the search
+    /// field, the footer, the gaps and the padding take about 140 pt.
+    static var bodyLimit: CGFloat {
+        AOMStatusPanelController.maxHeight(visible: NSScreen.main?.visibleFrame ?? .zero) - 140
+    }
+
+    private var bodyMeasure: some View {
+        mainBody
+            .fixedSize(horizontal: false, vertical: true)
+            .hidden()
+            .accessibilityHidden(true)
+            .allowsHitTesting(false)
+            .background(GeometryReader { geometry in
+                Color.clear
+                    .onAppear { naturalBodyHeight = geometry.size.height }
+                    .onChange(of: geometry.size.height) { _, height in naturalBodyHeight = height }
+            })
+            .frame(height: 0, alignment: .top)
+            .clipped()
+    }
+
     private var results: [SearchResult] { query.trimmingCharacters(in: .whitespaces).isEmpty ? [] : search(query) }
 
     var body: some View {
@@ -130,8 +154,17 @@ struct AOMMenuBarCraftPanel: View {
             searchField
             if !query.trimmingCharacters(in: .whitespaces).isEmpty {
                 resultsList.frame(height: bodyHeight)
+            } else if naturalBodyHeight > Self.bodyLimit {
+                // 7.24.1: past the 560 pt cap (an open tile menu, live
+                // sessions, three copies and the battery row at once) the
+                // body scrolls inside a fixed height; the window never grows.
+                ScrollView { mainBody }
+                    .frame(height: Self.bodyLimit)
+                    .background(bodyMeasure)
+                    .onAppear { bodyHeight = Self.bodyLimit }
             } else {
                 mainBody
+                    .background(bodyMeasure)
                     .background(GeometryReader { geometry in
                         Color.clear
                             .onAppear { bodyHeight = max(180, geometry.size.height) }

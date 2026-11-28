@@ -42,7 +42,10 @@ final class AOMStatusPanelController: NSObject, NSWindowDelegate {
     private(set) var destination: NSRunningApplication?
 
     /// 7.24.1 (agy §6.1-1): the panel never covers more than this.
-    static func maxHeight(visible: CGRect) -> CGFloat { min(560, (visible.height * 0.72).rounded()) }
+    static func maxHeight(visible: CGRect) -> CGFloat {
+        guard visible.height > 0 else { return 560 }
+        return min(560, (visible.height * 0.72).rounded())
+    }
 
     func show<Content: View>(_ content: Content, under button: NSStatusBarButton) {
         close()
@@ -53,7 +56,10 @@ final class AOMStatusPanelController: NSObject, NSWindowDelegate {
         AOMOverlayCoordinator.shared.present(.menuBarPanel, dismiss: { [weak self] in self?.close() }) { _ in }
         guard let buttonWindow = button.window else { return }
         let hosting = NSHostingView(rootView: content)
-        let size = hosting.fittingSize
+        var size = hosting.fittingSize
+        let visible = (button.window?.screen ?? NSScreen.main)?.visibleFrame ?? .zero
+        // 7.24.1: the content scrolls inside (AOMMenuBarCraftPanel); the window never grows past the cap.
+        size.height = min(size.height, Self.maxHeight(visible: visible))
         let panel = AOMStatusPanelWindow(contentRect: NSRect(origin: .zero, size: size),
                                          styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],
                                          backing: .buffered, defer: false)
@@ -92,7 +98,8 @@ final class AOMStatusPanelController: NSObject, NSWindowDelegate {
     /// Grows or shrinks with its content (a session row appearing).
     func fitToContent() {
         guard let panel, let hosting = panel.contentView else { return }
-        let size = hosting.fittingSize
+        var size = hosting.fittingSize
+        size.height = min(size.height, Self.maxHeight(visible: (panel.screen ?? NSScreen.main)?.visibleFrame ?? .zero))
         guard abs(size.height - panel.frame.height) > 0.5 else { return }
         var frame = panel.frame
         frame.origin.y += frame.height - size.height

@@ -32,6 +32,8 @@ final class AOM7241Tests: XCTestCase {
     func testPanelHeightCap() {
         XCTAssertEqual(AOMStatusPanelController.maxHeight(visible: CGRect(x: 0, y: 0, width: 1512, height: 944)), 560)
         XCTAssertEqual(AOMStatusPanelController.maxHeight(visible: CGRect(x: 0, y: 0, width: 1280, height: 700)), 504)
+        XCTAssertEqual(AOMStatusPanelController.maxHeight(visible: .zero), 560, "no screen: the cap itself")
+        XCTAssertEqual(AOMMenuBarCraftPanel.bodyLimit, AOMStatusPanelController.maxHeight(visible: NSScreen.main?.visibleFrame ?? .zero) - 140)
     }
 
     func testDoNotDisturbIsNotOfferedWhereItCannotRun() {

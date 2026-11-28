@@ -475,14 +475,15 @@ class KeyboardMonitor: ObservableObject {
         // background rate is 0.5 s now). The key itself always goes through.
         if isDown, !isRepeat, keyCode == 8 || keyCode == 7, modifiers.contains(.command),
            modifiers.isDisjoint(with: [.control, .option]) {
-            MainActor.assumeIsolated { ClipboardStore.shared.pollSoon() }
+            // Hopped, not assumed: safe if the tap ever leaves the main run loop (7.19 P0-1).
+            DispatchQueue.main.async { MainActor.assumeIsolated { ClipboardStore.shared.pollSoon() } }
         }
         // 7.23: the opt-in Korean/English typing fix watches plain typing only.
         if isDown, let text, !text.isEmpty, modifiers.isDisjoint(with: [.command, .control, .option, .function]),
            !IsSecureEventInputEnabled() {
             let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
             if bundleID != Bundle.main.bundleIdentifier, AutomationGate.isOn, ActionExecutor.activeTextTypingSessions == 0 {
-                MainActor.assumeIsolated { TypingAutoFix.shared.observe(text, bundleID: bundleID) }
+                DispatchQueue.main.async { MainActor.assumeIsolated { TypingAutoFix.shared.observe(text, bundleID: bundleID) } }
             }
         }
         if isDown, let text, !text.isEmpty,

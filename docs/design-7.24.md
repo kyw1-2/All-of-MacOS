@@ -84,3 +84,9 @@
 - God-file splits and the UI-kit merge: no behaviour change; a separate refactor.
 - Event-tap threading (7.19 P0-1): staged, risky.
 - Clipboard blob split: a storage format change.
+
+### 5.1 Follow-up review of `a08e68b` (user, 2026-11-28)
+
+1. **`maxHeight(visible:)` was defined and tested but not applied.** True. `show()` and `fitToContent()` now clamp the window to it. `AOMMenuBarCraftPanel` measures the body's full height with a hidden copy; above `bodyLimit` (cap − 140 pt for the header, search, footer and padding), the body scrolls inside a fixed height.
+2. **Three regexes were still compiled per call.** True. `ActionExecutor` (window-title filter), `HomebrewCommands.parseFreedSize` and `VPNTools.parseServiceList` now use `AOMRegexCache`.
+3. **`MainActor.assumeIsolated` inside the key tap would crash once the tap moves off the main run loop.** True. `pollSoon` and `TypingAutoFix.observe` are now hopped with `DispatchQueue.main.async`.

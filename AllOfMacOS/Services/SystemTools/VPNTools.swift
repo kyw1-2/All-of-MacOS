@@ -67,7 +67,7 @@ enum VPNTools {
     /// that (the header) are skipped.
     static func parseServiceList(_ output: String) -> [Service] {
         let pattern = #"^\s*(\*?)\s*\(([^)]*)\)\s+([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})\s+([^"]*?)\s*"(.*)"\s*(?:\[[^\]]*\])?\s*$"#
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        guard let regex = AOMRegexCache.regex(pattern) else { return [] }
         return output.split(whereSeparator: \.isNewline).compactMap { raw -> Service? in
             let line = String(raw)
             guard let match = regex.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)) else { return nil }

@@ -214,7 +214,7 @@ enum Homebrew {
 
     static func parseFreedSize(_ output: String) -> FreedSize? {
         let pattern = #"(?:would free|has freed) approximately ([0-9][0-9.,]*)\s*([KMGT]?B)"#
-        guard let regex = try? NSRegularExpression(pattern: pattern),
+        guard let regex = AOMRegexCache.regex(pattern),
               let match = regex.firstMatch(in: output, range: NSRange(output.startIndex..., in: output)),
               let numberRange = Range(match.range(at: 1), in: output),
               let unitRange = Range(match.range(at: 2), in: output) else { return nil }
