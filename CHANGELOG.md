@@ -1,3 +1,21 @@
+## [7.24.0] - 2026-11-28 — A menu bar panel you can work in
+
+From the menu bar spec of 2026-11-28 (DeepSeek, against the 7.23 code and snapshots), each claim checked first. Ledger: `docs/design-7.24.md`.
+
+- **Settings › Appearance styles everything**: the menu bar panel, the launcher, Quick Entry and the Drop Shelf followed the system even when AOM was set to Dark or Light. They follow your choice now.
+- **The menu bar panel** (now 396 pt wide):
+  - The search at the top takes typing as soon as it opens. It finds AOM's commands, icons hidden in the menu bar (Enter opens one) and things you copied.
+  - The sound output, mute and volume are right there.
+  - Your last three copies paste with one click.
+  - Every tile works the same way: the round badge switches it or runs it (Capture takes an area), and the name opens its page in place, without the panel jumping.
+  - The quick actions come from four tools instead of three captures.
+  - The panel no longer refreshes itself every 5 seconds unless something is counting down.
+- **Menu Bar page**: icons on a light page were white on light grey until the bar was read again; the bar's colour is kept now, softened, and white pictures get a dark lane. The eight panes stay listed beside the pane from 708 pt wide.
+- **Menu bar items keep their width** when a number gains a digit (Focus 9:59 → 10:00, 9° → 10°), so neighbouring icons don't shift. The weather can also sit inside AOM's own icon (Menu Bar › Weather).
+- **Window Tiling**: with no snap zones, three starter sets are one click away.
+- **Workspace**: every tool row's controls line up; ⋯ shows on hover (and on right-click).
+- **Capture**: one slim toolbar row, with your captures right below it.
+
 ## [7.23.0] - 2026-11-28 — Quick Entry, a two-pane browser, and the rest of 7.22
 
 From DeepSeek's design reference of 2026-11-25 (ten apps not analysed before — Things, Fantastical, Hazel, AppCleaner, DaisyDisk, Transmit, Soulver, Moom, Mimestream, Monodraw; on Drive, AOM-Reports/2026-11-27) and the items 7.22 left open. Each claim was checked against the code first. Ledger: `docs/design-7.23.md`.
